@@ -126,11 +126,18 @@ export default defineConfig({
 });
 ```
 
-## 跑指令（PowerShell）
+## 跑指令
 
+```bash
+# mac/linux（bash/zsh）
+export SMOKE_RUN_TAG="flowverify-$RANDOM"   # 讓每次 seed 可精準識別清理
+npx playwright test --headed tests/e2e/items.realdata.spec.ts
+npx playwright show-report
+```
 ```powershell
+# Windows PowerShell
 [Console]::OutputEncoding = [Text.Encoding]::UTF8
-$env:SMOKE_RUN_TAG = "flowverify-$(Get-Random)"   # 讓每次 seed 可精準識別清理
+$env:SMOKE_RUN_TAG = "flowverify-$(Get-Random)"
 npx playwright test --headed tests/e2e/items.realdata.spec.ts
 npx playwright show-report
 ```

@@ -49,7 +49,7 @@ Web 驗證（完整範本 `references/playwright-real-data-template.md`）：
 
 ## Step 0：起服務前置（避免驗到卡 port 的舊 build）
 
-bind/listen port 的產出物驗證前 SHALL 清 port：偵測 PID → 是本專案舊 server 才 `Stop-Process -Force`、外來/不明 process 暫停問使用者 → 確認載入本次 build。
+bind/listen port 的產出物驗證前 SHALL 清 port：偵測 PID → 是本專案舊 server 才終止（Windows `Stop-Process -Id <pid> -Force`、mac/linux `kill -9 <pid>`，或 `lsof -ti:<port> | xargs kill`）、外來/不明 process 暫停問使用者 → 確認載入本次 build。
 
 ## PreCompletion 退出閘門
 

@@ -8,15 +8,20 @@ description: Flow 換手/接手 — 純從檔案狀態（.flow/state.json + spec
 
 ## Step 1：純讀檔重建現況（statelib reconstruct）
 
-先設 console UTF-8，用 statelib 冷啟動 reconstruct 印現況 + 下一步（**只讀 `.flow/`，不讀對話**）：
+用 statelib 冷啟動 reconstruct 印現況 + 下一步（**只讀 `.flow/`，不讀對話**）：
+```bash
+# mac/linux
+node ~/.claude/skills/flow-toolkit/flow-state.mjs resume
+```
 ```powershell
+# Windows PowerShell（先設 console UTF-8）
 [Console]::OutputEncoding=[Text.Encoding]::UTF8; node "$env:USERPROFILE\.claude\skills\flow-toolkit\flow-state.mjs" resume
 ```
 輸出含：已交付/開發中/驗收中/待開發/⚠️等你決策 計數、待決策清單、**↻ 未完成動作（dangling：journal 有 `actionStart` 但無 `actionDone`，並行多 worker 各自獨立不互蓋）**、下一步。
 補充來源：`specs/`（讀 `[ ]`/`[x]`）、`git`（branch、未 merge worktree branch、最後 commit）。
 **換電腦也接得上**：`.flow/` 的 manifest/ledger/journal 進 git，clone 下來 reconstruct 一樣重建（細粒度進度不掉到 task 級）。
 
-接著冪等開監控看板：`node "$env:USERPROFILE\.claude\skills\flow-toolkit\flow-state.mjs" monitor`（已在跑就重用），讀印出的 port 用 `Start-Process` 開瀏覽器。
+接著冪等開監控看板：`flow-state.mjs monitor`（路徑依 flow.md 環境慣例，已在跑就重用），讀印出的 port 用 OS 預設方式開瀏覽器（mac `open` / Windows `Start-Process` / Linux `xdg-open`）。
 
 ## Step 2：呈現進度
 

@@ -41,8 +41,8 @@
 2. 依 `REQ-E2E-*` / 主功能列 **3–5 個關鍵畫面**，產**靜態 HTML mockup** 到 `specs/ui-mockups/`：
    - Tailwind CDN + 設計 token（color / font / spacing 變數）
    - 一頁 `index.html` 總覽連到各畫面
-   - 含中文寫檔一律 `-Encoding utf8`
-3. **主動 `Start-Process <index.html>` 開瀏覽器**（0 摩擦原則，把實體送到使用者眼前，避免被文字滑過）。
+   - 含中文寫檔一律 UTF-8（PowerShell 加 `-Encoding utf8`）
+3. **主動開瀏覽器**開 index.html（mac `open` / Windows `Start-Process` / Linux `xdg-open`）（0 摩擦原則，把實體送到使用者眼前，避免被文字滑過）。
 4. `AskUserQuestion` 收方向：「方向 OK / 某幾頁要改 / 整個方向錯」。**一次對焦完即凍結**，後續以此為錨點反推 API/DB。
 
 > 為什麼鐵則：使用者 build 到一半才喊「整個方向錯了」是最大的重做災難。UI-first 把方向釘死在最早能看見實體的時點（幾頁靜態 HTML）。

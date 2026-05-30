@@ -10,8 +10,8 @@ description: Flow Phase 3 — 多工交付（混合基座）。取當前波次�
 
 ## Step 0：冷啟動讀現況 + 開監控看板
 
-`node "$env:USERPROFILE\.claude\skills\flow-toolkit\flow-state.mjs" resume` 用 statelib **reconstruct** 純從磁碟重建「還剩什麼 + 未完成 dangling」（不靠對話記憶），有 dangling（上次中斷）先冪等補完；補 `specs/tasks.md` 的 `[ ]`/`[x]`。
-**進 build 即冪等自動開看板**：`node ...\flow-state.mjs monitor`（已在跑就重用、不疊新分頁），讀印出的 port 用 `Start-Process` 開瀏覽器（0 摩擦）。
+跑 flow-toolkit 的 `flow-state.mjs resume`（路徑/shell 依 flow.md 環境慣例——mac/linux `node ~/.claude/skills/flow-toolkit/flow-state.mjs resume`、Windows PS `node "$env:USERPROFILE\.claude\skills\flow-toolkit\flow-state.mjs" resume`）用 statelib **reconstruct** 純從磁碟重建「還剩什麼 + 未完成 dangling」（不靠對話記憶），有 dangling（上次中斷）先冪等補完；補 `specs/tasks.md` 的 `[ ]`/`[x]`。
+**進 build 即冪等自動開看板**：`flow-state.mjs monitor`（已在跑就重用、不疊新分頁），讀印出的 port 用 OS 預設方式開瀏覽器（mac `open <url>` / Windows `Start-Process <url>` / Linux `xdg-open <url>`）（0 摩擦）。
 
 ## Step 1：算當前波次可並行集合
 

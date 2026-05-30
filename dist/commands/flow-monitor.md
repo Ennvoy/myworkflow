@@ -8,13 +8,17 @@ description: Flow 監控看板 — 起一個唯讀即時看板，投影當前專
 
 ## 啟動
 
-1. **背景啟動**（自動找空 port——占用就 +1，多專案並行各拿一個；先設 console UTF-8）：
-   ```powershell
-   [Console]::OutputEncoding=[Text.Encoding]::UTF8
-   node "$env:USERPROFILE\.claude\skills\flow-toolkit\dashboard.mjs"
+1. **背景啟動**（自動找空 port——占用就 +1，多專案並行各拿一個）：
+   ```bash
+   # mac/linux
+   node ~/.claude/skills/flow-toolkit/dashboard.mjs
    ```
-   （等同 `node ...\dashboard.mjs <專案根> [偏好port]`，省略則讀 cwd、port 4317 起跳。）
-2. **讀啟動輸出印出的實際網址**（如 `http://127.0.0.1:4317`，被占用時可能 4318…），記到 `.flow/monitor.port`，用 `Start-Process "<該網址>"` 開瀏覽器送到使用者眼前（0 摩擦）。
+   ```powershell
+   # Windows PowerShell（先設 console UTF-8）
+   [Console]::OutputEncoding=[Text.Encoding]::UTF8; node "$env:USERPROFILE\.claude\skills\flow-toolkit\dashboard.mjs"
+   ```
+   （等同 `node <dashboard.mjs> <專案根> [偏好port]`，省略則讀 cwd、port 4317 起跳。）
+2. **讀啟動輸出印出的實際網址**（如 `http://127.0.0.1:4317`，被占用時可能 4318…），記到 `.flow/monitor.port`，用 OS 預設方式開瀏覽器（mac `open <url>` / Windows `Start-Process <url>` / Linux `xdg-open <url>`）送到使用者眼前（0 摩擦）。
 3. 看板每 2 秒投影：5 階段 ribbon、完成謂詞面板、kanban（待開發/開發中/驗收中/已交付）。卡片標 ⚠️ 等你決策 = 回 Claude `/flow-resume` 拍板。
 
 ## 冪等自動開（被 build/resume 呼叫時）

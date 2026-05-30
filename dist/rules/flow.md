@@ -61,4 +61,4 @@ git commit+push（走 `git-tools` skill：smart 分群提交＋安全推送）�
 
 ## 語言與環境
 
-對話繁中；產出 markdown 中文敘述＋英文技術詞（API/欄位/狀態碼/檔名保留英文）。OS Windows 11、Shell PowerShell（`$env:VAR`、`| Out-Null`、`A; if ($?){B}`）；含中文寫檔一律 `-Encoding utf8`。
+對話繁中；產出 markdown 中文敘述＋英文技術詞（API/欄位/狀態碼/檔名保留英文）。**Shell 依 host 自動對應**：Windows→PowerShell（`$env:VAR`、`| Out-Null`、`A; if ($?){B}`、家目錄 `$env:USERPROFILE`）、macOS/Linux→bash/zsh（`$VAR`、`>/dev/null`、`A && B`、家目錄 `~`/`$HOME`）；含中文寫檔一律 UTF-8。**flow-toolkit 腳本路徑**（依 host）：mac/linux `~/.claude/skills/flow-toolkit/`、Windows `$env:USERPROFILE\.claude\skills\flow-toolkit\`。開瀏覽器：mac `open <url>` / Windows `Start-Process <url>` / Linux `xdg-open <url>`。

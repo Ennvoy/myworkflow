@@ -42,7 +42,7 @@
 
 ## 四、修復迴圈（修到綠才算完成）
 
-- **Step 0（起服務型前置）**：bind port 的產出物驗證前清 port（偵測 PID → 本專案舊 server 才 `Stop-Process -Force`、外來/不明暫停問）→ 確認載入本次 build（否則驗到卡 port 舊 build = 假綠/假紅）。
+- **Step 0（起服務型前置）**：bind port 的產出物驗證前清 port（偵測 PID → 本專案舊 server 才終止：Windows `Stop-Process -Id <pid> -Force`、mac/linux `kill -9 <pid>` 或 `lsof -ti:<port>|xargs kill`；外來/不明暫停問）→ 確認載入本次 build（否則驗到卡 port 舊 build = 假綠/假紅）。
 - **便宜迴圈無放棄上限**（lint/type/unit）：失敗 → 自動修 → 重跑，每輪回報改了什麼。
 - **貴迴圈有界**（完整 headed e2e / CI）：1 次 + 1 次自動修 → 升級暫停問使用者（避免燒 token）。
 - **人工 check-in 間隔**：連 3 輪未過 / 同錯連 2 輪改動無效 → 暫停問使用者，回覆後繼續，**狀態維持「未完成」**。check-in 是暫停不是終止，絕不到間隔就收工放生半成品。

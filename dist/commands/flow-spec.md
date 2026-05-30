@@ -47,8 +47,8 @@ requirements 含 auth / 權限 / payment / 個資 / 合規 / audit 關鍵字 →
 ## Step 5：UI 方向對齊（**僅 web 類**，鐵則）
 
 1. 呼叫 `ui-ux-pro-max:ui-ux-pro-max` skill 取設計建議（style / palette / font pairing / product-type 規範）。未裝 → 提示使用者跑安裝檔的 ui-ux-pro-max 安裝指令（見 README），不提供 fallback。
-2. 依 `REQ-E2E-*` / 主功能列 **3–5 個關鍵畫面**，產靜態 HTML mockup 到 `specs/ui-mockups/`（Tailwind CDN + 設計 token；含一頁 `index.html` 總覽）。**含中文寫檔一律 `-Encoding utf8`**。
-3. **主動 `Start-Process` 開瀏覽器**把總覽頁送到使用者眼前（0 摩擦，避免被滑過）。
+2. 依 `REQ-E2E-*` / 主功能列 **3–5 個關鍵畫面**，產靜態 HTML mockup 到 `specs/ui-mockups/`（Tailwind CDN + 設計 token；含一頁 `index.html` 總覽）。**含中文寫檔一律 UTF-8**（PowerShell 加 `-Encoding utf8`）。
+3. **主動開瀏覽器**把總覽頁送到使用者眼前（mac `open <url>` / Windows `Start-Process <url>` / Linux `xdg-open <url>`；0 摩擦，避免被滑過）。
 4. `AskUserQuestion` 收方向：方向 OK / 某幾頁要改 / 整個方向錯。**一次對焦完即凍結**，後續 plan/build 以此為錨點反推 API/DB。
 
 > 例外：`cli`/`api`/純後端跳過整個 Step 5；使用者明說「跳過 mockup」可豁免，但 SHALL 寫進 `### 開放問題` 並警告「整體方向風險押到 build 才暴露」。

@@ -34,7 +34,7 @@ git clone https://github.com/Ennvoy/myworkflow.git flow && cd flow && chmod +x i
 安裝檔（**冪等可重跑、自動備份**）會：
 - 把 `dist/` 的 commands / agents / skills / rules / hooks 裝進 `~/.claude`
 - 薄規則放進 `~/.claude/rules/flow.md`（rules/ 每 session 自動載入，等同 CLAUDE.md 優先級，不改寫你的 CLAUDE.md）、hook 接線進 `settings.json`
-- 裝外部依賴：[mattpocock/skills](https://github.com/mattpocock/skills) 的 productivity 4 個（grill-me / caveman / handoff / write-a-skill，全域 `-g`；Flow 只真正依賴 grill-me）、ui-ux-pro-max plugin、預熱 Playwright Chromium
+- 裝外部依賴：[mattpocock/skills](https://github.com/mattpocock/skills) 的 productivity 4 個（grill-me / caveman / handoff / write-a-skill，全域 `-g`、只裝進 Claude Code、`--copy` 非互動；Flow 只真正依賴 grill-me）、ui-ux-pro-max plugin、預熱 Playwright Chromium
 
 **旗標**：`-SkipExternal`（跳過外部網路安裝）、`-SkipPlaywright`、`-ClaudeHome <path>`（裝到指定目錄，可測）、`-KarpathyPlugin`（額外裝 karpathy plugin；四原則本已 bake 進規則）。
 

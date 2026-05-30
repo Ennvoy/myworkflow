@@ -54,9 +54,10 @@ ok "hook 接線已 merge 進 settings.json"
 if [ "$SKIP_EXTERNAL" -eq 0 ]; then
   say "外部 skill 安裝"
 
-  MP_CMD='npx -y skills@latest add mattpocock/skills -s caveman -s grill-me -s handoff -s write-a-skill -g -a "*"'
+  # -g 全域、-a claude-code 只進 Claude Code（不散到 50+ agent）、--copy 避 Windows symlink 權限、-y 非互動
+  MP_CMD='npx -y skills@latest add mattpocock/skills -s caveman -s grill-me -s handoff -s write-a-skill -g -a claude-code --copy -y'
   if command -v npx >/dev/null 2>&1; then
-    if npx -y skills@latest add mattpocock/skills -s caveman -s grill-me -s handoff -s write-a-skill -g -a '*'; then
+    if npx -y skills@latest add mattpocock/skills -s caveman -s grill-me -s handoff -s write-a-skill -g -a claude-code --copy -y; then
       ok "mattpocock productivity skills 已全域安裝（caveman/grill-me/handoff/write-a-skill）"
     else warn "mattpocock skills 安裝失敗"; MANUAL+=("$MP_CMD"); fi
   else warn "找不到 npx，跳過 mattpocock"; MANUAL+=("$MP_CMD"); fi

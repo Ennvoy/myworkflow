@@ -82,12 +82,13 @@ Ok "hook 接線已 merge 進 settings.json（verify-gate / session-start）"
 if (-not $SkipExternal) {
   Say "外部 skill 安裝"
 
-  # 5a) mattpocock/skills — 只裝 productivity 4 個（Flow 用 grill-me；caveman/handoff/write-a-skill 為通用工具），全域 -g
+  # 5a) mattpocock/skills — 只裝 productivity 4 個（Flow 用 grill-me；其餘為通用工具）。
+  #     -g 全域、-a claude-code 只進 Claude Code（不散到 50+ 種 agent）、--copy 避 Windows symlink 權限、-y 非互動
   $npx = Get-Command npx -ErrorAction SilentlyContinue
-  $mpCmd = 'npx -y skills@latest add mattpocock/skills -s caveman -s grill-me -s handoff -s write-a-skill -g -a "*"'
+  $mpCmd = 'npx -y skills@latest add mattpocock/skills -s caveman -s grill-me -s handoff -s write-a-skill -g -a claude-code --copy -y'
   if ($npx) {
     try {
-      & npx -y skills@latest add mattpocock/skills -s caveman -s grill-me -s handoff -s write-a-skill -g -a '*'
+      & npx -y skills@latest add mattpocock/skills -s caveman -s grill-me -s handoff -s write-a-skill -g -a claude-code --copy -y
       if ($LASTEXITCODE -eq 0) { Ok "mattpocock productivity skills 已全域安裝（caveman/grill-me/handoff/write-a-skill）" }
       else { Warn "mattpocock skills 安裝非 0 退出，改列入手動步驟"; $manual.Add($mpCmd) }
     } catch { Warn "mattpocock skills 安裝失敗：$($_.Exception.Message)"; $manual.Add($mpCmd) }

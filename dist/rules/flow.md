@@ -42,7 +42,7 @@
 
 ## Context 預算（防腐化，效率與收束的根）
 
-- 可用上限約 **170k**、~147k 開始退化。**working context 壓在視窗 ~40–50% 以下**，碰 **~60% 觸發 `/flow-compact`**（別等變笨）。
+- 可用上限約 **170k**、~147k 開始退化。**working context 壓在視窗 ~40–50% 以下**，碰 **~70% 觸發 `/flow-compact`**（仍在 ~147k 硬退化前；別等變笨）。
 - root always-on 保持薄；reference / specs **on-demand 載入**，不預先全塞。
 - compaction **先刪最新的尾巴**保住 cache prefix（cache hit 價 = miss 的 1/10）、保留最近 5 個熱檔。
 - 吵雜/大 context 的工作丟**獨立 subagent**（context firewall），只收回 1–2k 蒸餾結果。

@@ -5,7 +5,7 @@ description: Flow 文件收束 — 把過大的 specs/狀態歸檔到 archive/�
 # /flow-compact — 文件收束（防無限寫入 + 防腐化）
 
 **何時跑（三條觸發，任一命中即收）**：
-1. **context**：利用率碰 ~60%（過程中防腐化）。
+1. **context**：利用率碰 ~70%（過程中防腐化）。
 2. **size**：任一 `specs/` 檔 > ~50KB（≈12K tokens）——小功能輕量路徑長期累積會膨脹，這條把它壓住（實證：大型專案 design/tasks 常衝到 100–255KB，光一檔吃掉 1/3 視窗）。
 3. **cycle**：`/flow-ship` 發 `COMPLETE` 後——把該迭代 delivered 細節歸檔，主檔只留「當前迭代 + 接縫契約 + 歷史一行索引」。
 （staleness：已 shipped feature 細節與 code 對不上時，併入 cycle 收束處理。）

@@ -31,7 +31,7 @@ description: Flow 一鍵總控 — 偵測起始 phase 並從該處接續，依�
 
 ## Step 2：context 預算自我監控
 
-長流程中留意 context 利用率，碰 ~60% → 主動建議 `/flow-compact` 收束再繼續（防腐化）。各階段把狀態寫進 `specs/` + `.flow/state.json`，**中斷後 `/flow-resume` 可無痛接手**。
+長流程中留意 context 利用率，碰 ~70% → 主動建議 `/flow-compact` 收束再繼續（防腐化）。各階段把狀態寫進 `specs/` + `.flow/state.json`，**中斷後 `/flow-resume` 可無痛接手**。
 
 ## 紀律
 - 不自己往下衝：每階段等使用者拍板。

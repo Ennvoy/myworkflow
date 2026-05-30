@@ -57,7 +57,7 @@ specs 一 concern 一檔、凍結後每迴圈重讀；**計畫是可丟棄／可
 
 ## 確定性閘門（模型不能假裝過關）
 
-git commit、`.flow/state.json` 寫入、port 清理、verify runner 呼叫都是**確定性節點**（hook/script），不靠模型判斷。`flow-verify-gate` hook 在 `verify` 空/`none` 時 exit 2 擋下 task 完成。
+git commit+push（走 `git-tools` skill：smart 分群提交＋安全推送）、`.flow/state.json` 寫入、port 清理、verify runner 呼叫都是**確定性節點**（hook/script/skill），不靠模型判斷。`flow-verify-gate` hook 在 `verify` 空/`none` 時 exit 2 擋下 task 完成。
 
 ## 語言與環境
 

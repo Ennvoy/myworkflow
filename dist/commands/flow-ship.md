@@ -33,7 +33,7 @@ description: Flow Phase 5 — 出貨收束。跨 feature 整合 e2e + 完整效�
 
 - 全系統驗證垃圾兜底清理（`/flow-verify` 同款 L0–L3 分層，失敗保留 artifact）。
 - D-source 改動 commit 前精準單點 revert（禁 `git checkout .`/`reset --hard`）。
-- 出貨準備：智慧 commit（移交 git-tools 風格）+ PR description（對應 REQ、列驗證證據與效能數字）。merge 衝突 / `.env` 等敏感檔才問使用者。
+- 出貨準備：**呼叫 `git-tools` skill** 做智慧 commit+push（push 失敗回報、不擅自 `--force`）+ PR description（對應 REQ、列驗證證據與效能數字）。merge 衝突 / `.env` 等敏感檔才問使用者。
 
 ## 完成判準（self-check）
 - [ ] 全 diff 獨立審查跑過、finding 全列、安全 red flag 已處理

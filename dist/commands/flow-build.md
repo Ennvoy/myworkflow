@@ -44,7 +44,7 @@ worker 回來 → 依拓樸序把 branch merge 回 trunk、解衝突。**安全/
 ## Step 5：feature 自身驗證 + per-task commit
 
 整個 feature 全層寫完 → 在 merged trunk 上跑**該 feature 的 happy path**（呼叫 `/flow-verify` 的窄範圍模式：Playwright headed + 真實資料鏈路 + 效能 budget）。**綠了才 commit**。
-- 完成一項：先 TaskUpdate completed → 再 `tasks.md` `[ ]`→`[x]`（**不跨段移動**）→ **per-task smart commit**（scope 帶 task ID，例 `feat(F-005): ...`）。commit 移交 git-tools 風格智慧提交。
+- 完成一項：先 TaskUpdate completed → 再 `tasks.md` `[ ]`→`[x]`（**不跨段移動**）→ **per-task commit+push 呼叫 `git-tools` skill**（scope 帶 task ID，例 `feat(F-005): ...`）：smart commit 後即 `git push`（trunk 已有 upstream → 直接推；**push 失敗只警告、不中斷 build**，網路問題不卡交付）。狀態進 git ＝ 換電腦 / 換 session 純讀檔即接得上。
 - 狀態落 `.flow/`（殺不死）：worker 綠 + merge → node 呼叫 `statelib.transition(root, id, 'building', 'delivered', { commit:<sha> })` + `actionDone(root, id, 'building')`；同步 `writeStateJson`（task/phase/verify/commit）給既有 `flow-verify-gate`/`flow-session-start` hook 讀。
 - commit 成功前不領下個 task；commit 失敗（hook/衝突）→ 整個 build 暫停告知。
 - `flow-verify-gate` hook 會在 `verify` 空/`none` 時擋下 TaskUpdate completed——**別沒真跑就填 `verify=ok`（系統性違規）**。
@@ -61,6 +61,6 @@ worker 回來 → 依拓樸序把 branch merge 回 trunk、解衝突。**安全/
 ## 完成判準（self-check）
 - [ ] foundation 先序列 merge、features 才平行（conflictZone 算準）
 - [ ] 每 feature 紅軍先行、worker 走 TDD + 真實資料鏈路（無 mock 假綠）
-- [ ] 每個完成的 task：TaskUpdate + tasks.md [x] + per-task commit 都做了
+- [ ] 每個完成的 task：TaskUpdate + tasks.md [x] + per-task commit+push（走 git-tools skill）都做了
 - [ ] BLOCKED / 安全 red flag 有暫停回報，沒靜默略過
 - [ ] 跨 feature 項已記進 X-*/Backlog 留給 ship

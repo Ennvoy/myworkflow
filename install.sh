@@ -54,11 +54,12 @@ ok "hook 接線已 merge 進 settings.json"
 if [ "$SKIP_EXTERNAL" -eq 0 ]; then
   say "外部 skill 安裝"
 
+  MP_CMD='npx -y skills@latest add mattpocock/skills -s caveman -s grill-me -s handoff -s write-a-skill -g -a "*"'
   if command -v npx >/dev/null 2>&1; then
-    if npx -y skills@latest add mattpocock/skills; then
-      ok "mattpocock/skills 已安裝"; MANUAL+=("在 Claude Code 內跑：/setup-matt-pocock-skills")
-    else warn "mattpocock skills 安裝失敗"; MANUAL+=("npx -y skills@latest add mattpocock/skills"); fi
-  else warn "找不到 npx，跳過 mattpocock"; MANUAL+=("npx -y skills@latest add mattpocock/skills"); fi
+    if npx -y skills@latest add mattpocock/skills -s caveman -s grill-me -s handoff -s write-a-skill -g -a '*'; then
+      ok "mattpocock productivity skills 已全域安裝（caveman/grill-me/handoff/write-a-skill）"
+    else warn "mattpocock skills 安裝失敗"; MANUAL+=("$MP_CMD"); fi
+  else warn "找不到 npx，跳過 mattpocock"; MANUAL+=("$MP_CMD"); fi
 
   UI_DONE=0
   if command -v claude >/dev/null 2>&1; then

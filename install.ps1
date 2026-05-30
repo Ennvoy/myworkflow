@@ -82,17 +82,18 @@ Ok "hook 接線已 merge 進 settings.json（verify-gate / session-start）"
 if (-not $SkipExternal) {
   Say "外部 skill 安裝"
 
-  # 6a) mattpocock/skills — npx（shell 可直接跑）
+  # 5a) mattpocock/skills — 只裝 productivity 4 個（Flow 用 grill-me；caveman/handoff/write-a-skill 為通用工具），全域 -g
   $npx = Get-Command npx -ErrorAction SilentlyContinue
+  $mpCmd = 'npx -y skills@latest add mattpocock/skills -s caveman -s grill-me -s handoff -s write-a-skill -g -a "*"'
   if ($npx) {
     try {
-      & npx -y skills@latest add mattpocock/skills
-      if ($LASTEXITCODE -eq 0) { Ok "mattpocock/skills 已安裝（之後在 Claude 內跑 /setup-matt-pocock-skills 設定）"; $manual.Add('在 Claude Code 內跑：/setup-matt-pocock-skills（設定 issue tracker / 文件位置）') }
-      else { Warn "mattpocock skills 安裝非 0 退出，改列入手動步驟"; $manual.Add('npx -y skills@latest add mattpocock/skills') }
-    } catch { Warn "mattpocock skills 安裝失敗：$($_.Exception.Message)"; $manual.Add('npx -y skills@latest add mattpocock/skills') }
-  } else { Warn "找不到 npx，跳過 mattpocock"; $manual.Add('npx -y skills@latest add mattpocock/skills') }
+      & npx -y skills@latest add mattpocock/skills -s caveman -s grill-me -s handoff -s write-a-skill -g -a '*'
+      if ($LASTEXITCODE -eq 0) { Ok "mattpocock productivity skills 已全域安裝（caveman/grill-me/handoff/write-a-skill）" }
+      else { Warn "mattpocock skills 安裝非 0 退出，改列入手動步驟"; $manual.Add($mpCmd) }
+    } catch { Warn "mattpocock skills 安裝失敗：$($_.Exception.Message)"; $manual.Add($mpCmd) }
+  } else { Warn "找不到 npx，跳過 mattpocock"; $manual.Add($mpCmd) }
 
-  # 6b) ui-ux-pro-max — Claude plugin（slash 指令需在 Claude 內跑；試 claude CLI）
+  # 5b) ui-ux-pro-max — Claude plugin（slash 指令需在 Claude 內跑；試 claude CLI）
   $claude = Get-Command claude -ErrorAction SilentlyContinue
   $uiMarket = 'nextlevelbuilder/ui-ux-pro-max-skill'
   $uiPlugin = 'ui-ux-pro-max@ui-ux-pro-max-skill'
@@ -110,7 +111,7 @@ if (-not $SkipExternal) {
     $manual.Add("在 Claude Code 內跑：/plugin install $uiPlugin")
   }
 
-  # 6c) karpathy — 預設不裝（四原則已 bake 進薄規則）；-KarpathyPlugin 才裝
+  # 5c) karpathy — 預設不裝（四原則已 bake 進薄規則）；-KarpathyPlugin 才裝
   if ($KarpathyPlugin) {
     $kMarket = 'multica-ai/andrej-karpathy-skills'   # 你指定的命名空間（其 README 上游為 forrestchang）
     $kPlugin = 'andrej-karpathy-skills@karpathy-skills'
@@ -121,7 +122,7 @@ if (-not $SkipExternal) {
     Ok "karpathy 四原則已 bake 進薄規則（未裝外部 plugin；要裝加 -KarpathyPlugin）"
   }
 
-  # 6d) Playwright 瀏覽器預熱（machine-level；@playwright/test 由各專案 /flow-verify 自行加）
+  # 5d) Playwright 瀏覽器預熱（machine-level；@playwright/test 由各專案 /flow-verify 自行加）
   if (-not $SkipPlaywright -and $npx) {
     try {
       Say "預熱 Playwright Chromium（首次較久）"

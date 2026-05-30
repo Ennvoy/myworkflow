@@ -44,7 +44,7 @@ requirements 含 LLM / 雲端 / 支付 / 行動 / 前端框架關鍵字 → **We
 
 **依賴分波（給多工用）**：標每個 task 的 `blockedBy`（依賴哪些 task）與 `conflictZone`（會改哪些檔/模組）。`/flow-build` 據此算「同一波可並行 = 依賴已完成 ∧ conflictZone 互不重疊」。共用檔/foundation 的 conflictZone 會跟很多 feature 重疊 → 自然被排到前面序列做。
 
-水平拆解類（cli/api/framework）：Features 段語意改成「功能模組」（能獨立驗收的模組，不必 user-facing），其餘不變。
+水平拆解類（cli/api/framework/desktop-gui）：Features 段語意改成「功能模組」（能獨立驗收的模組，不必 user-facing），其餘不變。
 
 ## Step 5：凍結閘門
 

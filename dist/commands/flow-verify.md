@@ -66,6 +66,7 @@ bind/listen port 的產出物驗證前 SHALL 清 port：偵測 PID → 是本專
 | 型別 | 綠燈條件 |
 |---|---|
 | Web 前端 | production build + Playwright headed + console/pageerror 零 + 真實資料鏈路 + 效能 budget |
+| 桌面 GUI（Tkinter/PyQt/PySide/Electron） | 真啟動 app（Linux/CI 用 xvfb 虛擬顯示）+ 程式化驅動真互動（PyQt/PySide→pytest-qt 點按鈕/斷言 widget·signal；Electron→Playwright 直驅）+ 視窗真出現、無 traceback + 涉資料走真實鏈路（seed 真 DB→GUI 操作→真讀回，禁 mock）；無法程式化驅動→啟動 smoke+screenshot 存證；真環境不可能→人工親眼確認+寫報告 |
 | 後端 API | 服務啟動 + health + 打關鍵 endpoint 驗 status/shape（真 DB）+ 啟動 log 無 error |
 | DB migration | 套到可拋棄 DB 成功 + schema 物件存在 + round-trip |
 | CLI/腳本 | 真執行代表性參數（destructive 先 --dry-run）→ exit 0、無 traceback |

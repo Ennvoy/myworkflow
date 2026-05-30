@@ -29,6 +29,7 @@
 | 型別 | 偵測訊號 | 綠燈條件 |
 |---|---|---|
 | Web 前端 | SPA/SSR/index.html | production build（禁 dev server）+ Playwright headed + console/pageerror 零 + 真實資料鏈路 + 效能 budget + 關鍵 UI 斷言 |
+| 桌面 GUI | Tkinter/PyQt/PySide/Electron、`mainloop()`/`QApplication`/electron main | 真啟動 app（Linux/CI 用 xvfb）+ 程式化驅動真互動（PyQt/PySide→pytest-qt；Electron＝Chromium→Playwright 直驅）+ 視窗真出現、無 traceback/stderr error + 涉資料走真實鏈路（禁 mock）；無法驅動→啟動 smoke+screenshot；真不可能→人工確認+報告（比照 §五保底階梯） |
 | 後端 API | server framework | 服務啟動 + health + 打關鍵 endpoint 驗 status/shape（真 DB）+ 啟動 log 無 error |
 | DB migration | migration 檔 | 套到可拋棄 DB 成功 + schema 物件存在 +（有 down）round-trip |
 | CLI/腳本 | entrypoint/`__main__`/bin | 真執行代表性參數（destructive 先 `--help`/`--dry-run`）→ exit 0、無 traceback/stderr error |

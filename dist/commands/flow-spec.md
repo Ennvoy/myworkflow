@@ -12,7 +12,7 @@ description: Flow Phase 1 — 訪談定版。蘇格拉底式一次一題彈窗�
 
 讀使用者那句需求，判定類型並記到 `.flow/state.json` 的 `projectType`：
 - `web-saas` / `web-app` / `mobile`：走**垂直切片**（§ tasks），**且** Step 5 要做 UI mockup。
-- `cli` / `api` / `data-pipeline` / `library` / `framework`：走**水平拆解**（功能模組），**跳過** Step 5 UI mockup。
+- `cli` / `api` / `data-pipeline` / `library` / `framework` / `desktop-gui`：走**水平拆解**（功能模組），**跳過** Step 5 UI mockup（`desktop-gui` 的原生視窗用 HTML/Tailwind mockup 不具代表性，故同列跳過）。
 - 含「使用者/角色/權限/後台/admin」字樣 → Step 3 自動注入動態 RBAC 需求（禁 hardcode 角色；初始只 seed 一個 super admin）。
 
 ## Step 2：蘇格拉底訪談（一次一題彈窗，這是鐵則）

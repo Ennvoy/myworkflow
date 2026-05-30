@@ -33,23 +33,20 @@ warn() { echo "   !!  $1" >&2; }
 command -v node >/dev/null 2>&1 || { echo "找不到 node（Claude Code 必備），請先安裝 Node.js" >&2; exit 1; }
 
 say "安裝目標 ClaudeHome = $CLAUDE_HOME"
-mkdir -p "$CLAUDE_HOME"/{commands,skills,rules,hooks}
+mkdir -p "$CLAUDE_HOME"/{commands,skills,rules,hooks,agents}
 
 SETTINGS="$CLAUDE_HOME/settings.json"
-CLAUDE_MD="$CLAUDE_HOME/CLAUDE.md"
 [ -f "$SETTINGS" ] && { cp "$SETTINGS" "$CLAUDE_HOME/settings.flow-backup-$STAMP.json"; ok "已備份 settings.json"; }
-[ -f "$CLAUDE_MD" ] && { cp "$CLAUDE_MD" "$CLAUDE_HOME/CLAUDE.flow-backup-$STAMP.md"; ok "已備份 CLAUDE.md"; }
 
 say "複製 Flow 檔案"
 cp -f "$DIST"/commands/* "$CLAUDE_HOME/commands/"
 cp -Rf "$DIST"/skills/flow-toolkit "$CLAUDE_HOME/skills/"
+cp -Rf "$DIST"/skills/git-tools "$CLAUDE_HOME/skills/"
 cp -f "$DIST"/rules/flow.md "$CLAUDE_HOME/rules/flow.md"
 cp -f "$DIST"/hooks/flow-verify-gate.mjs "$CLAUDE_HOME/hooks/"
 cp -f "$DIST"/hooks/flow-session-start.mjs "$CLAUDE_HOME/hooks/"
-ok "commands / skills/flow-toolkit / rules/flow.md / hooks 已就位"
-
-node "$DIST/install/merge-claudemd.mjs" "$CLAUDE_MD" "$DIST/rules/flow.md"
-ok "薄規則已注入 CLAUDE.md 的 FLOW 區塊"
+cp -Rf "$DIST"/agents/* "$CLAUDE_HOME/agents/"
+ok "commands / skills/flow-toolkit / skills/git-tools（commit+push+PR）/ rules/flow.md / hooks / agents 已就位"
 
 node "$DIST/install/merge-settings.mjs" "$SETTINGS" "$DIST/hooks/settings.flow.json" "$CLAUDE_HOME"
 ok "hook 接線已 merge 進 settings.json"
@@ -105,7 +102,7 @@ POST="$CLAUDE_HOME/FLOW-POST-INSTALL.md"
   echo
   echo "## 驗證安裝"
   echo "- 重開 Claude Code，打 /flow 應看到一鍵總控。"
-  echo "- ~/.claude/CLAUDE.md 應含 FLOW:BEGIN/END 區塊。"
+  echo "- ~/.claude/rules/flow.md 應存在（rules/ 每 session 自動載入）。"
   echo "- ~/.claude/settings.json 的 hooks 應含 flow-verify-gate 與 flow-session-start。"
 } > "$POST"
 ok "已寫 FLOW-POST-INSTALL.md"

@@ -52,42 +52,33 @@ foreach ($d in 'commands', 'skills', 'rules', 'hooks', 'agents') {
   New-Item -ItemType Directory -Force -Path (Join-Path $ClaudeHome $d) | Out-Null
 }
 
-# 2) 備份既有 settings.json / CLAUDE.md
+# 2) 備份既有 settings.json
 $settingsPath = Join-Path $ClaudeHome 'settings.json'
-$claudeMd = Join-Path $ClaudeHome 'CLAUDE.md'
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 if (Test-Path $settingsPath) {
   Copy-Item $settingsPath (Join-Path $ClaudeHome "settings.flow-backup-$stamp.json")
   Ok "已備份 settings.json（settings.flow-backup-$stamp.json）"
-}
-if (Test-Path $claudeMd) {
-  Copy-Item $claudeMd (Join-Path $ClaudeHome "CLAUDE.flow-backup-$stamp.md")
-  Ok "已備份 CLAUDE.md（CLAUDE.flow-backup-$stamp.md）"
 }
 
 # 3) 複製 Flow payload（只覆蓋 Flow 自有檔，不動其他）
 Say "複製 Flow 檔案"
 Copy-Item (Join-Path $Dist 'commands\*') (Join-Path $ClaudeHome 'commands') -Recurse -Force
 Copy-Item (Join-Path $Dist 'skills\flow-toolkit') (Join-Path $ClaudeHome 'skills') -Recurse -Force
+Copy-Item (Join-Path $Dist 'skills\git-tools') (Join-Path $ClaudeHome 'skills') -Recurse -Force
 Copy-Item (Join-Path $Dist 'rules\flow.md') (Join-Path $ClaudeHome 'rules\flow.md') -Force
 Copy-Item (Join-Path $Dist 'hooks\flow-verify-gate.mjs') (Join-Path $ClaudeHome 'hooks') -Force
 Copy-Item (Join-Path $Dist 'hooks\flow-session-start.mjs') (Join-Path $ClaudeHome 'hooks') -Force
 Copy-Item (Join-Path $Dist 'agents\*') (Join-Path $ClaudeHome 'agents') -Recurse -Force
 $cmdCount = (Get-ChildItem (Join-Path $ClaudeHome 'commands') -Filter 'flow*.md').Count
 $agentCount = (Get-ChildItem (Join-Path $ClaudeHome 'agents') -Filter '*.md' -ErrorAction SilentlyContinue).Count
-Ok "commands（$cmdCount 個 flow*.md）/ skills/flow-toolkit / rules/flow.md / hooks / agents（$agentCount 個：red-team/code-reviewer/spec-reviewer）已就位"
+Ok "commands（$cmdCount 個 flow*.md）/ skills/flow-toolkit / skills/git-tools（commit+push+PR）/ rules/flow.md / hooks / agents（$agentCount 個：red-team/code-reviewer/spec-reviewer）已就位"
 
-# 4) 注入薄規則進 CLAUDE.md（保證 always-on，不依賴 @import 支援）
-& node (Join-Path $Dist 'install\merge-claudemd.mjs') $claudeMd (Join-Path $Dist 'rules\flow.md')
-if ($LASTEXITCODE -ne 0) { throw "CLAUDE.md 注入失敗（exit $LASTEXITCODE）" }
-Ok "薄規則已注入 CLAUDE.md 的 FLOW 區塊"
-
-# 5) merge hook 接線進 settings.json
+# 4) merge hook 接線進 settings.json
 & node (Join-Path $Dist 'install\merge-settings.mjs') $settingsPath (Join-Path $Dist 'hooks\settings.flow.json') $ClaudeHome
 if ($LASTEXITCODE -ne 0) { throw "settings.json merge 失敗（exit $LASTEXITCODE）。已備份，請檢查既有 settings.json 是否合法 JSON。" }
 Ok "hook 接線已 merge 進 settings.json（verify-gate / session-start）"
 
-# 6) 外部 skill 安裝（依補充指定；用各自官方指令）
+# 5) 外部 skill 安裝（依補充指定；用各自官方指令）
 if (-not $SkipExternal) {
   Say "外部 skill 安裝"
 
@@ -141,7 +132,7 @@ if (-not $SkipExternal) {
 }
 else { Say "已指定 -SkipExternal，跳過外部 skill 與 Playwright" }
 
-# 7) 寫 POST-INSTALL.md（手動步驟備忘）
+# 6) 寫 POST-INSTALL.md（手動步驟備忘）
 $postPath = Join-Path $ClaudeHome 'FLOW-POST-INSTALL.md'
 $post = @()
 $post += "# Flow 安裝後手動步驟（$stamp）"
@@ -155,12 +146,12 @@ if ($manual.Count -gt 0) {
 $post += ""
 $post += "## 驗證安裝"
 $post += "- 重開 Claude Code，打 /flow 應看到一鍵總控；/flow-spec /flow-plan /flow-build /flow-verify /flow-ship 應齊全。"
-$post += "- ~/.claude/CLAUDE.md 應含 FLOW:BEGIN/END 區塊。"
+$post += "- ~/.claude/rules/flow.md 應存在（rules/ 每 session 自動載入，等同 CLAUDE.md 優先級）。"
 $post += "- ~/.claude/settings.json 的 hooks 應含 flow-verify-gate 與 flow-session-start。"
 [IO.File]::WriteAllText($postPath, ($post -join "`r`n"), (New-Object Text.UTF8Encoding($false)))
 Ok "已寫 FLOW-POST-INSTALL.md"
 
-# 8) 總結
+# 7) 總結
 Say "安裝完成" 'Green'
 if (-not $Quiet) {
   Write-Host ""

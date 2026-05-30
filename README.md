@@ -22,11 +22,11 @@
 
 ```powershell
 # Windows（主力）
-git clone <repo> flow ; cd flow ; ./install.ps1
+git clone https://github.com/Ennvoy/myworkflow.git flow ; cd flow ; ./install.ps1
 ```
 ```bash
 # mac / linux
-git clone <repo> flow && cd flow && chmod +x install.sh && ./install.sh
+git clone https://github.com/Ennvoy/myworkflow.git flow && cd flow && chmod +x install.sh && ./install.sh
 ```
 
 安裝完**重開 Claude Code**，在你的專案資料夾打 `/flow` 開始（或 `/flow-spec` 從需求訪談起）。

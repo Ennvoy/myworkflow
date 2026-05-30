@@ -1,0 +1,76 @@
+# Flow 架構與設計理由
+
+> 把 [`research/harness-engineering-findings.md`](research/harness-engineering-findings.md) 的研究結論，落成可執行的工作流。本檔說明「為什麼這樣設計」。
+
+## 1. 一句話架構
+
+Flow = **5 階段 spec-driven 流程** + **3 條跨階段主軸**（context 預算 / 檔案耐久狀態 / 確定性閘門）。模型是可抽換的 CPU，Flow 是管它的 OS。
+
+```
+/flow-spec ──▶ /flow-plan ──▶ /flow-build ──▶ /flow-verify ──▶ /flow-ship
+  訪談定版      架構分波        多工交付          獨立驗證          整合出貨
+   │             │              │ (波次內並行)      │ (獨立 context)    │
+   ▼             ▼              ▼                  ▼                  ▼
+ specs/        specs/         worktree           Playwright         完成謂詞
+ requirements  design+tasks   workers            真實資料鏈路        → COMPLETE
+   └──────────── 人工閘門（你拍板）每階段之間 ────────────────────────┘
+```
+
+## 2. 狀態機與檔案耐久狀態
+
+Flow 的狀態**全在磁碟**，不在對話 context（harness 鐵則：狀態外部化 → agent 可拋棄、可恢復、純讀檔接手）。
+
+- `specs/requirements.md`（凍結）→ `specs/design.md` + `specs/tasks.md` → 各 feature worktree branch → merged trunk。
+- `.flow/state.json`（5 欄機讀狀態）：
+  ```json
+  { "phase": "plan-done", "task": "F-2", "tdd": "green", "verify": "ok:tests/e2e/items.realdata.spec.ts", "commit": "a1b2c3d" }
+  ```
+  - `phase`：spec-done / plan-done / building / shipped
+  - `tdd`：none / red:<ref> / green / refactored / n/a / skipped:<reason>
+  - `verify`：none / ok:<證據ref>
+  - 寫入時機：每個 action **write-ahead**（先寫意圖再做），確定性節點不靠模型判斷。
+- `phase` 偵測讓 `/flow`、`/flow-resume` 從對的地方接續，不重做已 delivered 的。
+
+## 3. 五階段設計理由
+
+### Phase 1 `/flow-spec` — 為什麼「對話優先 + 凍結」
+研究：別一次性叫 agent 直接做（context anxiety → 抄捷徑）。先長談需求 → 寫成 specs 檔 → 凍結 → 之後每迴圈確定性重讀同一份（「stack 每次同樣方式配置」）。UI-first：方向錯在幾頁靜態 HTML 擋掉，比 build 到一半才發現便宜 10 倍。彈窗一次一題對齊「模型評估 breadth 易失準」與使用者真正的決策需求。
+
+### Phase 2 `/flow-plan` — 為什麼「接縫契約釘一處 + 計畫可丟棄」
+研究：Böckeler「約束解空間」——跨層介面用單一 type/schema 釘死，**編譯期**就擋「API 形狀 ≠ UI 期望」。計畫是可從 requirements 再生的，別當聖物無止盡打磨（打磨同一個檔 = context 腐化來源）。
+
+### Phase 3 `/flow-build` — 為什麼「混合多工 + worktree 隔離」
+研究：Anthropic orchestrator-worker（Opus lead + Sonnet workers 勝單 Opus 90.2%）；Stripe 預熱 sandbox 平行；多工 ~15x token 故只在真平行+高價值才 fan-out。混合基座 = 波次內 Workflow 腳本確定性 fan-out（可重播、背景跑）+ 階段間人工閘門（研究一致建議人在 spec/每輪/deploy 三點）。foundation 先序列、features 才並行（conflictZone 算重疊避免 merge 地獄）。每 worker 小盒子工具（curated subset，避免 40+ tool def 吃半個視窗）。
+
+### Phase 4 `/flow-verify` — 為什麼「獨立 Evaluator + 真實資料鏈路」
+研究最強的一塊：
+- **模型評自己 = 病態樂觀者**（幾乎一律給自己高分）→ Evaluator 必須**結構性獨立**（全新 context、只看檔案、對抗人設、few-shot 嚴格）。
+- **Böckeler：behavioral 驗證是公認未解的硬問題**——綠 build/過 lint 都不等於功能會動 → Playwright headed 真點擊。
+- **真實資料鏈路**（補充需求的可驗定義）：假資料經真 create API seed 進真 DB → UI→真 API→真 DB 讀回。同時驗 (a) API 接通 (b) 資料正確性 scope (c) 真 DB 效能。mock 把這三者全跳過 = 系統性假綠。
+- **永不信任 exit 0**（rendering gap）：斷言實際產物，不是看 code。
+
+### Phase 5 `/flow-ship` — 為什麼「完成謂詞」
+研究：Ralph 完成訊號——「無限迴圈」其實有終點（所有 story pass → COMPLETE + MAX_ROUNDS）。Flow 完成謂詞 = 所有 task `[x]` ∧ 所有 REQ-E2E 綠 ∧ 所有 REQ-PERF 達 budget ∧ X-* 清空 → 發 COMPLETE 停止迭代。**這是防無限寫入的終點**：滿足就收，不再打磨。
+
+## 4. 三條跨階段主軸
+
+### A. Context 預算（防腐化 = 效率 + 收束的根）
+n² attention：可用上限 ~170k、~147k 退化、>60% 變笨。ETH 實證巨型 always-on 檔 −3% 成功率 +20% 成本。對策：薄 root（`rules/flow.md` ~95 行目錄）+ on-demand reference + subagent context firewall（只回 1–2k 蒸餾）+ compaction 先刪尾保 cache prefix（hit 價 = miss 1/10）。
+
+### B. 檔案耐久狀態（多工 + 恢復的根）
+Anthropic Managed Agents「brain/hands/session 解耦」+ append-only event log + wake/resume。Flow：狀態進 specs/+.flow/+git，worker 是 worktree 隔離的 cattle，殺不死、純讀檔 resume。
+
+### C. 確定性閘門（防假裝過關）
+Stripe「確定性節點夾住 agentic 迴圈」：git/commit/state 寫入/verify runner 是確定性 hook/script，不靠模型判斷。`flow-verify-gate` hook 在 verify 空/none 時 exit 2 擋下 TaskUpdate completed——模型沒真跑就過不了關。
+
+## 5. 為什麼 hook 用 Node 不用 PowerShell
+
+要跨平台一份檔通吃 Windows/mac/linux，且**避開 PS 5.1 + 中文的 cp950/BOM 地雷**（讀寫含中文必亂碼）。Claude Code 必有 Node → Node `.mjs` 是最可攜、最穩的選擇。安裝期的 JSON/CLAUDE.md merge 也用 Node helper（PS5.1 的 JSON 處理不可靠）。
+
+## 6. 安裝模型（可攜性）
+
+`install.ps1`/`install.sh` 把 `dist/` 視為唯一真相，複製進 `~/.claude`、Node helper 做 settings/CLAUDE.md 的冪等 merge、跑外部官方安裝指令。`-ClaudeHome` 參數讓安裝可指向拋棄式 temp 目錄做驗證（驗證安裝檔本身也走「真跑綠燈」紀律）。slash-command 類的 plugin（ui-ux-pro-max）無法被 shell 直接跑 → 試 `claude` CLI、否則寫進 `FLOW-POST-INSTALL.md` 誠實列為手動步驟（不假裝成功）。
+
+## 7. 與既有 harness 框架的關係
+
+Flow 是「**薄 harness + fat skills**」哲學的實作：把可商品化的 file I/O / shell / diff / lint / retry 交給 Claude Code runtime，自己只建**領域判斷層**（訪談紀律、垂直切片、真實資料鏈路驗證、效能硬閘門、確定性閘門）——這層才是 sticky 的護城河。model 當可一行抽換的參數，不 hardcode model-specific 行為。

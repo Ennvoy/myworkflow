@@ -1,0 +1,43 @@
+---
+description: Flow Phase 5 — 出貨收束。跨 feature 整合 e2e + 完整效能 budget + 全 diff 獨立審查 + 清 X-* cross-cutting + 達成完成謂詞，準備出貨
+---
+
+# /flow-ship — Phase 5：跨 feature 整合 + 收束出貨
+
+**目標**：把各自驗過的 features 串成整體驗收，達成**完成謂詞**才出貨。**不重跑單個 feature 的驗證**（那在 `/flow-build` 已做），只做 per-feature 跑不了的跨 feature 事。
+
+## Step 1：全 diff 獨立審查（藍軍）
+
+對 `main..HEAD` 全 diff 跑獨立 `code-reviewer` subagent（另開 context）：紅軍提的攻擊面是否真有防禦、每個 REQ 找不找得到對應實作、code smell、安全/效能潛在問題。**finding 不論是否在本次 diff 範圍 SHALL 全列**（順手修紀律）；安全 red flag 一律暫停。diff 含 auth/RBAC/migration/payment/金錢/個資 → 建議跑 codex 獨立對抗審查（裝了才問）。
+
+## Step 2：跨 feature 整合 journey
+
+跑 `references/playwright-real-data-template.md` 三鐵則，對象是**單 feature 驗不到的**：
+- `REQ-E2E-*` 跨 feature workflow（feature A 的輸出餵進 feature C 的串接）
+- **auth / role 橫切矩陣**（不同角色看到/做得到不同的事，驗 scope 正確）
+- 真實資料鏈路（真後端真 DB、禁 mock），headed 序列跑（headed 無法多開）
+
+## Step 3：完整效能 budget（僅 REQ-PERF-*）
+
+對所有 `REQ-PERF-*` 跑完整效能驗收（`references/perf-budget.md`）：load + render + API 延遲，p50 + p95，**任一維度不達標 = FAIL**（硬閘門不准平均）。讀取/渲染太慢一律不放行。
+
+## Step 4：Cross-cutting 必清檢查
+
+`specs/tasks.md` 的 `X-*` 段**全部 `[x]` 才放行**；未清 → 暫停列出，問使用者本輪清還是進 Backlog（明說延後才寫 Backlog 留紀錄）。
+
+## Step 5：完成謂詞（收束的終點）
+
+檢查：**所有 `tasks.md` F-*/P-* `[x]` ∧ 所有 `REQ-E2E-*` 綠 ∧ 所有 `REQ-PERF-*` 達 budget ∧ X-* 清空**。全中 → 寫 state.json `phase="shipped"`、發完成訊號 `<promise>COMPLETE</promise>`，**停止迭代**（防無限寫入：滿足謂詞就收，不再打磨）。任一未中 → 回對應階段，**不准出通過報告**。
+
+## Step 6：全系統垃圾兜底 + 出貨準備
+
+- 全系統驗證垃圾兜底清理（`/flow-verify` 同款 L0–L3 分層，失敗保留 artifact）。
+- D-source 改動 commit 前精準單點 revert（禁 `git checkout .`/`reset --hard`）。
+- 出貨準備：智慧 commit（移交 git-tools 風格）+ PR description（對應 REQ、列驗證證據與效能數字）。merge 衝突 / `.env` 等敏感檔才問使用者。
+
+## 完成判準（self-check）
+- [ ] 全 diff 獨立審查跑過、finding 全列、安全 red flag 已處理
+- [ ] 跨 feature e2e + auth/role 矩陣綠（真實資料鏈路）
+- [ ] 所有 REQ-PERF-* 達 budget（p50+p95）
+- [ ] X-* 清空、完成謂詞全中、發 COMPLETE
+- [ ] 出貨物（commit/PR）就緒，驗證證據附上

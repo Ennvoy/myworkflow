@@ -1,0 +1,26 @@
+{
+  "_comment": "Flow hook 註冊片段。安裝檔會把 {{CLAUDE_HOME}} 換成實際路徑（用正斜線，Node 在 Windows 也吃）後 merge 進 ~/.claude/settings.json。node 須在 PATH（Claude Code 必有）。",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "TaskUpdate",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"{{CLAUDE_HOME}}/hooks/flow-verify-gate.mjs\""
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"{{CLAUDE_HOME}}/hooks/flow-session-start.mjs\""
+          }
+        ]
+      }
+    ]
+  }
+}

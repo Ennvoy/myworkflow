@@ -33,10 +33,12 @@ git clone https://github.com/Ennvoy/myworkflow.git flow && cd flow && chmod +x i
 
 安裝檔（**冪等可重跑、自動備份**）會：
 - 把 `dist/` 的 commands / agents / skills / rules / hooks 裝進 `~/.claude`
-- 薄規則注入 `CLAUDE.md`、hook 接線進 `settings.json`
+- 薄規則放進 `~/.claude/rules/flow.md`（rules/ 每 session 自動載入，等同 CLAUDE.md 優先級，不改寫你的 CLAUDE.md）、hook 接線進 `settings.json`
 - 裝外部依賴：整套 [mattpocock/skills](https://github.com/mattpocock/skills)（含 grill-me）、ui-ux-pro-max plugin、預熱 Playwright Chromium
 
 **旗標**：`-SkipExternal`（跳過外部網路安裝）、`-SkipPlaywright`、`-ClaudeHome <path>`（裝到指定目錄，可測）、`-KarpathyPlugin`（額外裝 karpathy plugin；四原則本已 bake 進規則）。
+
+**移除**：`./uninstall.ps1`（mac/linux：`./uninstall.sh`）。移除 Flow 自有檔（commands / agents / flow-toolkit / rules/flow.md / hooks）並從 `settings.json` 反向拔除 hook 接線；編輯前自動備份、冪等可重跑。預設**保留 git-tools**（commit+push 機制獨立可用），要一起清加 `-RemoveGitTools`（sh：`--remove-git-tools`）。先看會刪什麼用 `-DryRun`（sh：`--dry-run`）。外部 skill 屬第三方不自動移除。
 
 ---
 
@@ -46,7 +48,7 @@ git clone https://github.com/Ennvoy/myworkflow.git flow && cd flow && chmod +x i
 |---|---|---|
 | `/flow-spec` | 訪談定版 | 蘇格拉底一次一題彈窗 + grill-me 深挖 + 獨立 spec-reviewer → 凍結 `requirements.md`(EARS) → ui-ux-pro-max 產 HTML mockup、開瀏覽器、彈窗定 UI |
 | `/flow-plan` | 設計 | 架構 + **接縫契約釘一處**（編譯期擋發散）+ 垂直切片 + 依賴分波 |
-| `/flow-build` | 多工交付 | 波次內 Workflow 腳本 fan-out **worktree 隔離**平行 worker，紅軍 → TDD → 真實資料鏈路自檢 → per-task commit |
+| `/flow-build` | 多工交付 | 波次內 Workflow 腳本 fan-out **worktree 隔離**平行 worker，紅軍 → TDD → 真實資料鏈路自檢 → per-task commit+push（走 git-tools skill） |
 | `/flow-verify` | 獨立驗證 | 另開 context 的**對抗性 Evaluator** 用 Playwright headed 真點擊、打真 API、查真 DB；效能硬閘門 |
 | `/flow-ship` | 整合出貨 | 跨 feature e2e + 完整效能 + 全 diff `code-reviewer` 審查 + 達成**完成謂詞** → 發 `COMPLETE` |
 
@@ -65,7 +67,7 @@ git clone https://github.com/Ennvoy/myworkflow.git flow && cd flow && chmod +x i
 - **可恢復狀態（殺不死）**：write-ahead journal + 冷啟動 `reconstruct`，狀態寫進 `.flow/` + git；關機 / 換 session / 換電腦純讀檔接手，**並行多 worker 的中斷點各自獨立、不互蓋**。
 - **即時監控看板**：`/flow-monitor` 唯讀投影 `specs/tasks.md` + `.flow/`，淺色 glassmorphism、5 階段 ribbon、完成謂詞面板、決策卡導回 Claude 彈窗；build / resume 進場冪等自動開。
 - **紅藍軍獨立 reviewer**：red-team（寫 code 前列攻擊面 + failingTestHint）、code-reviewer（出貨前全 diff 審）、spec-reviewer（需求審查）——各自獨立 context、看不到主對話。
-- **確定性閘門**：git commit、`.flow` 狀態寫入、port 清理、verify runner 都是 hook / script 確定性節點，模型不能假裝過關。
+- **確定性閘門**：git commit+push（走 git-tools skill：智慧分群提交＋安全推送）、`.flow` 狀態寫入、port 清理、verify runner 都是 hook / script / skill 確定性節點，模型不能假裝過關。
 - **文件收束防腐化**：context 60% / 單檔 > 50KB / ship `COMPLETE` 三觸發歸檔，主檔保持「當前迭代 + 接縫契約 + 索引」精簡態。
 - **自包含一鍵裝**：commands / agents / skills / rules / hooks 全打包，冪等可重跑、自動備份，新電腦 `git clone` → 跑一支 script 即可。
 
@@ -76,6 +78,7 @@ git clone https://github.com/Ennvoy/myworkflow.git flow && cd flow && chmod +x i
 ```
 flow/
 ├── install.ps1 / install.sh   # 安裝檔（Win 主力 / *nix 鏡像），冪等、自動備份
+├── uninstall.ps1 / uninstall.sh # 反安裝檔：移除 Flow 自有檔 + 反向拔 settings.json hook（預設保留 git-tools）
 ├── README.md / VERSION / LICENSE
 ├── docs/                       # architecture + harness 研究 + 設計檔
 └── dist/                       # 安裝 payload（裝進 ~/.claude）
@@ -83,8 +86,9 @@ flow/
     ├── agents/                 # red-team / code-reviewer / spec-reviewer
     ├── rules/flow.md           # 薄 root 憲法（注入 CLAUDE.md）
     ├── skills/flow-toolkit/    # references + recipes（Workflow 腳本）+ statelib/dashboard/flow-state.mjs + board.html
+    ├── skills/git-tools/       # 智慧分群 commit + 安全 push + PR description（Flow commit+push 機制）
     ├── hooks/                  # flow-verify-gate.mjs / flow-session-start.mjs（Node，跨平台）
-    └── install/                # merge-settings.mjs / merge-claudemd.mjs（安裝期 helper）
+    └── install/                # merge-settings.mjs（裝：hook 接線進 settings.json）/ flow-uninstall.mjs（卸：反向拔 hook + 清舊 FLOW 區塊）
 ```
 
 ---

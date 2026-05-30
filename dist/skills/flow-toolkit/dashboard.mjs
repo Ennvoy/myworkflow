@@ -15,7 +15,7 @@ const PORT = +(process.argv[3]) || 4317;          // 偏好 port；占用自動 
 
 const SECTION_RE = /^#{1,3}\s*(Prelude|Features|Cross-?cutting|Backlog)/i;
 const TASK_RE = /^\s*[-*]\s*\[([ xX])\]\s*(.+)$/;
-const ID_RE = /^([A-Z][A-Za-z]*-[\w.]+)\b\s*(.*)$/;
+const ID_RE = /^([A-Z][A-Za-z]*(?:-[\w.]+)+)\b\s*(.*)$/;
 
 // 容錯解析 tasks.md：抓所有 [ ]/[x] + 最近章節 + blockedBy 續行。無標準三層標題就平鋪（section=''）。
 function parseTasks(md) {

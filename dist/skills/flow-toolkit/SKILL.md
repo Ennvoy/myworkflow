@@ -41,6 +41,6 @@ description: Flow 工作流的參考檔倉庫與提示者。當使用者談到�
 
 ## 三條跨階段主軸（憲法摘要，細節見各 reference）
 
-1. **Context 預算**：working set 壓 < 視窗 40–50%、碰 70% 收束、薄 root、細節 on-demand、subagent context firewall。
+1. **Context 預算**：working set 壓 < 視窗 40–50%、specs 檔 >50KB 收束（flow-size-check hook）、薄 root、細節 on-demand、subagent context firewall。
 2. **檔案耐久狀態**：specs/ + .flow/state.json + git；agent 可拋棄可恢復、純讀檔接手。
 3. **確定性閘門**：commit / state 寫入 / verify runner 是確定性節點，模型不能假裝過關。

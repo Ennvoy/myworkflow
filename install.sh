@@ -45,6 +45,7 @@ cp -Rf "$DIST"/skills/git-tools "$CLAUDE_HOME/skills/"
 cp -f "$DIST"/rules/flow.md "$CLAUDE_HOME/rules/flow.md"
 cp -f "$DIST"/hooks/flow-verify-gate.mjs "$CLAUDE_HOME/hooks/"
 cp -f "$DIST"/hooks/flow-session-start.mjs "$CLAUDE_HOME/hooks/"
+cp -f "$DIST"/hooks/flow-size-check.mjs "$CLAUDE_HOME/hooks/"
 cp -Rf "$DIST"/agents/* "$CLAUDE_HOME/agents/"
 ok "commands / skills/flow-toolkit / skills/git-tools（commit+push+PR）/ rules/flow.md / hooks / agents 已就位"
 

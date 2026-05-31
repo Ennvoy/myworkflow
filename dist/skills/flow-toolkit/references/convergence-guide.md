@@ -4,10 +4,10 @@
 - **過程中的 context 衛生** = `/flow-compact`（讓長流程不腐化）
 - **真的做完了** = `/flow-ship` 的**完成謂詞**（防無限寫入的終點）
 
-## 一、context 預算（防腐化）
+## 一、working set 精簡（防腐化）
 
-- 可用上限約 **170k**、~147k 開始退化；利用率越高 attention 越稀釋（n² 效應，~60% 起漸糊、~147k 明顯退化）。
-- **working set 壓在視窗 ~40–50% 以下**，碰 **~70% 觸發 `/flow-compact`**（在 ~147k 硬退化前收；別等模型開始抄捷徑、提早草草收尾——這叫 context anxiety）。
+- **working set 壓在視窗 ~40–50% 以下**保持精簡（利用率越高 attention 越稀釋，n² 效應）。
+- **`/flow-compact` 由 SDD 檔案大小觸發**：`specs/` 任一檔 >50KB → `flow-size-check` hook（SessionStart + 送訊息時）`statSync` 確定性偵測、自動提醒歸檔已交付細節。
 - **薄 root + on-demand**：always-on 只放憲法目錄，specs / reference 用到才載。
 - **subagent context firewall**：吵雜/大 context 工作丟獨立 subagent，只收回 1–2k 蒸餾結果。
 - **just-in-time 讀取**：傳檔案路徑/handle，不把整個檔內容塞進 prompt；用 Grep/Glob/Read 隨用隨查。

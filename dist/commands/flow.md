@@ -29,9 +29,9 @@ description: Flow 一鍵總控 — 偵測起始 phase 並從該處接續，依�
 
 依偵測結果呼叫對應命令（`/flow-spec` → `/flow-plan` → `/flow-build` → `/flow-verify`（build 內含）→ `/flow-ship`）。**每個階段的凍結/推進閘門 SHALL 用 `AskUserQuestion` 白話問**，使用者明確說繼續才進下一階段（流程鐵則）。
 
-## Step 2：context 預算自我監控
+## Step 2：SDD 檔案收束
 
-長流程中留意 context 利用率，碰 ~70% → 主動建議 `/flow-compact` 收束再繼續（防腐化）。各階段把狀態寫進 `specs/` + `.flow/state.json`，**中斷後 `/flow-resume` 可無痛接手**。
+`specs/` 任一檔 >50KB（`flow-size-check` hook 自動提醒）→ 主動建議或直接幫使用者跑 `/flow-compact` 把已交付細節歸檔。各階段把狀態寫進 `specs/` + `.flow/state.json`，**中斷後 `/flow-resume` 可無痛接手**。
 
 ## 紀律
 - 不自己往下衝：每階段等使用者拍板。

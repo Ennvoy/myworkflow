@@ -39,7 +39,7 @@ process.stdin.on('end', () => {
       ? `- 當前 task：${state.task}（tdd=${state.tdd || 'none'} / verify=${state.verify || 'none'} / commit=${state.commit || '-'}）`
       : '',
     '- 狀態以 specs/ + .flow/ + git 為準：純讀檔接手，不靠記憶腦補。',
-    '- context 利用率碰 ~70% 請跑 /flow-compact 收束（防腐化）。',
+    '- specs 檔過大時 flow-size-check hook 會提醒跑 /flow-compact 歸檔已交付細節。',
     '- 接續：/flow（自動偵測 phase）或 /flow-resume（補上次中斷的 dangling）。',
   ]
     .filter(Boolean)

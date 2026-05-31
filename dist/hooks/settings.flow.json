@@ -20,6 +20,24 @@
             "command": "node \"{{CLAUDE_HOME}}/hooks/flow-session-start.mjs\""
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"{{CLAUDE_HOME}}/hooks/flow-size-check.mjs\""
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"{{CLAUDE_HOME}}/hooks/flow-size-check.mjs\""
+          }
+        ]
       }
     ]
   }

@@ -60,7 +60,7 @@ $gt = Join-Path $ClaudeHome 'skills\git-tools'
 if ($removeGit -and (Test-Path $gt)) { $targets.Add($gt) }
 $rf = Join-Path $ClaudeHome 'rules\flow.md'
 if (Test-Path $rf) { $targets.Add($rf) }
-foreach ($hk in 'flow-verify-gate.mjs', 'flow-session-start.mjs') {
+foreach ($hk in 'flow-verify-gate.mjs', 'flow-session-start.mjs', 'flow-size-check.mjs') {
   $p = Join-Path $ClaudeHome "hooks\$hk"
   if (Test-Path $p) { $targets.Add($p) }
 }

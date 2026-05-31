@@ -20,7 +20,7 @@ if (!settingsPath || !claudeMdPath) {
 }
 
 // Flow's hook scripts identify Flow's registrations regardless of path/quoting.
-const FLOW_HOOK_SCRIPTS = ['flow-verify-gate.mjs', 'flow-session-start.mjs'];
+const FLOW_HOOK_SCRIPTS = ['flow-verify-gate.mjs', 'flow-session-start.mjs', 'flow-size-check.mjs'];
 const isFlowEntry = (entry) =>
   (entry.hooks || []).some(
     (h) => typeof h.command === 'string' && FLOW_HOOK_SCRIPTS.some((s) => h.command.includes(s))

@@ -68,6 +68,7 @@ Copy-Item (Join-Path $Dist 'skills\git-tools') (Join-Path $ClaudeHome 'skills') 
 Copy-Item (Join-Path $Dist 'rules\flow.md') (Join-Path $ClaudeHome 'rules\flow.md') -Force
 Copy-Item (Join-Path $Dist 'hooks\flow-verify-gate.mjs') (Join-Path $ClaudeHome 'hooks') -Force
 Copy-Item (Join-Path $Dist 'hooks\flow-session-start.mjs') (Join-Path $ClaudeHome 'hooks') -Force
+Copy-Item (Join-Path $Dist 'hooks\flow-size-check.mjs') (Join-Path $ClaudeHome 'hooks') -Force
 Copy-Item (Join-Path $Dist 'agents\*') (Join-Path $ClaudeHome 'agents') -Recurse -Force
 $cmdCount = (Get-ChildItem (Join-Path $ClaudeHome 'commands') -Filter 'flow*.md').Count
 $agentCount = (Get-ChildItem (Join-Path $ClaudeHome 'agents') -Filter '*.md' -ErrorAction SilentlyContinue).Count

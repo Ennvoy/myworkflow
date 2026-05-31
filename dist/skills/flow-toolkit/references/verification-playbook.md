@@ -60,3 +60,14 @@
 - 刪改 `state.json` 繞過 hook
 - 把偽紅當 Red 證據
 - mock 假綠標 completed（見 `playwright-real-data-template.md`）
+
+## 七、commit 前清掃（驗證垃圾，雙軌，build/ship 每次 commit 前 SHALL 做）
+
+驗證/測試會生出一堆**不該進 repo 的東西**；混進 commit 會污染交付 diff、脹大 repo、害 review 失焦。commit 前依**雙軌**清掉——兩軌互補，缺一不可：
+
+- **軌一：檔案型產物（確定性 script，不靠模型判斷）** — 跑 `clean-verify-artifacts.mjs --apply --gitignore`（路徑依環境慣例：mac/linux `~/.claude/skills/flow-toolkit/`、Windows `$env:USERPROFILE\.claude\skills\flow-toolkit\`）。白名單刪：Playwright `test-results/`/`playwright-report/`/`.last-run.json`/`*.trace.zip`、覆蓋率 `coverage/`/`.nyc_output/`/`htmlcov/`、`.pytest_cache/`/`__pycache__/`/`*.pyc`、各種 `*.log`（含 `.flow/*.log`）、一次性 `debug-*`/`tmp-*`/`*.tmp`，並把 pattern 補進專案 `.gitignore`（冪等 managed block）。省 `--apply` = dry-run 預覽（有東西沒清 exit 3）。
+- **軌二：語意型殘留（靠 review，script 碰不到）** — 看本次 `git diff`，刪掉混在 **source** 裡的一次性 debug 殘留：`console.log`/`print`/`dump`、暫時註解掉的程式塊、為跑驗證臨時寫的 scratch 腳本。
+
+**絕不清（交付物 / 耐久狀態，script 已硬擋，review 也別誤刪）**：source 測試檔（`*.test.*`/`*.spec.*`/`*_test.*`/`conftest.py`）、`specs/`、`.flow/` 的 `ledger`/`journal.ndjson`/`manifest.json`、`legacy/`/`archive/`/`vendor/`/`node_modules/`。
+
+**範圍邊界**：本節只清「驗證產物 + 一次性 debug 殘留」。**mock/stub/寫死 fixture 假綠**屬 §六 反作弊，是「改回真實鏈路」不是「清垃圾」，另案處理、不在 clean script 職責內。

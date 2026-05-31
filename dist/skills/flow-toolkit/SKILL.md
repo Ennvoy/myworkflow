@@ -33,6 +33,12 @@ description: Flow 工作流的參考檔倉庫與提示者。當使用者談到�
 - `references/convergence-guide.md` — context 預算、compaction、完成謂詞、文件生命週期（`/flow-compact` 用）
 - `references/recipes/` — Workflow 多工腳本（parallel-build.js / parallel-verify.js / research-sweep.js）
 
+## 工具腳本（直接 `node` 跑，不進 context）
+
+- `dashboard.mjs` — 監控看板 server（`/flow-monitor` 用，唯讀投影）。
+- `flow-state.mjs` — 狀態 CLI：`resume`（冷啟動重建現況）/`monitor`（冪等起看板）。
+- `clean-verify-artifacts.mjs` — **commit 前清驗證垃圾**的確定性閘門（`/flow-build` Step 5、`/flow-ship` Step 5 用）：白名單刪驗證產物 + 一次性 debug 殘留、補 `.gitignore`，不碰 source 測試檔／specs／.flow ledger。`--apply` 才真刪、`--gitignore` 補忽略規則（細節見 `references/verification-playbook.md` §七）。
+
 ## 三條跨階段主軸（憲法摘要，細節見各 reference）
 
 1. **Context 預算**：working set 壓 < 視窗 40–50%、碰 70% 收束、薄 root、細節 on-demand、subagent context firewall。

@@ -1,17 +1,17 @@
 ---
-description: Flow Phase 3 — 多工交付（混合基座）。取當前波次互不依賴的 features，用 Workflow 腳本 fan-out worktree 隔離的平行 worker，紅軍先行→TDD→真實鏈路自檢→merge→per-task commit，推進下一波
+description: Flow Phase 3 — 多工交付（混合基座）。取當前波次互不依賴的 features，用 Workflow 腳本在同 repo fan-out 平行生成 worker，紅軍先行→TDD→序列整合（build/驗證/commit 一個個）→per-task commit，推進下一波
 ---
 
 # /flow-build — Phase 3：多工並行交付
 
 **目標**：把 `tasks.md` 的 features **真的並行**做掉，每個 task 從 UI 一路做到 DB、可 demo、可 commit、可放生。
 
-**混合基座（已定）**：**波次內** fan-out 用 Workflow 腳本（背景跑、結構化回傳、可重播）；**階段/波次之間**保留互動式人工閘門，你拍板才推進。**前提**：當前專案是 git repo（worktree 需要）；不是 → 先 `git init`。
+**混合基座（已定）**：**波次內** fan-out 用 Workflow 腳本（背景跑、結構化回傳、可重播）；**階段/波次之間**保留互動式人工閘門，你拍板才推進。**同 repo 模型**：worker 在同一個工作目錄平行**生成**（只寫各自不重疊的檔），build/驗證/commit 由主流程**序列**做。**前提**：當前專案是 git repo（per-task commit 需要）；不是 → 先 `git init`。
 
-## Step 0：冷啟動讀現況 + 開監控看板
+## Step 0：冷啟動讀現況
 
 跑 flow-toolkit 的 `flow-state.mjs resume`（路徑/shell 依 flow.md 環境慣例——mac/linux `node ~/.claude/skills/flow-toolkit/flow-state.mjs resume`、Windows PS `node "$env:USERPROFILE\.claude\skills\flow-toolkit\flow-state.mjs" resume`）用 statelib **reconstruct** 純從磁碟重建「還剩什麼 + 未完成 dangling」（不靠對話記憶），有 dangling（上次中斷）先冪等補完；補 `specs/tasks.md` 的 `[ ]`/`[x]`。
-**進 build 即冪等自動開看板**：`flow-state.mjs monitor`（已在跑就重用、不疊新分頁；fresh 起會自己開瀏覽器到實際 port，0 摩擦）。**安全網**：`flow-session-start` hook 在 phase=build/verify/ship 的新 session 也會確定性把看板拉起來——所以即使這步漏了，下個 session 進場看板照樣在跑。
+**進度怎麼看**：跑 `flow-state status`（in-chat 文字進度）；平行生成那段看 Workflow 的 `/workflows`（每 worker 即時進度/token/狀態）。
 
 ## Step 1：算當前波次可並行集合
 
@@ -20,53 +20,56 @@ description: Flow Phase 3 — 多工交付（混合基座）。取當前波次�
 - **釘契約**：跨 worker 的接縫用 design.md 釘好的單一 type/schema，各 worker import 同一份。
 - **波次寬度合理控制**：多工 ~15x token，只把「真互不依賴＋夠份量」的放進同一波。簡單/相依的別硬塞平行。
 
-## Step 2：紅軍先行（平行、唯讀、零隔離）
+## Step 2：紅軍先行（平行、唯讀）
 
 對本波每個 feature **平行**跑 `red-team` subagent（獨立 context、唯讀 → 可直接並行），各列 3–5 個攻擊面並標 severity（邊界值、併發、惡意輸入、相依故障、配置漂移）。結果餵進對應 worker。任一 high severity → 建議跑 codex 獨立對抗審查補強（裝了才問）。
 
-## Step 3：fan-out 平行 worker（Workflow 腳本 + worktree 隔離）
+## Step 3：fan-out 平行生成 worker（Workflow 腳本，同 repo）
 
-用 `references/recipes/parallel-build.js`（Workflow 腳本）spawn worker，**每 feature 一個 worker**（`agent(..., {isolation:'worktree'})`），prompt 帶：
-- task 描述 + 對應 REQ + design.md 釘的契約
+用 `references/recipes/parallel-build.js` spawn worker，**每 feature 一個**，在同一個工作目錄平行生成。prompt 帶：
+- task 描述 + 對應 REQ + design.md 釘的契約 + 該 feature 的 conflictZone（worker 只准碰這些檔）
 - **紅軍攻擊面 → 先寫失敗安全測試、再用防禦碼轉綠**
-- **TDD 三相**（見 `references/verification-playbook.md` §TDD）：Red 實跑出真 assertion failure → Green 最小實作轉綠 → Refactor
-- **Tier-1 自檢**：production build + unit + API + headless smoke。**真實資料鏈路鐵則**：API/資料驗證 SHALL 打真後端真 DB、**禁 mock 假綠**、測試資料 seed 進真 DB；真依賴未 ready（上游 5xx/未實作）→ 標 **BLOCKED**，不准 mock fallback 假裝綠
-- **小盒子工具**：每 worker 只給它任務需要的工具，不給全集
+- **TDD 三相**（見 `references/verification-playbook.md` §TDD）：Red 寫自己的測試檔、單跑出真 assertion failure → Green 最小實作 → Refactor
+- **真實資料鏈路鐵則**：涉 API/資料 SHALL 打真後端真 DB、**禁 mock 假綠**、測試資料 seed 進真 DB；真依賴未 ready（上游 5xx/未實作）→ 標 **BLOCKED**，不准 mock fallback
+- **檔案邊界（鐵則）**：worker 只新增/改自己 conflictZone 內的檔；不碰共用檔（全域 router／共享型別／`package.json`／lockfile／DB migration／中央 config，那些走序列 foundation）；只單跑自己的單元測試檔，不跑整包 build／tsc／dev server／`git commit`
 - **涉 UI 的 feature**：orchestrator 先呼叫 `ui-ux-pro-max` 取 component 級建議（structure / ARIA·keyboard·focus / hover·active·disabled / responsive / animation + shadcn 範例），沿用 spec 階段定的 palette/font/style 當 query context，附進 worker prompt；寫 Green 相時 accessibility 清單逐項實作
-- 要求**結構化回傳** `{branch, commits, tier1, blockers, driveBy}`
+- **小盒子工具**：每 worker 只給它任務需要的工具，不給全集
+- 要求**結構化回傳** `{feature, files, selfCheck{unitGreen,realData}, blockers, driveBy}`
 
-每 spawn 前先 write-ahead：node 呼叫 `statelib.actionStart(root, id, 'building')`（寫 **append-only journal**，N 個並行 worker 各記各的、**不互蓋**）+ `transition(root, id, 'pending', 'building')`。確定性節點不靠模型判斷。
+fan-out 前 orchestrator 先 write-ahead：對本波每個 id 呼叫 `statelib.transition(root, id, 'pending', 'building')`，讓 `flow-state status` 反映這波在生成中。
 
-## Step 4：收斂 merge（序列）
+## Step 4：序列整合（逐 feature，主流程序列做）
 
-worker 回來 → 依拓樸序把 branch merge 回 trunk、解衝突。**安全/資料正確性 red flag（SQL injection、auth bypass、密碼明文、destructive query 缺 WHERE）一律暫停**告知使用者（順手修紀律）。merge 後過時 worktree 移除。
-- **`.flow/` 合併**：每 task 的 `ledger/<id>.json` 各自獨立檔、不衝突；唯一可能撞的是 append-only 的 `.flow/journal.ndjson`——衝突時**取聯集**（兩邊行都保留，append log 聯集即正確），別丟任一邊。merge 完在 trunk 對帳一次 `flow-state status` 確認每個已交付 task 都 `delivered`、tasks.md `[x]` 齊。
+Workflow 回來後，orchestrator 依拓樸序**一個一個**收尾每個 feature：
+- 掃每個結果的 `driveBy`：**安全/資料正確性 red flag（SQL injection、auth bypass、密碼明文、destructive query 缺 WHERE）一律暫停**告知使用者（順手修紀律）。
+- 有 `blockers` 的標 BLOCKED／needs-decision，跳過。
+- 其餘一次一個進 Step 5（驗證 → 清垃圾 → done → commit）。
 
-## Step 5：feature 自身驗證 + per-task commit
+## Step 5：feature 自身驗證 + per-task commit（序列，一次一個）
 
-整個 feature 全層寫完 → 在 merged trunk 上跑**該 feature 的 happy path**（呼叫 `/flow-verify` 的窄範圍模式：Playwright headed + 真實資料鏈路 + 效能 budget）。**綠了才 commit**。
+接 Step 4 逐 feature：在當前 repo 跑**該 feature 的 happy path**（呼叫 `/flow-verify` 的窄範圍模式：Playwright headed + 真實資料鏈路 + 效能 budget）。**綠了才 commit**。
 - **commit 前清驗證垃圾（雙軌、確定性閘門，呼叫 git-tools 之前 SHALL 做）**：
   - ① **檔案型產物**（確定性）→ 跑 flow-toolkit 的 clean script（mac/linux `node ~/.claude/skills/flow-toolkit/clean-verify-artifacts.mjs --apply --gitignore`、Windows PS `node "$env:USERPROFILE\.claude\skills\flow-toolkit\clean-verify-artifacts.mjs" --apply --gitignore`）：白名單刪 Playwright `test-results/`/report、coverage、`*.log`、`.last-run.json`、一次性 debug 截圖/tmp，並補 `.gitignore`。**白名單式、不碰 source 測試檔／specs／.flow ledger**（省 `--apply` 為 dry-run 預覽）。
   - ② **語意型殘留**（靠 review）→ 看本次 `git diff`，刪掉遷在 source 的一次性 debug code（`console.log`/`print`/暫時註解掉的塊／臨時驗證腳本）。clean script 不碰 source，這軌靠 review。
   - 清完才 commit，避免驗證垃圾污染交付 diff（對齊 Karpathy『極簡清理』；範圍/紀律見 `references/verification-playbook.md` §七）。
 - 完成一項（順序鐵則：**先標、再 commit**，閘門會強制）：
   1. TaskUpdate completed（`flow-verify-gate` hook 會在 `verify` 空/`none` 時擋下——**別沒真跑就填 `verify=ok`**）。
-  2. **跑 `flow-state done <id>`**（一個指令做完原本三件會被漏的事：翻 `tasks.md` 的 `[x]` + 寫 ledger `delivered` + 帶 commit）：mac/linux `node ~/.claude/skills/flow-toolkit/flow-state.mjs done <id>`、Windows PS `node "$env:USERPROFILE\.claude\skills\flow-toolkit\flow-state.mjs" done <id>`。`<id>` 用 canonical task id（tasks.md/manifest 那個，例 `F-1186-W0-5`）。看板 2 秒內就會把該卡推到「已交付」。
+  2. **跑 `flow-state done <id>`**（一個指令做完原本三件會被漏的事：翻 `tasks.md` 的 `[x]` + 寫 ledger `delivered` + 帶 commit）：mac/linux `node ~/.claude/skills/flow-toolkit/flow-state.mjs done <id>`、Windows PS `node "$env:USERPROFILE\.claude\skills\flow-toolkit\flow-state.mjs" done <id>`。`<id>` 用 canonical task id（tasks.md/manifest 那個，例 `F-1186-W0-5`）。
   3. **per-task commit+push 走 `git-tools` skill**，**commit scope SHALL 帶 canonical task id**（例 `feat(F-1186-W0-5): ...`，別用 `v1.x/W0-5` 這種對不上 manifest 的裝飾 id）：smart commit 後即 `git push`（trunk 已有 upstream → 直接推；**push 失敗只警告、不中斷 build**）。
-- **`flow-commit-gate` hook（PreToolUse/Bash）會擋**：commit scope 點名某 task 但它還沒 `done` → exit 2 擋下，叫你先跑 `flow-state done`。所以「忘了翻 tasks.md / 忘了寫 ledger」這條系統性漏洞被確定性堵死——翻好 `[x]` 才能 commit，`[x]` 也就一起進這個 commit。**別手改 ledger/tasks.md 繞過閘門**。
+- **`flow-commit-gate` hook（PreToolUse/Bash）會擋**：commit scope 點名某 task 但它還沒 `done` → exit 2，先跑 `flow-state done` 再 commit。**別手改 ledger/tasks.md 繞過閘門**。
 - commit 成功前不領下個 task；commit 失敗（hook/衝突）→ 整個 build 暫停告知。
 
 ## Step 6：推進下一波
 
-重複 Step 1–5 到無波次。`needs-decision` 的 feature 跳過、看板亮旗、`/flow-resume` 彈窗拍板後才納入。跨 feature 才能驗的整合 journey **記進 `X-*` / Backlog**（`Spotted:` footer），留給 `/flow-ship` 統一跑，**不在 feature 結尾重複跑**。
+重複 Step 1–5 到無波次。`needs-decision` 的 feature 跳過，`/flow-resume` 彈窗拍板後才納入。跨 feature 才能驗的整合 journey **記進 `X-*` / Backlog**（`Spotted:` footer），留給 `/flow-ship` 統一跑，**不在 feature 結尾重複跑**。
 
 ## Step 7：可恢復（狀態進 git，跨電腦也接得上）
 
-狀態在 `.flow/` + 各 branch（殺不死）；中斷後 `/flow-resume` 重新 fan-out 未完成的，不重做已 delivered 的。
-**git-track 鐵則**：`.flow/manifest.json` + `.flow/ledger/` + `.flow/journal.ndjson` SHALL 進 git（換電腦 clone 即 reconstruct 重建細粒度進度）；`.flow/state.json`、`.flow/monitor.port`、`.flow/*.log` 進 `.gitignore`（可衍生 / 一次性，勿污染 repo）。
+狀態在 `.flow/` + git（殺不死）；中斷後 `/flow-resume` 重新 fan-out 未完成的，不重做已 delivered 的。
+**git-track 鐵則**：`.flow/manifest.json` + `.flow/ledger/` + `.flow/journal.ndjson` SHALL 進 git（換電腦 clone 即 reconstruct 重建細粒度進度）；`.flow/state.json`、`.flow/*.log` 進 `.gitignore`（可衍生 / 一次性，勿污染 repo）。
 
 ## 完成判準（self-check）
-- [ ] foundation 先序列 merge、features 才平行（conflictZone 算準）
+- [ ] foundation 先序列、features 才同 repo 平行（conflictZone 算準）
 - [ ] 每 feature 紅軍先行、worker 走 TDD + 真實資料鏈路（無 mock 假綠）
 - [ ] 每個完成的 task：commit 前清驗證垃圾（clean script `--apply` + review 掉 source 內 debug 殘留）→ TaskUpdate completed → **`flow-state done <id>`**（翻 tasks.md [x] + ledger）→ per-task commit+push（scope 帶 canonical id，走 git-tools skill）。被 `flow-commit-gate` 擋下＝你跳過了 `flow-state done`，補跑即可
 - [ ] BLOCKED / 安全 red flag 有暫停回報，沒靜默略過

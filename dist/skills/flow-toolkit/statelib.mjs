@@ -86,7 +86,7 @@ export async function readStateJson(root) { return readJSON(statePath(root), {})
 // 這裡把「翻 [x] + ledger→delivered」綁成一次呼叫，flow-state done 與 commit gate 都走它。
 const tasksMdPath = root => path.join(root, 'specs', 'tasks.md');
 const LINE_RE = /^(\s*[-*]\s*\[)([ xX])(\]\s*)(.+)$/;          // 抓 checkbox 行（保留前後綴以原樣回寫）
-const ID_RE   = /^([A-Z][A-Za-z]*(?:-[\w.]+)+)\b/;            // 與 dashboard.mjs 同規則抽 canonical id
+const ID_RE   = /^([A-Z][A-Za-z]*(?:-[\w.]+)+)\b/;            // 抽 canonical id（去 ** 後取開頭 ID token）
 function lineId(rest) {
   const m = rest.replace(/\*\*/g, '').trim().match(ID_RE);
   return m ? m[1] : null;

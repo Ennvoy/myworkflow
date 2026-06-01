@@ -18,18 +18,16 @@ node ~/.claude/skills/flow-toolkit/flow-state.mjs resume
 [Console]::OutputEncoding=[Text.Encoding]::UTF8; node "$env:USERPROFILE\.claude\skills\flow-toolkit\flow-state.mjs" resume
 ```
 輸出含：已交付/開發中/驗收中/待開發/⚠️等你決策 計數、待決策清單、**↻ 未完成動作（dangling：journal 有 `actionStart` 但無 `actionDone`，並行多 worker 各自獨立不互蓋）**、下一步。
-補充來源：`specs/`（讀 `[ ]`/`[x]`）、`git`（branch、未 merge worktree branch、最後 commit）。
-**換電腦也接得上**：`.flow/` 的 manifest/ledger/journal 進 git，clone 下來 reconstruct 一樣重建（細粒度進度不掉到 task 級）。
-
-接著冪等開監控看板：`flow-state.mjs monitor`（路徑依 flow.md 環境慣例，已在跑就重用），讀印出的 port 用 OS 預設方式開瀏覽器（mac `open` / Windows `Start-Process` / Linux `xdg-open`）。
+補充來源：`specs/`（讀 `[ ]`/`[x]`）、`git`（branch、最後 commit）。
+**換電腦也接得上**：`.flow/` 的 manifest/ledger/journal 進 git，clone 下來 reconstruct 一樣重建（細粒度進度不掉到 task 級）。進度跑 `flow-state status`；平行波看 `/workflows`。
 
 ## Step 2：呈現進度
 
-白話摘要：在哪個 phase、哪些 feature delivered / building / blocked / needs-decision、還剩哪些 task、有沒有上次中斷的 dangling（worker branch 沒 merge、verify 沒跑完）。
+白話摘要：在哪個 phase、哪些 feature delivered / building / blocked / needs-decision、還剩哪些 task、有沒有上次中斷的 dangling（生成完但 verify/commit 沒收尾）。
 
 ## Step 3：補 dangling（冪等）
 
-上次中斷留下的半成品：未 merge 的 worker branch → 接著驗證 merge；`verify` 空但 code 已寫 → 補跑 `/flow-verify`；`actionStart` 有但 `actionDone` 無 → 重做該 action（冪等，不重做已 delivered 的）。
+上次中斷留下的半成品：`verify` 空但 code 已寫 → 補跑 `/flow-verify` → `flow-state done` → commit；`actionStart` 有但 `actionDone` 無 → 重做該 action（冪等，不重做已 delivered 的）。
 
 ## Step 4：待決策彈窗
 

@@ -11,8 +11,8 @@ Flow = **5 階段 spec-driven 流程** + **3 條跨階段主軸**（context 預�
   訪談定版      架構分波        多工交付          獨立驗證          整合出貨
    │             │              │ (波次內並行)      │ (獨立 context)    │
    ▼             ▼              ▼                  ▼                  ▼
- specs/        specs/         worktree           Playwright         完成謂詞
- requirements  design+tasks   workers            真實資料鏈路        → COMPLETE
+ specs/        specs/         同 repo            Playwright         完成謂詞
+ requirements  design+tasks   平行生成 workers    真實資料鏈路        → COMPLETE
    └──────────── 人工閘門（你拍板）每階段之間 ────────────────────────┘
 ```
 
@@ -20,7 +20,7 @@ Flow = **5 階段 spec-driven 流程** + **3 條跨階段主軸**（context 預�
 
 Flow 的狀態**全在磁碟**，不在對話 context（harness 鐵則：狀態外部化 → agent 可拋棄、可恢復、純讀檔接手）。
 
-- `specs/requirements.md`（凍結）→ `specs/design.md` + `specs/tasks.md` → 各 feature worktree branch → merged trunk。
+- `specs/requirements.md`（凍結）→ `specs/design.md` + `specs/tasks.md` → 各 feature 同 repo 平行生成 → 序列整合進 trunk。
 - `.flow/state.json`（5 欄機讀狀態）：
   ```json
   { "phase": "plan-done", "task": "F-2", "tdd": "green", "verify": "ok:tests/e2e/items.realdata.spec.ts", "commit": "a1b2c3d" }
@@ -39,8 +39,8 @@ Flow 的狀態**全在磁碟**，不在對話 context（harness 鐵則：狀態�
 ### Phase 2 `/flow-plan` — 為什麼「接縫契約釘一處 + 計畫可丟棄」
 研究：Böckeler「約束解空間」——跨層介面用單一 type/schema 釘死，**編譯期**就擋「API 形狀 ≠ UI 期望」。計畫是可從 requirements 再生的，別當聖物無止盡打磨（打磨同一個檔 = context 腐化來源）。
 
-### Phase 3 `/flow-build` — 為什麼「混合多工 + worktree 隔離」
-研究：Anthropic orchestrator-worker（Opus lead + Sonnet workers 勝單 Opus 90.2%）；Stripe 預熱 sandbox 平行；多工 ~15x token 故只在真平行+高價值才 fan-out。混合基座 = 波次內 Workflow 腳本確定性 fan-out（可重播、背景跑）+ 階段間人工閘門（研究一致建議人在 spec/每輪/deploy 三點）。foundation 先序列、features 才並行（conflictZone 算重疊避免 merge 地獄）。每 worker 小盒子工具（curated subset，避免 40+ tool def 吃半個視窗）。
+### Phase 3 `/flow-build` — 為什麼「混合多工 + 同 repo 平行生成」
+研究：Anthropic orchestrator-worker（Opus lead + Sonnet workers 勝單 Opus 90.2%）；多工 ~15x token 故只在真平行+高價值才 fan-out。混合基座 = 波次內 Workflow 腳本確定性 fan-out（可重播、背景跑）+ 階段間人工閘門（研究一致建議人在 spec/每輪/deploy 三點）。foundation 先序列、features 才同 repo 平行生成（conflictZone 算重疊，worker 只寫各自不重疊的檔；build/驗證/commit 序列整合，避開並發 commit/build 互撞）。每 worker 小盒子工具（curated subset，避免 40+ tool def 吃半個視窗）。
 
 ### Phase 4 `/flow-verify` — 為什麼「獨立 Evaluator + 真實資料鏈路」
 研究最強的一塊：
@@ -58,7 +58,7 @@ Flow 的狀態**全在磁碟**，不在對話 context（harness 鐵則：狀態�
 n² attention：可用上限 ~170k、~147k 退化、>60% 變笨。ETH 實證巨型 always-on 檔 −3% 成功率 +20% 成本。對策：薄 root（`rules/flow.md` ~95 行目錄）+ on-demand reference + subagent context firewall（只回 1–2k 蒸餾）+ compaction 先刪尾保 cache prefix（hit 價 = miss 1/10）。
 
 ### B. 檔案耐久狀態（多工 + 恢復的根）
-Anthropic Managed Agents「brain/hands/session 解耦」+ append-only event log + wake/resume。Flow：狀態進 specs/+.flow/+git，worker 是 worktree 隔離的 cattle，殺不死、純讀檔 resume。
+Anthropic Managed Agents「brain/hands/session 解耦」+ append-only event log + wake/resume。Flow：狀態進 specs/+.flow/+git，worker 是同 repo 的 cattle（只寫各自不重疊的檔），殺不死、純讀檔 resume。
 
 ### C. 確定性閘門（防假裝過關）
 Stripe「確定性節點夾住 agentic 迴圈」：git/commit/state 寫入/verify runner 是確定性 hook/script，不靠模型判斷。`flow-verify-gate` hook 在 verify 空/none 時 exit 2 擋下 TaskUpdate completed——模型沒真跑就過不了關。

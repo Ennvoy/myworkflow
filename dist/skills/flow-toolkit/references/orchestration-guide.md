@@ -13,9 +13,9 @@
 | 工具 | 用在 | 為什麼 |
 |---|---|---|
 | **Workflow 腳本**（`Workflow` 工具） | 波次內 fan-out：紅軍平行、worker 平行建置、Evaluator 平行驗證、研究 sweep | 確定性控制流、背景跑、結構化 schema 回傳、可 resume |
-| **Agent 工具（worktree 隔離）** | 需要即時介入的單發平行工作 | 主迴圈內可隨時看、隨時停 |
+| **Agent 工具** | 需要即時介入的單發平行工作 | 主迴圈內可隨時看、隨時停 |
 
-兩者底層都能用 `isolation:'worktree'` 讓平行 worker 各改各的 git worktree、不互相踩。
+平行 worker 在同 repo 寫各自不重疊的檔（conflictZone 互斥保檔案安全）；build/驗證/commit 由 orchestrator 序列做，避開並發 commit/build 互撞。
 
 ## 編排紀律
 
@@ -49,7 +49,7 @@ git/PR 機制、`.flow/state.json` 寫入、port 清理、verify runner 呼叫�
 ## Recipes（Workflow 腳本，按需用）
 
 `references/recipes/` 內：
-- `parallel-build.js` — 一波 features fan-out worktree worker，結構化回傳 `{branch,commits,tier1,blockers,driveBy}`
+- `parallel-build.js` — 一波 features 同 repo 平行生成 worker，結構化回傳 `{feature,files,selfCheck,blockers,driveBy}`
 - `parallel-verify.js` — 多維度/feature 平行起獨立 Evaluator，回傳 PASS/FAIL + 證據
 - `research-sweep.js` — 研究 fan-out（多來源平行讀、蒸餾回傳）
 

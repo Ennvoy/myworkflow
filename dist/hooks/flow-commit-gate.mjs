@@ -2,8 +2,7 @@
 // Flow deterministic gate (PreToolUse on Bash) — 強制「先標、再 commit」。
 // 攔 `git commit`：若 commit message 點名了某個 flow task（canonical id 出現在訊息裡），
 // 但該 task 在 .flow/ledger 還不是 delivered → 擋下，叫模型先跑 `flow-state done <id>`。
-// 這是修「commit 後 tasks.md/ledger 沒同步、看板資料不動」的確定性節點：
-//   tasks.md 的 [x] 只能由 markTaskDone 翻 → 翻了才 delivered → delivered 了才放行 commit。
+//   tasks.md 的 [x] 由 markTaskDone 翻 → 翻了才 delivered → delivered 了才放行 commit。
 // 設計鐵則：fail-open（解析不出訊息 / 非 flow 專案 / 非 git commit → 一律放行，絕不誤擋）。
 import { readFileSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
@@ -71,7 +70,7 @@ process.stdin.on('end', async () => {
   const reason = [
     `Flow commit gate：擋下 commit —— 這些 task 還沒標完成就要 commit（違反「先標、再 commit」）：${list}`,
     `  先跑：node "${process.env.HOME || process.env.USERPROFILE || '~'}/.claude/skills/flow-toolkit/flow-state.mjs" done ${blocking[0]}`,
-    `  （它會翻 specs/tasks.md 的 [x] + 寫 ledger delivered；翻好後 [x] 會一起進這個 commit，看板 2 秒內就會動。）`,
+    `  （它會翻 specs/tasks.md 的 [x] + 寫 ledger delivered；翻好後 [x] 會一起進這個 commit。）`,
     `  別手改 ledger/tasks.md 繞過本閘門（系統性違規）；真的非 task commit 才改 commit scope 不帶 task id。`,
   ].join('\n');
   process.stderr.write(reason + '\n');

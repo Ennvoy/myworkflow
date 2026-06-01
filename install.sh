@@ -43,7 +43,7 @@ cp -f "$DIST"/commands/* "$CLAUDE_HOME/commands/"
 cp -Rf "$DIST"/skills/flow-toolkit "$CLAUDE_HOME/skills/"
 cp -Rf "$DIST"/skills/git-tools "$CLAUDE_HOME/skills/"
 cp -f "$DIST"/rules/flow.md "$CLAUDE_HOME/rules/flow.md"
-cp -f "$DIST"/hooks/*.mjs "$CLAUDE_HOME/hooks/"   # 全部 *.mjs hook（加 hook 不必再改安裝檔）
+cp -f "$DIST"/hooks/*.mjs "$CLAUDE_HOME/hooks/"
 cp -Rf "$DIST"/agents/* "$CLAUDE_HOME/agents/"
 ok "commands / skills/flow-toolkit / skills/git-tools（commit+push+PR）/ rules/flow.md / hooks / agents 已就位"
 

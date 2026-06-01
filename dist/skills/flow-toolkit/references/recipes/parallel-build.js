@@ -1,18 +1,13 @@
-// Flow recipe — parallel-build
-// 一波互不依賴的 features，fan-out 成 worktree 隔離的平行 worker。
-// 用法：把當前波次的 features 清單 + 契約填進 args，丟給 Workflow 工具跑。
-//   Workflow({ script: <本檔內容>, args: { wave: [...], contractPath, reqPath } })
-// 回傳：每個 feature 的 {feature, branch, commits, tier1, blockers, driveBy}
-//
-// 對齊 Flow 憲法：foundation 先序列（呼叫端保證）、features 才平行、紅軍先行、
-//   TDD、真實資料鏈路自檢（禁 mock 假綠）、小盒子工具、結構化回傳。
+// Flow recipe — parallel-build：一波互不依賴的 features 在同 repo 平行生成。
+// worker 只寫各自不重疊的檔（conflictZone 互斥）、不 commit、不跑整包 build；build/驗證/commit 由 orchestrator 序列做（見 flow-build Step 4–5）。
+// 用法：Workflow({ script: <本檔內容>, args: { wave: [...], contractPath, reqPath } }) → 回傳每 feature 的 {feature, files, selfCheck, blockers, driveBy}。
 
 export const meta = {
   name: 'flow-parallel-build',
-  description: 'Fan-out a wave of independent features to worktree-isolated workers (red-team → TDD → real-data Tier-1 self-check)',
+  description: 'Fan-out a wave of independent features as same-repo parallel workers (generate-only: red-team → TDD → write disjoint files; orchestrator integrates serially)',
   phases: [
-    { title: 'RedTeam', detail: '每 feature 平行紅軍攻擊面（唯讀、零隔離）' },
-    { title: 'Build', detail: '每 feature 一個 worktree worker，TDD + 真實鏈路自檢' },
+    { title: 'RedTeam', detail: '每 feature 平行紅軍攻擊面（唯讀）' },
+    { title: 'Generate', detail: '每 feature 一個 worker，同 repo 寫各自不重疊的檔 + 測試（不 build 整包、不 commit）' },
   ],
 }
 
@@ -40,29 +35,27 @@ const ATTACK_SCHEMA = {
   required: ['feature', 'attacks'],
 }
 
-const BUILD_SCHEMA = {
+// 生成階段回傳（worker 不 commit、不跑整包 build）：orchestrator 用 files 決定序列整合的 review/verify 範圍。
+const GEN_SCHEMA = {
   type: 'object', additionalProperties: false,
   properties: {
     feature: { type: 'string' },
-    branch: { type: 'string' },
-    commits: { type: 'array', items: { type: 'string' } },
-    tier1: {
+    files: { type: 'array', items: { type: 'string' }, description: '本 worker 新增/修改的檔（應落在自己的 conflictZone 內）' },
+    selfCheck: {
       type: 'object', additionalProperties: false,
       properties: {
-        build: { type: 'boolean' }, unit: { type: 'boolean' },
-        apiRealDb: { type: 'boolean', description: 'API 打真 DB 通過（非 mock）' },
-        smoke: { type: 'boolean' },
+        unitGreen: { type: 'boolean', description: '自己寫的單元測試檔在 worker 內單跑為綠（TDD 紅→綠）' },
+        realData: { type: 'string', enum: ['pass', 'n/a', 'blocked'], description: 'API/資料若有：打真 DB 通過 / 不涉資料 / 真依賴未 ready' },
       },
-      required: ['build', 'unit', 'apiRealDb', 'smoke'],
+      required: ['unitGreen', 'realData'],
     },
     blockers: { type: 'array', items: { type: 'string' }, description: '真依賴未 ready 等 BLOCKED 原因；無則空' },
-    driveBy: { type: 'array', items: { type: 'string' }, description: '順手發現的問題（safety red flag 要在此標出）' },
+    driveBy: { type: 'array', items: { type: 'string' }, description: '順手發現的問題（safety red flag 必在此標出）' },
   },
-  required: ['feature', 'branch', 'commits', 'tier1', 'blockers', 'driveBy'],
+  required: ['feature', 'files', 'selfCheck', 'blockers', 'driveBy'],
 }
 
-// ── Pipeline：每個 feature 獨立走「紅軍 → worktree worker」，無 barrier ──
-// 紅軍唯讀可零隔離並行；worker 用 worktree 隔離避免改同檔打架。
+// ── Pipeline：每個 feature 獨立走「紅軍 → 同 repo 生成」，無 barrier。紅軍唯讀、worker 寫各自不重疊的檔。──
 const results = await pipeline(
   wave,
   // Stage 1：紅軍攻擊面（唯讀）
@@ -71,21 +64,21 @@ const results = await pipeline(
     `列 3–5 個破壞情境（邊界值 / 併發 / 惡意輸入 / 相依故障 / 配置漂移），每個標 severity，並給「該先寫成哪個失敗安全測試」。`,
     { label: `red:${f.id}`, phase: 'RedTeam', schema: ATTACK_SCHEMA, agentType: 'red-team' }
   ),
-  // Stage 2：worktree worker 實作（吃上一步的攻擊面）
+  // Stage 2：同 repo 生成（吃上一步攻擊面）——平行寫各自不重疊的檔，不 commit、不跑整包 build
   (attack, f) => agent(
-    `你是 feature worker，在隔離 worktree 實作「${f.title}」(${f.id})。\n` +
-    `契約：import ${args.contractPath} 的共享 type/schema，兩端同一份。\n` +
-    `需求：${args.reqPath} 對應 ${f.req}。\n` +
+    `你是 feature worker，在目前這個 repo 實作「${f.title}」(${f.id})。\n` +
+    `**邊界鐵則（同 repo 平行安全靠這個）**：只新增/修改你 conflictZone 內的檔（${(f.conflictZone && JSON.stringify(f.conflictZone)) || '見 tasks.md'}）；\n` +
+    `  絕不碰共用檔（全域 router / 共享型別 / package.json / lockfile / DB migration / 中央 config）——那些是序列 foundation 的事。\n` +
+    `契約：import ${args.contractPath} 的共享 type/schema，兩端同一份。需求：${args.reqPath} 對應 ${f.req}。\n` +
     `紅軍攻擊面（先寫失敗安全測試、再用防禦碼轉綠）：\n${JSON.stringify(attack && attack.attacks, null, 2)}\n` +
-    `紀律：TDD 三相（Red 實跑出真 assertion failure → Green 最小實作 → Refactor）。\n` +
-    `Tier-1 自檢鐵則：production build + unit + API + headless smoke。\n` +
-    `真實資料鏈路：API/資料驗證 SHALL 打真後端真 DB、禁 mock 假綠、測試資料經真 create API seed 進真 DB；\n` +
-    `真依賴未 ready（上游 5xx / 未實作）→ 標 BLOCKED，不准 mock fallback 假裝綠。\n` +
+    `TDD：Red 先寫你自己的測試檔、單跑出真 assertion failure → Green 最小實作轉綠 → Refactor。\n` +
+    `真實資料鏈路：涉 API/資料 SHALL 打真後端真 DB、禁 mock 假綠；真依賴未 ready（上游 5xx/未實作）→ 標 BLOCKED，不准 mock fallback。\n` +
+    `**你只負責生成，不做整合**：可單跑你自己的單元測試檔（TDD）；但**不要**跑整包 build / tsc / 起 dev server / git add / git commit\n` +
+    `  （那些會跟其他 worker 搶 .next/tsbuildinfo/port 與 .git/index.lock）——整包 build、驗證、commit 由主流程序列做。\n` +
     (f.ui ? `涉 UI：依附帶的 ui-ux-pro-max component 建議，accessibility（ARIA/keyboard/focus）清單逐項實作。\n` : '') +
-    `task 綠了：先在 worktree 跑 \`node ~/.claude/skills/flow-toolkit/flow-state.mjs done ${f.id}\`（翻 tasks.md [x] + ledger delivered），再 per-task commit（scope 帶 canonical id ${f.id}，例 feat(${f.id}): …）——先標再 commit。\n` +
     `安全 red flag（SQLi/auth bypass/密碼明文/缺 WHERE 的 destructive query）→ 在 driveBy 標出。\n` +
-    `回傳結構化結果。`,
-    { label: `build:${f.id}`, phase: 'Build', schema: BUILD_SCHEMA, isolation: 'worktree' }
+    `回傳結構化結果：你改了哪些檔（files）、自檢（單元綠/真實資料）、blockers、driveBy。`,
+    { label: `gen:${f.id}`, phase: 'Generate', schema: GEN_SCHEMA }
   )
 )
 

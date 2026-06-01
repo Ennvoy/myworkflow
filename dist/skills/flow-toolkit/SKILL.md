@@ -17,7 +17,7 @@ description: Flow 工作流的參考檔倉庫與提示者。當使用者談到�
 |---|---|---|
 | `/flow-spec` | 訪談定版 | 蘇格拉底彈窗 → 凍結 requirements → UI mockup 定版 |
 | `/flow-plan` | 設計 | 架構 + 接縫契約 + 垂直切片分波 |
-| `/flow-build` | 多工交付 | 波次內 worktree 平行 worker，紅軍→TDD→真實鏈路自檢 |
+| `/flow-build` | 多工交付 | 波次內同 repo 平行生成 worker，紅軍→TDD→序列整合 |
 | `/flow-verify` | 獨立驗證 | 獨立 Evaluator + Playwright 真點擊 + 真 API/DB + 效能硬閘門 |
 | `/flow-ship` | 整合出貨 | 跨 feature e2e + 完整效能 + 全 diff 審查 + 完成謂詞 |
 
@@ -35,8 +35,7 @@ description: Flow 工作流的參考檔倉庫與提示者。當使用者談到�
 
 ## 工具腳本（直接 `node` 跑，不進 context）
 
-- `dashboard.mjs` — 監控看板 server（`/flow-monitor` 用，唯讀投影）。
-- `flow-state.mjs` — 狀態 CLI：`resume`（冷啟動重建現況）/`monitor`（冪等起看板）/`done <id>`（**標一個 task 完成**：翻 tasks.md `[x]` + ledger→delivered，先標再 commit；被 `flow-commit-gate` 擋下時就跑它）。
+- `flow-state.mjs` — 狀態 CLI：`resume`/`status`（冷啟動 reconstruct 印現況 + 下一步）/`done <id>`（**標一個 task 完成**：翻 tasks.md `[x]` + ledger→delivered，先標再 commit；被 `flow-commit-gate` 擋下時就跑它）。
 - `clean-verify-artifacts.mjs` — **commit 前清驗證垃圾**的確定性閘門（`/flow-build` Step 5、`/flow-ship` Step 5 用）：白名單刪驗證產物 + 一次性 debug 殘留、補 `.gitignore`，不碰 source 測試檔／specs／.flow ledger。`--apply` 才真刪、`--gitignore` 補忽略規則（細節見 `references/verification-playbook.md` §七）。
 
 ## 三條跨階段主軸（憲法摘要，細節見各 reference）

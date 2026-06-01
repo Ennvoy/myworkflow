@@ -13,7 +13,7 @@
 - **作為開發者**，我想要把「一句話的模糊需求」透過一次一題的蘇格拉底訪談 + grill-me 深挖收斂成凍結規格、並用 HTML mockup 把 UI 定版，**以便**方向錯在最便宜的時點（幾頁靜態畫面）就擋掉，而不是 deliver 到一半才整輪報廢。
 - **作為開發者**，我想要每個 task 從 UI 一路做到 DB、紅軍先行、TDD、打**真後端真 DB** 驗到綠才算完成，**以便**「e2e 全綠、進去卻全是假資料」這種假完成從結構上不可能發生。
 - **作為開發者**，我想要進度狀態寫進檔案 + git、中斷後純讀檔就能接手，**以便**關機 / 換 session / 換電腦都能無痛接續——agent 可拋棄、狀態殺不死。
-- **作為開發者**，我想要一面即時看板看所有 feature 卡在哪、誰在等我決策，**以便**不用一直問「現在做到哪」。
+- **作為開發者**，我想要用一個指令隨時看現況（哪些 feature 卡在哪、誰在等我決策），**以便**不用一直問「現在做到哪」。
 - **作為開發者**，我想要小功能調整能跳過完整訪談但**仍留下 SDD 痕跡**，**以便**貫徹規格驅動的同時不被儀式拖慢。
 
 ---
@@ -48,11 +48,11 @@ git clone https://github.com/Ennvoy/myworkflow.git flow && cd flow && chmod +x i
 |---|---|---|
 | `/flow-spec` | 訪談定版 | 蘇格拉底一次一題彈窗 + grill-me 深挖 + 獨立 spec-reviewer → 凍結 `requirements.md`(EARS) → ui-ux-pro-max 產 HTML mockup、開瀏覽器、彈窗定 UI |
 | `/flow-plan` | 設計 | 架構 + **接縫契約釘一處**（編譯期擋發散）+ 垂直切片 + 依賴分波 |
-| `/flow-build` | 多工交付 | 波次內 Workflow 腳本 fan-out **worktree 隔離**平行 worker，紅軍 → TDD → 真實資料鏈路自檢 → per-task commit+push（走 git-tools skill） |
+| `/flow-build` | 多工交付 | 波次內 Workflow 腳本 fan-out 同 repo 平行生成 worker，紅軍 → TDD → 序列整合（驗證/commit 一個個）→ per-task commit+push（走 git-tools skill） |
 | `/flow-verify` | 獨立驗證 | 另開 context 的**對抗性 Evaluator** 用 Playwright headed 真點擊、打真 API、查真 DB；效能硬閘門 |
 | `/flow-ship` | 整合出貨 | 跨 feature e2e + 完整效能 + 全 diff `code-reviewer` 審查 + 達成**完成謂詞** → 發 `COMPLETE` |
 
-**輔助**：`/flow`（一鍵總控，偵測起始 phase + 小功能輕量路徑）、`/flow-monitor`（即時看板）、`/flow-resume`（中斷接手）、`/flow-compact`（文件收束）。
+**輔助**：`/flow`（一鍵總控，偵測起始 phase + 小功能輕量路徑）、`/flow-resume`（中斷接手）、`/flow-compact`（文件收束）。
 
 **小功能輕量路徑**：小調整可跳訪談但**仍寫 SDD**（精簡 REQ + F-task，照走 TDD/真實資料鏈路驗證）；踩到需求級變動（新實體 / 角色 / auth / RBAC / payment / 個資 scope）才升回完整 `/flow-spec`。
 
@@ -61,13 +61,12 @@ git clone https://github.com/Ennvoy/myworkflow.git flow && cd flow && chmod +x i
 ## 功能特點
 
 - **需求訪談**：蘇格拉底一次一題彈窗（每題附推薦答案）+ grill-me 連續深挖 + **獨立 context** 的 spec-reviewer 外部視角；web 類用 HTML mockup 把 UI 方向釘死在最早能看見實體的時點。
-- **多工並行（Workflow 模式）**：波次內 fan-out worktree 隔離 worker、階段間人工閘門；foundation 先序列、features 才並行（靠 `conflictZone` 算準避免 merge 地獄）；成本路由（Opus 編排 / 審查、Sonnet 平行苦工）。
+- **多工並行（Workflow 模式）**：波次內 fan-out 同 repo 平行生成 worker（只寫各自不重疊的檔）、序列整合、階段間人工閘門；foundation 先序列、features 才並行（靠 `conflictZone` 算準）；成本路由（Opus 編排 / 審查、Sonnet 平行苦工）。
 - **真實資料鏈路驗證（禁 mock 假綠）**：對抗性 Evaluator + Playwright headed + 假資料經**真 create API seed 進真 DB 再讀回**；真依賴未 ready 標 BLOCKED，不准 mock fallback 假裝綠。
 - **效能硬閘門**：load / render / API 延遲 budget，**p50 + p95**，任一維度不達標 = FAIL，高平均不能買回失敗維度。
 - **可恢復狀態（殺不死）**：write-ahead journal + 冷啟動 `reconstruct`，狀態寫進 `.flow/` + git；關機 / 換 session / 換電腦純讀檔接手，**並行多 worker 的中斷點各自獨立、不互蓋**。
-- **即時監控看板**：`/flow-monitor` 唯讀投影 `specs/tasks.md` + `.flow/`，淺色 glassmorphism、5 階段 ribbon、完成謂詞面板、決策卡導回 Claude 彈窗；build / resume 進場冪等自動開。
 - **紅藍軍獨立 reviewer**：red-team（寫 code 前列攻擊面 + failingTestHint）、code-reviewer（出貨前全 diff 審）、spec-reviewer（需求審查）——各自獨立 context、看不到主對話。
-- **確定性閘門**：git commit+push（走 git-tools skill：智慧分群提交＋安全推送）、`.flow` 狀態寫入、port 清理、verify runner 都是 hook / script / skill 確定性節點，模型不能假裝過關。
+- **確定性閘門**：git commit+push（走 git-tools skill：智慧分群提交＋安全推送）、`.flow` 狀態寫入、`flow-commit-gate`（先標再 commit）、`flow-verify-gate`（沒驗不准標完成）、verify runner 都是 hook / script / skill 確定性節點，模型不能假裝過關。
 - **文件收束防腐化**：context 70% / 單檔 > 50KB / ship `COMPLETE` 三觸發歸檔，主檔保持「當前迭代 + 接縫契約 + 索引」精簡態。
 - **自包含一鍵裝**：commands / agents / skills / rules / hooks 全打包，冪等可重跑、自動備份，新電腦 `git clone` → 跑一支 script 即可。
 
@@ -82,12 +81,12 @@ flow/
 ├── README.md / VERSION / LICENSE
 ├── docs/                       # architecture + harness 研究 + 設計檔
 └── dist/                       # 安裝 payload（裝進 ~/.claude）
-    ├── commands/flow*.md       # 9 個 /flow* 指令
+    ├── commands/flow*.md       # 8 個 /flow* 指令
     ├── agents/                 # red-team / code-reviewer / spec-reviewer
     ├── rules/flow.md           # 薄 root 憲法（注入 CLAUDE.md）
-    ├── skills/flow-toolkit/    # references + recipes（Workflow 腳本）+ statelib/dashboard/flow-state.mjs + board.html
+    ├── skills/flow-toolkit/    # references + recipes（Workflow 腳本）+ statelib / flow-state.mjs
     ├── skills/git-tools/       # 智慧分群 commit + 安全 push + PR description（Flow commit+push 機制）
-    ├── hooks/                  # flow-verify-gate.mjs / flow-session-start.mjs（Node，跨平台）
+    ├── hooks/                  # flow-verify-gate / flow-commit-gate / flow-session-start / flow-size-check（Node，跨平台）
     └── install/                # merge-settings.mjs（裝：hook 接線進 settings.json）/ flow-uninstall.mjs（卸：反向拔 hook + 清舊 FLOW 區塊）
 ```
 

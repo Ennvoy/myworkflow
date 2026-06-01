@@ -7,11 +7,11 @@
 
 1. `/flow-spec` — **訪談定版**：蘇格拉底一次一題彈窗 → 凍結 `specs/requirements.md`(EARS) → ui-ux-pro-max 產 HTML mockup、開瀏覽器、彈窗定 UI → 凍結。
 2. `/flow-plan` — **設計**：讀凍結 specs → `specs/design.md`（架構＋接縫契約釘一處）＋ `specs/tasks.md`（垂直切片＋依賴分波）。計畫可丟棄再生，不打磨。
-3. `/flow-build` — **多工交付**：波次內 fan-out 平行 worker（worktree 隔離），階段間你拍板。一次一 task、紅軍先行、TDD、per-task commit。
+3. `/flow-build` — **多工交付**：波次內 fan-out 同 repo 平行生成 worker、序列整合，階段間你拍板。紅軍先行、TDD、per-task commit。
 4. `/flow-verify` — **獨立驗證**：另開 context 的 Evaluator 用 Playwright headed 真點擊、打真 API、查真 DB，對照契約。真實資料鏈路＋效能硬閘門。
 5. `/flow-ship` — **跨 feature 整合＋收束**：整合 e2e＋完整效能 budget＋全 diff 審查＋達成完成謂詞 → 出貨。
 
-輔助：`/flow-resume`（從檔案狀態接手）、`/flow-compact`（文件收束）、`/flow-monitor`（唯讀即時看板，build/resume 進場冪等自動開）。
+輔助：`/flow-resume`（從檔案狀態接手）、`/flow-compact`（文件收束）。
 
 **小功能輕量路徑**：小調整可跳 `/flow-spec` 訪談但**仍寫 SDD**（精簡 REQ + F-task，照走 TDD/真實資料鏈路驗證）；踩到需求級變動（新實體/角色/auth/RBAC/payment/個資 scope）強制升回 `/flow-spec`。詳見 `/flow` Step 0.5。
 
@@ -48,7 +48,7 @@
 
 ## 多工基座 = 混合（細節 `references/orchestration-guide.md`）
 
-波次內 fan-out 用 **Workflow 腳本**（背景跑、結構化回傳）；階段之間保留**互動式人工閘門**你拍板。foundation/共用檔**先序列 merge**、features 才 **worktree 隔離平行**。orchestrator 寫死 effort 分級＋成本路由（Opus 編排/審查、Sonnet 平行苦工、Haiku 窄活）＋**小盒子工具**（每 worker 只給需要的工具）。多工 ~15x token，**只在真平行＋高價值才 fan-out**。
+波次內 fan-out 用 **Workflow 腳本**（背景跑、結構化回傳）；階段之間保留**互動式人工閘門**你拍板。foundation/共用檔**先序列**、features 才 **同 repo 平行生成（conflictZone 互斥）、序列整合**（worker 只寫各自不重疊的檔，build/commit 由主流程一個個做）。orchestrator 寫死 effort 分級＋成本路由（Opus 編排/審查、Sonnet 平行苦工、Haiku 窄活）＋**小盒子工具**（每 worker 只給需要的工具）。多工 ~15x token，**只在真平行＋高價值才 fan-out**。
 
 ## 收束（防無限寫入，細節 `references/convergence-guide.md`）
 
@@ -56,7 +56,7 @@ specs 一 concern 一檔、凍結後每迴圈重讀；**計畫是可丟棄／可
 
 ## 確定性閘門（模型不能假裝過關）
 
-git commit+push（走 `git-tools` skill：smart 分群提交＋安全推送）、`.flow/state.json` 寫入、port 清理、verify runner 呼叫都是**確定性節點**（hook/script/skill），不靠模型判斷。三道 hook 把「會被漏掉的散文步驟」變成擋不掉的閘門：① `flow-verify-gate`（TaskUpdate）—`verify` 空/`none` 擋 task 完成；② `flow-commit-gate`（Bash/git commit）—commit 點名某 task 但它還沒 `flow-state done`（tasks.md `[x]`＋ledger delivered）就 exit 2 擋下＝強制**先標再 commit**；③ `flow-session-start`（SessionStart）—build/verify/ship 進場確定性把監控看板拉起來。完成一個 task SHALL 跑 `flow-state done <id>`（一指令翻 `[x]`＋寫 ledger），別手改檔繞過。
+git commit+push（走 `git-tools` skill：smart 分群提交＋安全推送）、`.flow/` 狀態寫入、verify runner 呼叫都是**確定性節點**（hook/script/skill），不靠模型判斷。兩道 hook 把「會被漏掉的散文步驟」變成擋不掉的閘門：① `flow-verify-gate`（TaskUpdate）—`verify` 空/`none` 擋 task 完成；② `flow-commit-gate`（Bash/git commit）—commit 點名某 task 但它還沒 `flow-state done`（tasks.md `[x]`＋ledger delivered）就 exit 2 擋下＝強制**先標再 commit**。完成一個 task SHALL 跑 `flow-state done <id>`（一指令翻 `[x]`＋寫 ledger），別手改檔繞過。
 
 ## 語言與環境
 

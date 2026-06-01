@@ -4,14 +4,27 @@
 import http from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { existsSync, writeFileSync, mkdirSync } from 'node:fs';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as S from './statelib.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const ROOT = process.argv[2] || process.cwd();   // 當前專案根
-const PORT = +(process.argv[3]) || 4317;          // 偏好 port；占用自動 +1（多專案並行不撞）
+const rawArgs = process.argv.slice(2);
+const OPEN = rawArgs.includes('--open');           // 綁定後自動開瀏覽器（用實際 port，無 race）
+const positional = rawArgs.filter(a => !a.startsWith('--'));
+const ROOT = positional[0] || process.cwd();       // 當前專案根
+const PORT = +(positional[1]) || 4317;             // 偏好 port；占用自動 +1（多專案並行不撞）
+
+// 跨平台開瀏覽器（detached，不阻塞 server）。
+function openBrowser(url) {
+  try {
+    const [cmd, args] = process.platform === 'win32' ? ['cmd', ['/c', 'start', '', url]]
+      : process.platform === 'darwin' ? ['open', [url]]
+      : ['xdg-open', [url]];
+    spawn(cmd, args, { detached: true, stdio: 'ignore' }).unref();
+  } catch { /* 開不了不致命，URL 已印在 console */ }
+}
 
 const SECTION_RE = /^#{1,3}\s*(Prelude|Features|Cross-?cutting|Backlog)/i;
 const TASK_RE = /^\s*[-*]\s*\[([ xX])\]\s*(.+)$/;
@@ -136,8 +149,10 @@ function listenAuto(p) {
   server.once('error', onErr);
   server.listen(p, '127.0.0.1', () => {
     server.removeListener('error', onErr);
+    const url = `http://127.0.0.1:${p}`;
     try { mkdirSync(path.join(ROOT, '.flow'), { recursive: true }); writeFileSync(path.join(ROOT, '.flow', 'monitor.port'), String(p), 'utf8'); } catch {}
-    console.log(`flow monitor on http://127.0.0.1:${p}  (project: ${ROOT})`);
+    console.log(`flow monitor on ${url}  (project: ${ROOT})`);
+    if (OPEN) openBrowser(url);
   });
 }
 listenAuto(PORT);

@@ -26,7 +26,7 @@ description: Flow Phase 1 — 訪談定版。蘇格拉底式一次一題彈窗�
 - 非功能需求：**效能目標**（哪個畫面/操作要多快）、安全、相容
 - 明確的**驗收條件**（怎樣算這條需求做完）
 
-**蘇格拉底初輪收斂後，grill-me 深挖**：用 `AskUserQuestion` 問「要進 grill-me 對決策樹逐分支深挖，還是直接凍結？」（建議深挖）。選深挖 → 實際呼叫 `grill-me` skill（mattpocock/skills，安裝檔已裝整套）對需求/plan **連續質問到每個決策分支釐清**（一次一題、能查 code 先查、每題給推薦答案）。grill-me ＝「在主 context 跟使用者互動深挖」。
+**蘇格拉底初輪收斂後，grill-me 深挖閘門（SHALL，不可跳）**：初輪訪談一收斂，**就 SHALL 用 `AskUserQuestion` 跳一題**「要進 grill-me 對決策樹逐分支深挖，還是直接凍結？」（選項①深挖（建議）②直接凍結）。**這一問是鐵則、漏問＝流程缺陷**（別自行假設使用者要直接凍結就略過）。選深挖 → 實際呼叫 `grill-me` skill（mattpocock/skills，安裝檔已裝整套）對需求 **連續質問到每個決策分支釐清**（一次一題、能查 code 先查、每題給推薦答案）。grill-me ＝「在主 context 跟使用者互動深挖」。
 
 接著（可選但建議）對「你自己整理出的需求」呼叫獨立 `spec-reviewer` subagent（另開 context、**看不到主對話＝外部視角，與 grill-me 互補不重疊**），請它回一份 5–7 條質疑清單（邊界、衝突、隱含假設、缺失異常路徑），把質疑帶回再彈窗跟使用者對焦。
 
@@ -59,6 +59,7 @@ requirements 含 auth / 權限 / payment / 個資 / 合規 / audit 關鍵字 →
 
 ## 完成判準（self-check）
 - [ ] 訪談全程用彈窗、一次一題、有推薦答案
+- [ ] **grill-me 深挖閘門已彈窗問過**（深挖／直接凍結二選一）——漏問即不合格
 - [ ] `specs/requirements.md` 存在，含 REQ-XXX + REQ-E2E-* + REQ-PERF-*
 - [ ] web 類：`specs/ui-mockups/` 有 3–5 頁 + 已開瀏覽器 + 已彈窗定版
 - [ ] 凍結閘門已問、state.json 已更新

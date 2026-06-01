@@ -66,9 +66,7 @@ Copy-Item (Join-Path $Dist 'commands\*') (Join-Path $ClaudeHome 'commands') -Rec
 Copy-Item (Join-Path $Dist 'skills\flow-toolkit') (Join-Path $ClaudeHome 'skills') -Recurse -Force
 Copy-Item (Join-Path $Dist 'skills\git-tools') (Join-Path $ClaudeHome 'skills') -Recurse -Force
 Copy-Item (Join-Path $Dist 'rules\flow.md') (Join-Path $ClaudeHome 'rules\flow.md') -Force
-Copy-Item (Join-Path $Dist 'hooks\flow-verify-gate.mjs') (Join-Path $ClaudeHome 'hooks') -Force
-Copy-Item (Join-Path $Dist 'hooks\flow-session-start.mjs') (Join-Path $ClaudeHome 'hooks') -Force
-Copy-Item (Join-Path $Dist 'hooks\flow-size-check.mjs') (Join-Path $ClaudeHome 'hooks') -Force
+Copy-Item (Join-Path $Dist 'hooks\*.mjs') (Join-Path $ClaudeHome 'hooks') -Force  # 全部 *.mjs hook（加 hook 不必再改安裝檔）
 Copy-Item (Join-Path $Dist 'agents\*') (Join-Path $ClaudeHome 'agents') -Recurse -Force
 $cmdCount = (Get-ChildItem (Join-Path $ClaudeHome 'commands') -Filter 'flow*.md').Count
 $agentCount = (Get-ChildItem (Join-Path $ClaudeHome 'agents') -Filter '*.md' -ErrorAction SilentlyContinue).Count
@@ -77,7 +75,7 @@ Ok "commands（$cmdCount 個 flow*.md）/ skills/flow-toolkit / skills/git-tools
 # 4) merge hook 接線進 settings.json
 & node (Join-Path $Dist 'install\merge-settings.mjs') $settingsPath (Join-Path $Dist 'hooks\settings.flow.json') $ClaudeHome
 if ($LASTEXITCODE -ne 0) { throw "settings.json merge 失敗（exit $LASTEXITCODE）。已備份，請檢查既有 settings.json 是否合法 JSON。" }
-Ok "hook 接線已 merge 進 settings.json（verify-gate / session-start）"
+Ok "hook 接線已 merge 進 settings.json（verify-gate / session-start / commit-gate / size-check）"
 
 # 5) 外部 skill 安裝（依補充指定；用各自官方指令）
 if (-not $SkipExternal) {

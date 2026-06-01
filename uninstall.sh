@@ -42,7 +42,7 @@ fi
 [ -d "$CLAUDE_HOME/skills/flow-toolkit" ] && TARGETS+=("$CLAUDE_HOME/skills/flow-toolkit")
 { [ "$REMOVE_GIT" -eq 1 ] && [ -d "$CLAUDE_HOME/skills/git-tools" ]; } && TARGETS+=("$CLAUDE_HOME/skills/git-tools")
 [ -f "$CLAUDE_HOME/rules/flow.md" ] && TARGETS+=("$CLAUDE_HOME/rules/flow.md")
-for hk in flow-verify-gate.mjs flow-session-start.mjs flow-size-check.mjs; do
+for hk in flow-verify-gate.mjs flow-session-start.mjs flow-size-check.mjs flow-commit-gate.mjs; do
   [ -f "$CLAUDE_HOME/hooks/$hk" ] && TARGETS+=("$CLAUDE_HOME/hooks/$hk")
 done
 for ag in red-team.md code-reviewer.md spec-reviewer.md; do

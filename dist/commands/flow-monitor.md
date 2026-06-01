@@ -27,7 +27,7 @@ description: Flow 監控看板 — 起一個唯讀即時看板，投影當前專
 - 先讀 `.flow/monitor.port`，若該 port 的 server 還活著（GET `/status.json` 200）→ **重用、不再開新 server / 新分頁**。
 - 死了或無紀錄 → 起新的、寫回 `.flow/monitor.port`、開瀏覽器。
 
-> 換 session / 重開機後跑 `/flow-resume` 接續開發時，monitor 一併自動開（讀檔重建現況即投影）。bare session-start 不自動開（hook 只提醒），避免劫持瀏覽器。
+> 換 session / 重開機：`flow-session-start` hook 在 phase=build/verify/ship 會**確定性把看板拉起來**（沒在跑就 spawn + 開瀏覽器一次；已在跑就只重用、不重開分頁）——所以即使忘了手動開，下個 session 進場看板照在。phase=spec/plan 不自動開（避免太早劫持瀏覽器）。
 
 ## 停止
 

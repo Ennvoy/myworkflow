@@ -58,9 +58,9 @@ async function monitor() {
     const port = parseInt(readFileSync(portFile, 'utf8').trim(), 10);
     if (port && await ping(port)) { console.log(`flow monitor 已在執行：http://127.0.0.1:${port}`); return; }
   }
-  const child = spawn(process.execPath, [path.join(__dirname, 'dashboard.mjs'), root], { detached: true, stdio: 'ignore' });
+  const child = spawn(process.execPath, [path.join(__dirname, 'dashboard.mjs'), root, '--open'], { detached: true, stdio: 'ignore' });
   child.unref();
-  console.log('flow monitor 啟動中…（dashboard.mjs 綁定後把實際 port 寫進 .flow/monitor.port）');
+  console.log('flow monitor 啟動中…（綁定後寫 .flow/monitor.port 並自動開瀏覽器）');
 }
 
 switch (cmd) {
@@ -71,9 +71,23 @@ switch (cmd) {
   case 'monitor':
     await monitor();
     break;
+  case 'done': {
+    // 原子完成一個 task：翻 tasks.md [x] + ledger→delivered。一個指令取代三條會被漏掉的散文步驟。
+    // 用法：flow-state done <taskId> [--commit <sha>]（taskId 可給 canonical 或唯一尾段如 W0-5）
+    const id = argv[1];
+    if (!id || id.startsWith('--')) { console.error('usage: flow-state done <taskId> [--commit <sha>]'); process.exit(1); }
+    const commit = flag('--commit');
+    const r = await S.markTaskDone(root, id, commit ? { commit } : {});
+    const md = r.tasksMd.changed ? 'tasks.md [x] 已翻' : (r.tasksMd.found ? 'tasks.md 本已 [x]' : '⚠ tasks.md 無對應行（id 對不上？）');
+    const lg = r.alreadyDelivered ? 'ledger 本已 delivered' : 'ledger→delivered';
+    console.log(`✓ ${r.id}：${md}；${lg}${commit ? `；commit=${commit}` : ''}`);
+    console.log('  下一步：照常 git commit（commit gate 已可放行此 task）。');
+    break;
+  }
   default:
-    console.log(`flow-state <resume|status|monitor> [--root <path>]
-  resume | status   冷啟動：reconstruct 印現況 + 下一步（換 session/電腦/中斷後接手）
-  monitor           冪等起監控看板（已在跑就重用同一個）
+    console.log(`flow-state <resume|status|monitor|done> [--root <path>]
+  resume | status      冷啟動：reconstruct 印現況 + 下一步（換 session/電腦/中斷後接手）
+  monitor              冪等起監控看板（已在跑就重用同一個）
+  done <id> [--commit] 標一個 task 完成：翻 tasks.md [x] + ledger→delivered（先標、再 commit）
 決策/討論一律回 Claude（彈窗）；狀態都在專案的 .flow/。`);
 }

@@ -81,6 +81,59 @@ export async function readDecision(root, id) { return readJSON(path.join(decisio
 export async function writeStateJson(root, state) { await writeJSON(statePath(root), state); }
 export async function readStateJson(root) { return readJSON(statePath(root), {}); }
 
+// ── tasks.md 同步：把「task 完成」收成一個可被 hook/CLI 共用的原子操作 ──
+// 修根因：原本「翻 tasks.md [x]」「寫 ledger」「TaskUpdate」是三條各自會被漏掉的散文步驟。
+// 這裡把「翻 [x] + ledger→delivered」綁成一次呼叫，flow-state done 與 commit gate 都走它。
+const tasksMdPath = root => path.join(root, 'specs', 'tasks.md');
+const LINE_RE = /^(\s*[-*]\s*\[)([ xX])(\]\s*)(.+)$/;          // 抓 checkbox 行（保留前後綴以原樣回寫）
+const ID_RE   = /^([A-Z][A-Za-z]*(?:-[\w.]+)+)\b/;            // 與 dashboard.mjs 同規則抽 canonical id
+function lineId(rest) {
+  const m = rest.replace(/\*\*/g, '').trim().match(ID_RE);
+  return m ? m[1] : null;
+}
+// id 比對：canonical 完全相等優先，否則容忍一端是另一端的尾段 token（F-1186-W0-5 ↔ W0-5）。
+export function idMatches(a, b) {
+  if (!a || !b) return false;
+  if (a === b) return true;
+  return a.endsWith('-' + b) || b.endsWith('-' + a) || a.endsWith('/' + b) || b.endsWith('/' + a);
+}
+// 純函式：把 id 對應那行 [ ]→[x]（保留 EOL 風格與縮排）。回傳 { text, found, changed }。
+export function flipCheckbox(md, id) {
+  const eol = md.includes('\r\n') ? '\r\n' : '\n';
+  const lines = md.split(/\r?\n/);
+  let found = false, changed = false;
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(LINE_RE);
+    if (!m || !idMatches(lineId(m[4]), id)) continue;
+    found = true;
+    if (m[2] === ' ') { lines[i] = m[1] + 'x' + m[3] + m[4]; changed = true; }
+    break;
+  }
+  return { text: lines.join(eol), found, changed };
+}
+// 把 raw id 解析成 manifest 的 canonical id（精確優先 → 唯一尾段匹配 → 原樣）。
+export async function resolveId(root, raw) {
+  const ids = ((await readManifest(root)).tasks || []).map(t => t.id);
+  if (ids.includes(raw)) return raw;
+  const hits = ids.filter(id => idMatches(id, raw));
+  return hits.length === 1 ? hits[0] : raw;
+}
+// 原子完成：翻 tasks.md [x] + ledger transition→delivered（冪等）。供 flow-state done / PostToolUse 共用。
+export async function markTaskDone(root, rawId, patch = {}) {
+  const id = await resolveId(root, rawId);
+  let flip = { found: false, changed: false };
+  const tp = tasksMdPath(root);
+  if (existsSync(tp)) {
+    const md = await readFile(tp, 'utf8');
+    flip = flipCheckbox(md, id);
+    if (flip.changed) await writeFile(tp, flip.text, 'utf8');   // UTF-8 無 BOM
+  }
+  const cur = await readLedger(root, id);
+  const from = cur.state || 'pending';
+  if (from !== 'delivered' || patch.commit) await transition(root, id, from, 'delivered', patch);
+  return { id, fromState: from, alreadyDelivered: from === 'delivered', tasksMd: flip };
+}
+
 // 冷啟動重建：只讀磁碟 → 還原「現況 + 未完成動作」。任何 agent / 機器跑這個就接上。
 export async function reconstruct(root) {
   const manifest = await readManifest(root);

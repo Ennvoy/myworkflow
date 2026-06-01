@@ -82,7 +82,8 @@ const results = await pipeline(
     `真實資料鏈路：API/資料驗證 SHALL 打真後端真 DB、禁 mock 假綠、測試資料經真 create API seed 進真 DB；\n` +
     `真依賴未 ready（上游 5xx / 未實作）→ 標 BLOCKED，不准 mock fallback 假裝綠。\n` +
     (f.ui ? `涉 UI：依附帶的 ui-ux-pro-max component 建議，accessibility（ARIA/keyboard/focus）清單逐項實作。\n` : '') +
-    `每個 task 完成 per-task commit（scope 帶 ${f.id}）。安全 red flag（SQLi/auth bypass/密碼明文/缺 WHERE 的 destructive query）→ 在 driveBy 標出。\n` +
+    `task 綠了：先在 worktree 跑 \`node ~/.claude/skills/flow-toolkit/flow-state.mjs done ${f.id}\`（翻 tasks.md [x] + ledger delivered），再 per-task commit（scope 帶 canonical id ${f.id}，例 feat(${f.id}): …）——先標再 commit。\n` +
+    `安全 red flag（SQLi/auth bypass/密碼明文/缺 WHERE 的 destructive query）→ 在 driveBy 標出。\n` +
     `回傳結構化結果。`,
     { label: `build:${f.id}`, phase: 'Build', schema: BUILD_SCHEMA, isolation: 'worktree' }
   )

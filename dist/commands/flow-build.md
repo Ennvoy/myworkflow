@@ -11,7 +11,7 @@ description: Flow Phase 3 — 多工交付（混合基座）。取當前波次�
 ## Step 0：冷啟動讀現況 + 開監控看板
 
 跑 flow-toolkit 的 `flow-state.mjs resume`（路徑/shell 依 flow.md 環境慣例——mac/linux `node ~/.claude/skills/flow-toolkit/flow-state.mjs resume`、Windows PS `node "$env:USERPROFILE\.claude\skills\flow-toolkit\flow-state.mjs" resume`）用 statelib **reconstruct** 純從磁碟重建「還剩什麼 + 未完成 dangling」（不靠對話記憶），有 dangling（上次中斷）先冪等補完；補 `specs/tasks.md` 的 `[ ]`/`[x]`。
-**進 build 即冪等自動開看板**：`flow-state.mjs monitor`（已在跑就重用、不疊新分頁），讀印出的 port 用 OS 預設方式開瀏覽器（mac `open <url>` / Windows `Start-Process <url>` / Linux `xdg-open <url>`）（0 摩擦）。
+**進 build 即冪等自動開看板**：`flow-state.mjs monitor`（已在跑就重用、不疊新分頁；fresh 起會自己開瀏覽器到實際 port，0 摩擦）。**安全網**：`flow-session-start` hook 在 phase=build/verify/ship 的新 session 也會確定性把看板拉起來——所以即使這步漏了，下個 session 進場看板照樣在跑。
 
 ## Step 1：算當前波次可並行集合
 
@@ -40,6 +40,7 @@ description: Flow Phase 3 — 多工交付（混合基座）。取當前波次�
 ## Step 4：收斂 merge（序列）
 
 worker 回來 → 依拓樸序把 branch merge 回 trunk、解衝突。**安全/資料正確性 red flag（SQL injection、auth bypass、密碼明文、destructive query 缺 WHERE）一律暫停**告知使用者（順手修紀律）。merge 後過時 worktree 移除。
+- **`.flow/` 合併**：每 task 的 `ledger/<id>.json` 各自獨立檔、不衝突；唯一可能撞的是 append-only 的 `.flow/journal.ndjson`——衝突時**取聯集**（兩邊行都保留，append log 聯集即正確），別丟任一邊。merge 完在 trunk 對帳一次 `flow-state status` 確認每個已交付 task 都 `delivered`、tasks.md `[x]` 齊。
 
 ## Step 5：feature 自身驗證 + per-task commit
 
@@ -48,10 +49,12 @@ worker 回來 → 依拓樸序把 branch merge 回 trunk、解衝突。**安全/
   - ① **檔案型產物**（確定性）→ 跑 flow-toolkit 的 clean script（mac/linux `node ~/.claude/skills/flow-toolkit/clean-verify-artifacts.mjs --apply --gitignore`、Windows PS `node "$env:USERPROFILE\.claude\skills\flow-toolkit\clean-verify-artifacts.mjs" --apply --gitignore`）：白名單刪 Playwright `test-results/`/report、coverage、`*.log`、`.last-run.json`、一次性 debug 截圖/tmp，並補 `.gitignore`。**白名單式、不碰 source 測試檔／specs／.flow ledger**（省 `--apply` 為 dry-run 預覽）。
   - ② **語意型殘留**（靠 review）→ 看本次 `git diff`，刪掉遷在 source 的一次性 debug code（`console.log`/`print`/暫時註解掉的塊／臨時驗證腳本）。clean script 不碰 source，這軌靠 review。
   - 清完才 commit，避免驗證垃圾污染交付 diff（對齊 Karpathy『極簡清理』；範圍/紀律見 `references/verification-playbook.md` §七）。
-- 完成一項：先 TaskUpdate completed → 再 `tasks.md` `[ ]`→`[x]`（**不跨段移動**）→ **per-task commit+push 呼叫 `git-tools` skill**（scope 帶 task ID，例 `feat(F-005): ...`）：smart commit 後即 `git push`（trunk 已有 upstream → 直接推；**push 失敗只警告、不中斷 build**，網路問題不卡交付）。狀態進 git ＝ 換電腦 / 換 session 純讀檔即接得上。
-- 狀態落 `.flow/`（殺不死）：worker 綠 + merge → node 呼叫 `statelib.transition(root, id, 'building', 'delivered', { commit:<sha> })` + `actionDone(root, id, 'building')`；同步 `writeStateJson`（task/phase/verify/commit）給既有 `flow-verify-gate`/`flow-session-start` hook 讀。
+- 完成一項（順序鐵則：**先標、再 commit**，閘門會強制）：
+  1. TaskUpdate completed（`flow-verify-gate` hook 會在 `verify` 空/`none` 時擋下——**別沒真跑就填 `verify=ok`**）。
+  2. **跑 `flow-state done <id>`**（一個指令做完原本三件會被漏的事：翻 `tasks.md` 的 `[x]` + 寫 ledger `delivered` + 帶 commit）：mac/linux `node ~/.claude/skills/flow-toolkit/flow-state.mjs done <id>`、Windows PS `node "$env:USERPROFILE\.claude\skills\flow-toolkit\flow-state.mjs" done <id>`。`<id>` 用 canonical task id（tasks.md/manifest 那個，例 `F-1186-W0-5`）。看板 2 秒內就會把該卡推到「已交付」。
+  3. **per-task commit+push 走 `git-tools` skill**，**commit scope SHALL 帶 canonical task id**（例 `feat(F-1186-W0-5): ...`，別用 `v1.x/W0-5` 這種對不上 manifest 的裝飾 id）：smart commit 後即 `git push`（trunk 已有 upstream → 直接推；**push 失敗只警告、不中斷 build**）。
+- **`flow-commit-gate` hook（PreToolUse/Bash）會擋**：commit scope 點名某 task 但它還沒 `done` → exit 2 擋下，叫你先跑 `flow-state done`。所以「忘了翻 tasks.md / 忘了寫 ledger」這條系統性漏洞被確定性堵死——翻好 `[x]` 才能 commit，`[x]` 也就一起進這個 commit。**別手改 ledger/tasks.md 繞過閘門**。
 - commit 成功前不領下個 task；commit 失敗（hook/衝突）→ 整個 build 暫停告知。
-- `flow-verify-gate` hook 會在 `verify` 空/`none` 時擋下 TaskUpdate completed——**別沒真跑就填 `verify=ok`（系統性違規）**。
 
 ## Step 6：推進下一波
 
@@ -65,6 +68,6 @@ worker 回來 → 依拓樸序把 branch merge 回 trunk、解衝突。**安全/
 ## 完成判準（self-check）
 - [ ] foundation 先序列 merge、features 才平行（conflictZone 算準）
 - [ ] 每 feature 紅軍先行、worker 走 TDD + 真實資料鏈路（無 mock 假綠）
-- [ ] 每個完成的 task：commit 前清驗證垃圾（clean script `--apply` + review 掉 source 內 debug 殘留）→ TaskUpdate + tasks.md [x] + per-task commit+push（走 git-tools skill）都做了
+- [ ] 每個完成的 task：commit 前清驗證垃圾（clean script `--apply` + review 掉 source 內 debug 殘留）→ TaskUpdate completed → **`flow-state done <id>`**（翻 tasks.md [x] + ledger）→ per-task commit+push（scope 帶 canonical id，走 git-tools skill）。被 `flow-commit-gate` 擋下＝你跳過了 `flow-state done`，補跑即可
 - [ ] BLOCKED / 安全 red flag 有暫停回報，沒靜默略過
 - [ ] 跨 feature 項已記進 X-*/Backlog 留給 ship

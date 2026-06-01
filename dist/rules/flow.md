@@ -56,7 +56,7 @@ specs 一 concern 一檔、凍結後每迴圈重讀；**計畫是可丟棄／可
 
 ## 確定性閘門（模型不能假裝過關）
 
-git commit+push（走 `git-tools` skill：smart 分群提交＋安全推送）、`.flow/state.json` 寫入、port 清理、verify runner 呼叫都是**確定性節點**（hook/script/skill），不靠模型判斷。`flow-verify-gate` hook 在 `verify` 空/`none` 時 exit 2 擋下 task 完成。
+git commit+push（走 `git-tools` skill：smart 分群提交＋安全推送）、`.flow/state.json` 寫入、port 清理、verify runner 呼叫都是**確定性節點**（hook/script/skill），不靠模型判斷。三道 hook 把「會被漏掉的散文步驟」變成擋不掉的閘門：① `flow-verify-gate`（TaskUpdate）—`verify` 空/`none` 擋 task 完成；② `flow-commit-gate`（Bash/git commit）—commit 點名某 task 但它還沒 `flow-state done`（tasks.md `[x]`＋ledger delivered）就 exit 2 擋下＝強制**先標再 commit**；③ `flow-session-start`（SessionStart）—build/verify/ship 進場確定性把監控看板拉起來。完成一個 task SHALL 跑 `flow-state done <id>`（一指令翻 `[x]`＋寫 ledger），別手改檔繞過。
 
 ## 語言與環境
 

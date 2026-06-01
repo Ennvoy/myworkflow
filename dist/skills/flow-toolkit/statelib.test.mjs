@@ -2,7 +2,7 @@
 // 重點：append-only journal 讓「並行多 worker 的 dangling」都留得住（修單檔 state.json 互蓋硬傷）。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, readFile } from 'node:fs/promises';
+import { mkdtemp, rm, readFile, writeFile, mkdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -131,5 +131,90 @@ test('state.json 相容 bridge round-trip（無 BOM）', async () => {
     assert.equal(st.tdd, 'green');
     const raw = await readFile(path.join(root, '.flow', 'state.json'), 'utf8');
     assert.equal(raw.charCodeAt(0), '{'.charCodeAt(0), 'state.json 開頭無 BOM');
+  });
+});
+
+// ── tasks.md 同步：markTaskDone / flipCheckbox / idMatches / resolveId ──
+
+test('idMatches：canonical 相等 + 尾段 token 容錯', () => {
+  assert.ok(S.idMatches('F-1186-W0-5', 'F-1186-W0-5'));
+  assert.ok(S.idMatches('F-1186-W0-5', 'W0-5'), 'canonical 結尾含短 token');
+  assert.ok(S.idMatches('W0-5', 'F-1186-W0-5'), '反向也成立');
+  assert.ok(!S.idMatches('F-1186-W0-5', 'W0-1'), '不同 task 不匹配');
+  assert.ok(!S.idMatches('F-1186-W0-50', 'W0-5'), '不被 W0-5 誤吃 W0-50');
+});
+
+test('flipCheckbox：只翻對應 id 那行、保留其他、冪等', () => {
+  const md = [
+    '- [ ] **F-1186-W0-1 · DB**（REQ-06）',
+    '- [ ] **F-1186-W0-2 · labels**（REQ-05）',
+    '- [x] **F-1186-W0-3 · sort**（REQ-02）',
+  ].join('\n');
+  const r = S.flipCheckbox(md, 'F-1186-W0-2');
+  assert.ok(r.found && r.changed);
+  assert.match(r.text, /- \[x\] \*\*F-1186-W0-2/);
+  assert.match(r.text, /- \[ \] \*\*F-1186-W0-1/, '其他行不動');
+  // 冪等：再翻一次 changed=false
+  const r2 = S.flipCheckbox(r.text, 'F-1186-W0-2');
+  assert.ok(r2.found && !r2.changed, '已是 [x] → 不再變動');
+});
+
+test('flipCheckbox：CRLF 內容保留 CRLF', () => {
+  const md = '- [ ] **F-1 · a**\r\n- [ ] **F-2 · b**\r\n';
+  const r = S.flipCheckbox(md, 'F-1');
+  assert.ok(r.changed);
+  assert.ok(r.text.includes('\r\n'), '保留 CRLF');
+});
+
+test('resolveId：精確優先、唯一尾段匹配、無 manifest 原樣回', async () => {
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [{ id: 'F-1186-W0-1' }, { id: 'F-1186-W0-2' }] });
+    assert.equal(await S.resolveId(root, 'F-1186-W0-1'), 'F-1186-W0-1');
+    assert.equal(await S.resolveId(root, 'W0-2'), 'F-1186-W0-2', '短 token 解析成 canonical');
+    assert.equal(await S.resolveId(root, 'ZZZ'), 'ZZZ', '無匹配原樣回');
+  });
+});
+
+test('markTaskDone：翻 tasks.md [x] + ledger→delivered（一次原子）', async () => {
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [{ id: 'F-1186-W0-1' }, { id: 'F-1186-W0-2' }] });
+    await mkdir(path.join(root, 'specs'), { recursive: true });
+    await writeFile(path.join(root, 'specs', 'tasks.md'),
+      '- [ ] **F-1186-W0-1 · DB**\n- [ ] **F-1186-W0-2 · labels**\n', 'utf8');
+
+    // 用短 token 呼叫也要能解析到 canonical
+    const r = await S.markTaskDone(root, 'W0-2', { commit: 'abc1234' });
+    assert.equal(r.id, 'F-1186-W0-2');
+    assert.ok(r.tasksMd.changed, 'tasks.md 已翻 [x]');
+
+    const md = await readFile(path.join(root, 'specs', 'tasks.md'), 'utf8');
+    assert.match(md, /- \[x\] \*\*F-1186-W0-2/);
+    assert.match(md, /- \[ \] \*\*F-1186-W0-1/, '另一個沒被動到');
+
+    const l = await S.readLedger(root, 'F-1186-W0-2');
+    assert.equal(l.state, 'delivered');
+    assert.equal(l.commit, 'abc1234');
+  });
+});
+
+test('markTaskDone：冪等（已 delivered 再呼叫不重複翻、可補 commit）', async () => {
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [{ id: 'F-1' }] });
+    await mkdir(path.join(root, 'specs'), { recursive: true });
+    await writeFile(path.join(root, 'specs', 'tasks.md'), '- [ ] **F-1 · a**\n', 'utf8');
+    const r1 = await S.markTaskDone(root, 'F-1');
+    assert.equal(r1.alreadyDelivered, false);
+    const r2 = await S.markTaskDone(root, 'F-1', { commit: 'deadbee' });
+    assert.equal(r2.alreadyDelivered, true);
+    assert.equal((await S.readLedger(root, 'F-1')).commit, 'deadbee', '冪等但能補 commit');
+  });
+});
+
+test('markTaskDone：無 tasks.md 不炸、仍寫 ledger', async () => {
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [{ id: 'F-1' }] });
+    const r = await S.markTaskDone(root, 'F-1');
+    assert.equal(r.tasksMd.found, false);
+    assert.equal((await S.readLedger(root, 'F-1')).state, 'delivered');
   });
 });

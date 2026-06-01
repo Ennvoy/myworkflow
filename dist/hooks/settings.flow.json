@@ -10,6 +10,15 @@
             "command": "node \"{{CLAUDE_HOME}}/hooks/flow-verify-gate.mjs\""
           }
         ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"{{CLAUDE_HOME}}/hooks/flow-commit-gate.mjs\""
+          }
+        ]
       }
     ],
     "SessionStart": [

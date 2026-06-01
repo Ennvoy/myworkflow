@@ -25,6 +25,7 @@
 
 **Ask first（先彈窗問，用 AskUserQuestion 白話講 trade-off）**
 - 跨階段推進、UI 方向定版、裝新 dependency、破壞性 DB 操作（DROP/TRUNCATE/無 WHERE 的 DELETE/UPDATE）
+- **波次執行策略偏離預設平行**：把 `/flow-build` 已算出的並行波降級成序列/部分平行 → 先彈窗講清 token↔速度 trade-off，**禁在 thinking/散文裡自決**
 
 **Never（一律禁，每條都配正解）**
 - ❌ 用 mock/stub/寫死 fixture 冒充功能完成 → ✅ 真依賴未 ready 就標 **BLOCKED**

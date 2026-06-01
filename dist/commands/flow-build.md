@@ -20,6 +20,13 @@ description: Flow Phase 3 — 多工交付（混合基座）。取當前波次�
 - **釘契約**：跨 worker 的接縫用 design.md 釘好的單一 type/schema，各 worker import 同一份。
 - **波次寬度合理控制**：多工 ~15x token，只把「真互不依賴＋夠份量」的放進同一波。簡單/相依的別硬塞平行。
 
+## Step 1.5：執行策略閘門（偏離預設平行 SHALL 彈窗，別在散文裡自己降級）
+
+**預設路徑 = 本波可並行集合逐 feature fan-out 平行生成（Step 3）**。要偏離這個預設——把**已算出的並行波降級成序列**、或只**部分平行**（常見理由：features 簡單/相似/複用同一元件、不夠份量、想省 ~15x token）——**SHALL 先 `AskUserQuestion` 彈窗讓使用者拍板**，白話列：可並行集合是哪些、你建議的策略＋理由、trade-off（省 token/一致性 ↔ 速度）。
+- 照預設全 fan-out 平行 → **不必問**，直接進 Step 2/3。
+- **禁止在 thinking/散文裡自行把並行波降級成序列**——那是 `Ask first` 等級的 trade-off（見 flow.md 三層邊界），不是 orchestrator 可單方拍板的事。
+- 拍板後把選定策略＋一句 rationale 寫進 `.flow/state.json`（如 `wave[n].strategy` / `strategyReason`），讓 `/flow-resume` 與審查看得到「這波為何這樣跑」，不靠對話記憶。
+
 ## Step 2：紅軍先行（平行、唯讀）
 
 對本波每個 feature **平行**跑 `red-team` subagent（獨立 context、唯讀 → 可直接並行），各列 3–5 個攻擊面並標 severity（邊界值、併發、惡意輸入、相依故障、配置漂移）。結果餵進對應 worker。任一 high severity → 建議跑 codex 獨立對抗審查補強（裝了才問）。
@@ -70,6 +77,7 @@ Workflow 回來後，orchestrator 依拓樸序**一個一個**收尾每個 featu
 
 ## 完成判準（self-check）
 - [ ] foundation 先序列、features 才同 repo 平行（conflictZone 算準）
+- [ ] 執行策略沒在散文裡自決：偏離預設平行（降級序列/部分平行）有先彈窗拍板＋寫進 `.flow/state.json`
 - [ ] 每 feature 紅軍先行、worker 走 TDD + 真實資料鏈路（無 mock 假綠）
 - [ ] 每個完成的 task：commit 前清驗證垃圾（clean script `--apply` + review 掉 source 內 debug 殘留）→ TaskUpdate completed → **`flow-state done <id>`**（翻 tasks.md [x] + ledger）→ per-task commit+push（scope 帶 canonical id，走 git-tools skill）。被 `flow-commit-gate` 擋下＝你跳過了 `flow-state done`，補跑即可
 - [ ] BLOCKED / 安全 red flag 有暫停回報，沒靜默略過

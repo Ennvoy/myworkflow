@@ -46,6 +46,15 @@ requirements 含 LLM / 雲端 / 支付 / 行動 / 前端框架關鍵字 → **We
 
 水平拆解類（cli/api/framework/desktop-gui）：Features 段語意改成「功能模組」（能獨立驗收的模組，不必 user-facing），其餘不變。
 
+## Step 4.5：並行度自檢（拆 conflictZone + 消 blockedBy）
+
+**並行度的天花板在這一步決定，不在 build**——build 只是執行這裡算出的波次。標完 blockedBy/conflictZone 後回頭做兩個檢查，把「假性序列」轉成真並行：
+
+- **拆 conflictZone（消重疊）**：若某中央檔（router 路由表、單檔 `db/schema`、共用 component 匯總檔）被多個 feature 的 conflictZone 同時點到 → 它正卡死這些 feature 同波並行。評估能否把擴充點從「大家都改中央檔」改成「各 feature 加自己的檔」（file-based routing、每 feature 一個 migration、register/plugin 模式），讓 conflictZone 不再重疊。
+- **消 blockedBy（斬依賴）**：若 `F-b blockedBy F-a` 只是因為「F-b 要 import F-a 定義的型別/介面」（不是真要等 F-a 的執行結果）→ 把那個介面抽進 Step 3 的接縫契約、排進 Wave 0 先序列釘死，F-a/F-b 即可解耦、同波並行。
+
+**護欄（別過度拆，對齊 Karpathy Simplicity First）**：只拆「本來就該屬於各 feature、彼此獨立」的東西；天生該集中統一看的（全域 middleware 順序、設計 token、共用型別契約、全域 config）留在 Prelude 序列做、不拆。界線一句話 = 「**這東西需不需要被統一看著**」。需另加「自動聚合」機制（框架掃描/runner）才能拆的，要評估膠水成本與「忘了註冊」風險。專案小、並行需求低時，結論可以是「不用拆」——那就別拆，在 design.md 記一句理由即可。
+
 ## Step 5：凍結閘門
 
 `AskUserQuestion` 白話問：「設計＋任務分波完成，是否進 `/flow-build` 開始多工交付？」使用者拍板才推進。寫 `.flow/state.json`：`phase="plan-done"`，並把 tasks 寫入機讀版（TaskCreate）與人讀版 `tasks.md` 雙軌同步。
@@ -54,5 +63,6 @@ requirements 含 LLM / 雲端 / 支付 / 行動 / 前端框架關鍵字 → **We
 - [ ] architecture.md + design.md + tasks.md 三檔齊全
 - [ ] 接縫契約釘在單一 type/schema 檔
 - [ ] tasks 有 P-*/F-*/X-* 分組 + 每個 task 標了 blockedBy / conflictZone
+- [ ] 已做並行度自檢（Step 4.5）：中央檔 conflictZone 重疊評估過可否拆、型別型 blockedBy 評估過可否靠提早釘契約消解（過度拆有護欄）
 - [ ] REQ-PERF-* 有對應到能驗的 task
 - [ ] 凍結閘門已問、state.json + TaskCreate 已更新

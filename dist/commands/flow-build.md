@@ -19,6 +19,7 @@ description: Flow Phase 3 — 多工交付（混合基座）。取當前波次�
 - **foundation/共用檔先序列**：全域 router / 共享型別 / DB schema / auth（`P-*`）**SHALL 先做完並 merge 進 trunk**，features 才 fan-out——否則大家改同一個檔 = merge 地獄。
 - **釘契約**：跨 worker 的接縫用 design.md 釘好的單一 type/schema，各 worker import 同一份。
 - **波次寬度合理控制**：多工 ~15x token，只把「真互不依賴＋夠份量」的放進同一波。簡單/相依的別硬塞平行。
+- **fan-out 前就緒探針（fail-fast，研究 LocalContextMiddleware）**：先確認環境就緒——依專案 package manager 跑一次 deps install/ci（mac/linux 如 `npm ci`）。lockfile drift / 裝不起來 / 缺工具 → **停下回報**，別讓整波 worker 在壞環境上空轉一輪才一起失敗（這一輪重跑成本 = 整波 ~15x token）。
 
 ## Step 1.5：執行策略閘門（偏離預設平行 SHALL 彈窗，別在散文裡自己降級）
 
@@ -41,6 +42,7 @@ description: Flow Phase 3 — 多工交付（混合基座）。取當前波次�
 - **檔案邊界（鐵則）**：worker 只新增/改自己 conflictZone 內的檔；不碰共用檔（全域 router／共享型別／`package.json`／lockfile／DB migration／中央 config，那些走序列 foundation）；只單跑自己的單元測試檔，不跑整包 build／tsc／dev server／`git commit`
 - **涉 UI 的 feature**：orchestrator 先呼叫 `ui-ux-pro-max` 取 component 級建議（structure / ARIA·keyboard·focus / hover·active·disabled / responsive / animation + shadcn 範例），沿用 spec 階段定的 palette/font/style 當 query context，附進 worker prompt；寫 Green 相時 accessibility 清單逐項實作
 - **小盒子工具**：每 worker 只給它任務需要的工具，不給全集
+- **成本路由（Reasoning Sandwich）**：平行苦工 worker 走較便宜 model（recipe 的 `args.workerModel`，預設 Sonnet、可覆寫、不 hardcode 行為）——省 token＝同預算能 fan-out 更寬的波；紅軍／Evaluator 是高價值對抗審查，**維持高階不降級**
 - 要求**結構化回傳** `{feature, files, selfCheck{unitGreen,realData}, blockers, driveBy}`
 
 fan-out 前 orchestrator 先 write-ahead：對本波每個 id 呼叫 `statelib.transition(root, id, 'pending', 'building')`，讓 `flow-state status` 反映這波在生成中。
@@ -48,13 +50,16 @@ fan-out 前 orchestrator 先 write-ahead：對本波每個 id 呼叫 `statelib.t
 ## Step 4：序列整合（逐 feature，主流程序列做）
 
 Workflow 回來後，orchestrator 依拓樸序**一個一個**收尾每個 feature：
+- **檔案安全閘門（確定性，整合前 SHALL 先跑、不靠模型自律）**：跑 `flow-state scope --wave <本波 ids>`（mac/linux `node ~/.claude/skills/flow-toolkit/flow-state.mjs scope --wave F-1,F-2`、Windows PS 對應路徑）。它用 **git 真實變動**比對各 feature 宣告的 `conflictZone`——任一檔落在**所有** conflictZone 之外（worker 越界改了共用檔/foundation）→ **exit 2 暫停**，查清是哪個 worker 越界、該檔該不該走序列 foundation，**別硬整合**（這是同 repo 平行的檔案安全底線，模型偽造不了 git diff）。`overlap` 警告＝規劃時 conflictZone 沒切乾淨（同波兩 feature 改同檔有覆寫風險）→ 回 plan 修。
 - 掃每個結果的 `driveBy`：**安全/資料正確性 red flag（SQL injection、auth bypass、密碼明文、destructive query 缺 WHERE）一律暫停**告知使用者（順手修紀律）。
 - 有 `blockers` 的標 BLOCKED／needs-decision，跳過。
 - 其餘一次一個進 Step 5（驗證 → 清垃圾 → done → commit）。
 
-## Step 5：feature 自身驗證 + per-task commit（序列，一次一個）
+## Step 5：feature 自身驗證 → per-task commit（序列，一次一個；驗證與 commit 解耦）
 
-接 Step 4 逐 feature：在當前 repo 跑**該 feature 的 happy path**（呼叫 `/flow-verify` 的窄範圍模式：Playwright headed + 真實資料鏈路 + 效能 budget）。**綠了才 commit**。
+接 Step 4 逐 feature。**便宜 sensor 先跑、一錯馬上停（fail-fast）**：先跑秒級的 type-check / lint / 單元測試擋掉笨錯誤，**過了才**燒分鐘級的行為驗證（呼叫 `/flow-verify` 窄範圍：Playwright headed + 真實資料鏈路）——別在貴的 headed e2e 上為一個 typo 燒一輪。**貴迴圈有界**：headed e2e 失敗 → 1 次自動修 + 1 次重跑仍紅 → 暫停問你（連 3 輪未過 / 同錯連 2 輪無效 = check-in，狀態維持未完成，不放生半成品）。
+- **效能：每 feature 只跑便宜 smoke**（少量請求抓粗暴退化、fail-fast 早擋）；**嚴謹 p50/p95（代表性資料量、N+1/index/分頁）留到 `/flow-ship` 的完整效能閘門量一次**——避免「最貴又不可平行的嚴謹量測」在每 feature ×N 重燒，且 ship 完成謂詞本來就硬擋效能、不漏接。
+- **驗證與 commit 解耦**：驗證 PASS 才進 commit；某 feature FAIL/BLOCKED **不擋其他已 PASS feature 的 commit**（路由乾淨）。**綠了才 commit**。
 - **commit 前清驗證垃圾（雙軌、確定性閘門，呼叫 git-tools 之前 SHALL 做）**：
   - ① **檔案型產物**（確定性）→ 跑 flow-toolkit 的 clean script（mac/linux `node ~/.claude/skills/flow-toolkit/clean-verify-artifacts.mjs --apply --gitignore`、Windows PS `node "$env:USERPROFILE\.claude\skills\flow-toolkit\clean-verify-artifacts.mjs" --apply --gitignore`）：白名單刪 Playwright `test-results/`/report、coverage、`*.log`、`.last-run.json`、一次性 debug 截圖/tmp，並補 `.gitignore`。**白名單式、不碰 source 測試檔／specs／.flow ledger**（省 `--apply` 為 dry-run 預覽）。
   - ② **語意型殘留**（靠 review）→ 看本次 `git diff`，刪掉遷在 source 的一次性 debug code（`console.log`/`print`/暫時註解掉的塊／臨時驗證腳本）。clean script 不碰 source，這軌靠 review。
@@ -77,8 +82,10 @@ Workflow 回來後，orchestrator 依拓樸序**一個一個**收尾每個 featu
 
 ## 完成判準（self-check）
 - [ ] foundation 先序列、features 才同 repo 平行（conflictZone 算準）
+- [ ] **整合前跑 `flow-state scope --wave` 綠**：無 worker 越界改共用檔/foundation（被 exit 2 擋下＝有人越界，查清再整合，別繞）
 - [ ] 執行策略沒在散文裡自決：偏離預設平行（降級序列/部分平行）有先彈窗拍板＋寫進 `.flow/state.json`
 - [ ] 每 feature 紅軍先行、worker 走 TDD + 真實資料鏈路（無 mock 假綠）
+- [ ] 每 feature 便宜 sensor 先跑/fail-fast、貴迴圈有界；效能只跑便宜 smoke（嚴謹 p50/p95 留 ship 量一次）
 - [ ] 每個完成的 task：commit 前清驗證垃圾（clean script `--apply` + review 掉 source 內 debug 殘留）→ TaskUpdate completed → **`flow-state done <id>`**（翻 tasks.md [x] + ledger）→ per-task commit+push（scope 帶 canonical id，走 git-tools skill）。被 `flow-commit-gate` 擋下＝你跳過了 `flow-state done`，補跑即可
 - [ ] BLOCKED / 安全 red flag 有暫停回報，沒靜默略過
 - [ ] 跨 feature 項已記進 X-*/Backlog 留給 ship

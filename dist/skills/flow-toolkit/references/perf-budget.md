@@ -42,5 +42,5 @@ REQ-PERF-003：搜尋輸入到結果渲染 INP < 200ms（p95）
 
 ## 驗證流程位置
 
-- `/flow-build` 每個 feature 結尾：跑該 feature 相關的 REQ-PERF-*（窄範圍）。
-- `/flow-ship` Step 3：跑**完整** REQ-PERF-* 全集，任一不達標不放行。
+- `/flow-build` 每個 feature 結尾：只跑**便宜 smoke**（少量請求抓粗暴退化、fail-fast 早擋），**不**在每 feature ×N 重燒嚴謹量測。
+- `/flow-ship` Step 3：跑**完整嚴謹** REQ-PERF-* 全集（代表性資料量、p50+p95），任一不達標不放行——這是效能硬閘門的終點（完成謂詞的一部分）。

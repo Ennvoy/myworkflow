@@ -40,6 +40,7 @@ Web 驗證（完整範本 `references/playwright-real-data-template.md`）：
 - 量 **load（LCP/TTFB）+ render（互動延遲）+ API 延遲**，**p50 與 p95 都量**（尾延遲才是體驗殺手）
 - 「讀取或渲染太久」**就是驗證不通過**——不是警告，是 FAIL
 - 貴資源（DB/browser/container）lazy 起、別擋首 token 路徑
+- **成本分層（窄 vs 全）**：`/flow-build` 窄範圍每 feature 只跑**便宜 smoke**（少量請求抓粗暴退化、fail-fast 早擋）；**嚴謹 p50/p95（代表性資料量、N+1/index/分頁）由 `/flow-ship` 完整效能閘門量一次**（完成謂詞硬擋，不漏接）。避免最貴又不可平行的嚴謹量測在每 feature ×N 重燒。
 
 ## 兩層 sensor + 有界重試
 

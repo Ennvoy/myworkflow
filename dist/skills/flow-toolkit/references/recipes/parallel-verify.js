@@ -13,8 +13,11 @@ export const meta = {
 }
 
 // args.targets: [{ id, kind: 'web'|'api'|'e2e'|'perf', req, journey }]
+// 成本路由：Evaluator 是高價值對抗審查（Reasoning Sandwich 的 verify 端＝高 reasoning），預設【不降級】，
+// 繼承 orchestrator 級別；args.evaluatorModel 可覆寫（不 hardcode model-specific，守 model 可抽換）。
 const targets = (args && args.targets) || []
 if (!targets.length) { log('parallel-verify: 無 target'); return [] }
+const EVAL_MODEL = args && args.evaluatorModel
 
 const VERDICT_SCHEMA = {
   type: 'object', additionalProperties: false,
@@ -58,7 +61,7 @@ const results = await parallel(
     '4. 效能硬閘門：對真 DB 真資料量量 p50+p95，任一維度超 budget → 該維度 FAIL（不准用平均救）。\n' +
     '真依賴未 ready → BLOCKED（不是 PASS、不是用 mock 假裝）。\n' +
     '逐維度回報 pass + 客觀 evidence，整體 verdict = 任一維度 FAIL 則 FAIL。',
-    { label: `verify:${t.id}`, phase: 'Verify', schema: VERDICT_SCHEMA }
+    { label: `verify:${t.id}`, phase: 'Verify', schema: VERDICT_SCHEMA, ...(EVAL_MODEL ? { model: EVAL_MODEL } : {}) }
   ))
 )
 

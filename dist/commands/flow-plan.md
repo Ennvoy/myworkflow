@@ -57,7 +57,8 @@ requirements 含 LLM / 雲端 / 支付 / 行動 / 前端框架關鍵字 → **We
 
 ## Step 5：凍結閘門
 
-`AskUserQuestion` 白話問：「設計＋任務分波完成，是否進 `/flow-build` 開始多工交付？」使用者拍板才推進。寫 `.flow/state.json`：`phase="plan-done"`，並把 tasks 寫入機讀版（TaskCreate）與人讀版 `tasks.md` 雙軌同步。
+`AskUserQuestion` 白話問：「設計＋任務分波完成，是否進 `/flow-build` 開始多工交付？」使用者拍板才推進。寫 `.flow/state.json`：`phase="plan-done"`，並把 tasks 寫入機讀版（TaskCreate / `.flow/manifest.json`）與人讀版 `tasks.md` 雙軌同步。
+- **機讀版每個 task SHALL 帶 `blockedBy` + `conflictZone`**：`/flow-build` 據此算波次，且 `flow-state scope --wave`（同 repo 平行的檔案安全閘門）會讀 `manifest.json` 的 `conflictZone` 來擋 worker 越界。**沒宣告 conflictZone 的 task 會被 scope 閘門擋下無法整合**——這把「標 conflictZone」從散文紀律升級成硬要求。
 
 ## 完成判準（self-check）
 - [ ] architecture.md + design.md + tasks.md 三檔齊全

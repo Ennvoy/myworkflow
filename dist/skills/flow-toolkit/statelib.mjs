@@ -134,6 +134,38 @@ export async function markTaskDone(root, rawId, patch = {}) {
   return { id, fromState: from, alreadyDelivered: from === 'delivered', tasksMd: flip };
 }
 
+// ── conflictZone 檔案越界檢查（同 repo 平行的檔案安全閘門，純函式可測）──
+// 同 repo 多 worker 平行只靠「各寫各自不重疊的檔」保安全。這支用 git 的真實變動（模型偽造不了）
+// 比對每個 feature 宣告的 conflictZone，揪出落在所有 sandbox 之外的檔（worker 越界改了共用檔/foundation）。
+// 匹配：glob（* / **）→ regex；否則前綴 + 邊界（後接 / . - 或結尾），避免 features/items 誤吃 features/itemsmore。
+const normPath = (f) => String(f).replace(/^\.\//, '').replace(/\\/g, '/').replace(/\/$/, '');
+function zoneToRe(zone) {
+  const z = normPath(zone);
+  if (z.includes('*')) {
+    const re = z.replace(/[.+^${}()|[\]]/g, '\\$&')
+                .replace(/\*\*/g, '__GLOBSTAR__').replace(/\*/g, '[^/]*').replace(/__GLOBSTAR__/g, '.*');
+    return new RegExp('^' + re + '$');
+  }
+  return new RegExp('^' + z.replace(/[.*+^${}()|[\]\\]/g, '\\$&') + '($|[/.-])');
+}
+export function fileInZone(file, zone) { return zoneToRe(zone).test(normPath(file)); }
+// changedFiles: string[]（git 變動檔）; zonesByFeature: { [id]: string[] }
+// 回傳 { attributed:[{file,feature}], overlaps:[{file,features}], violations:[{file}], ok }
+export function checkScope(changedFiles, zonesByFeature, opts = {}) {
+  const ignore = opts.ignore || [/^\.flow($|\/)/, /^specs($|\/)/];
+  const feats = Object.entries(zonesByFeature || {});
+  const attributed = [], overlaps = [], violations = [];
+  for (const raw of (changedFiles || [])) {
+    const f = normPath(raw);
+    if (!f || ignore.some((re) => re.test(f))) continue;
+    const hits = feats.filter(([, zs]) => (zs || []).some((z) => fileInZone(f, z))).map(([id]) => id);
+    if (hits.length === 0) violations.push({ file: f });
+    else if (hits.length > 1) { overlaps.push({ file: f, features: hits }); attributed.push({ file: f, feature: hits.join('+') }); }
+    else attributed.push({ file: f, feature: hits[0] });
+  }
+  return { attributed, overlaps, violations, ok: violations.length === 0 };
+}
+
 // 冷啟動重建：只讀磁碟 → 還原「現況 + 未完成動作」。任何 agent / 機器跑這個就接上。
 export async function reconstruct(root) {
   const manifest = await readManifest(root);

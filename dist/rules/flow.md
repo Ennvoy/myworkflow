@@ -49,7 +49,7 @@
 
 ## 多工基座 = 混合（細節 `references/orchestration-guide.md`）
 
-波次內 fan-out 用 **Workflow 腳本**（背景跑、結構化回傳）；階段之間保留**互動式人工閘門**你拍板。foundation/共用檔**先序列**、features 才 **同 repo 平行生成（conflictZone 互斥）、序列整合**（worker 只寫各自不重疊的檔，build/commit 由主流程一個個做）。orchestrator 寫死 effort 分級＋成本路由（Opus 編排/審查、Sonnet 平行苦工、Haiku 窄活）＋**小盒子工具**（每 worker 只給需要的工具）。多工 ~15x token，**只在真平行＋高價值才 fan-out**。
+波次內 fan-out 用 **Workflow 腳本**（背景跑、結構化回傳）；階段之間保留**互動式人工閘門**你拍板。foundation/共用檔**先序列**、features 才 **同 repo 平行生成（conflictZone 互斥）、序列整合**（worker 只寫各自不重疊的檔，build/commit 由主流程一個個做；整合前跑 `flow-state scope` 擋越界）。orchestrator 寫死 effort 分級＋成本路由（Opus 編排/審查、Sonnet 平行苦工、Haiku 窄活）＋**小盒子工具**。平行苦工走較便宜 model（`workerModel` 預設 Sonnet、可覆寫）省 token＝**同預算開更寬的波**，Evaluator/紅軍不降級；效能嚴謹 p50/p95 每 feature 只跑便宜 smoke、嚴謹量測留 ship 量一次（最貴又不可平行的別 ×N 重燒）。多工 ~15x token，**只在真平行＋高價值才 fan-out**。
 
 ## 收束（防無限寫入，細節 `references/convergence-guide.md`）
 
@@ -57,7 +57,9 @@ specs 一 concern 一檔、凍結後每迴圈重讀；**計畫是可丟棄／可
 
 ## 確定性閘門（模型不能假裝過關）
 
-git commit+push（走 `git-tools` skill：smart 分群提交＋安全推送）、`.flow/` 狀態寫入、verify runner 呼叫都是**確定性節點**（hook/script/skill），不靠模型判斷。兩道 hook 把「會被漏掉的散文步驟」變成擋不掉的閘門：① `flow-verify-gate`（TaskUpdate）—`verify` 空/`none` 擋 task 完成；② `flow-commit-gate`（Bash/git commit）—commit 點名某 task 但它還沒 `flow-state done`（tasks.md `[x]`＋ledger delivered）就 exit 2 擋下＝強制**先標再 commit**。完成一個 task SHALL 跑 `flow-state done <id>`（一指令翻 `[x]`＋寫 ledger），別手改檔繞過。
+**原則：每加一個新步驟，要嘛綁進閘門、要嘛做成會 exit 2 的 script，不留純散文 claim 點**——散文會被滑過，模型只在「有確定性節點擋著」的地方才乖乖照做。
+
+兩道 PreToolUse hook（自動擋）：① `flow-verify-gate`（TaskUpdate）—`verify` 空/`none` 擋 task 完成；② `flow-commit-gate`（Bash/git commit）—commit 點名某 task 但還沒 `flow-state done`（tasks.md `[x]`＋ledger delivered）就 exit 2＝強制**先標再 commit**。一道整合前 SHALL 跑的 script 閘門：③ `flow-state scope --wave`—worker 改到宣告 `conflictZone` 之外的檔（共用檔/foundation）就 exit 2，用 **git 真實變動**守同 repo 平行的檔案安全（check 確定性、模型偽造不了 diff）。git commit+push（`git-tools` skill）、`.flow/` 狀態寫入、verify runner 都是確定性節點，不靠模型判斷。完成一個 task SHALL 跑 `flow-state done <id>`，別手改檔繞過任一閘門。
 
 ## 語言與環境
 

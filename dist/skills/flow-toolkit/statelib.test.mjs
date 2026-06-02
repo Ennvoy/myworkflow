@@ -218,3 +218,43 @@ test('markTaskDone：無 tasks.md 不炸、仍寫 ledger', async () => {
     assert.equal((await S.readLedger(root, 'F-1')).state, 'delivered');
   });
 });
+
+// ── conflictZone 越界檢查（同 repo 平行檔案安全閘門） ──
+
+test('fileInZone：前綴 + 邊界，不誤吃相似前綴', () => {
+  assert.ok(S.fileInZone('features/items/list.tsx', 'features/items'), '/ 邊界');
+  assert.ok(S.fileInZone('api/items.ts', 'api/items'), '. 邊界');
+  assert.ok(S.fileInZone('migrations/001.sql', 'migrations/'), '尾斜線正規化');
+  assert.ok(!S.fileInZone('features/itemsmore/x.ts', 'features/items'), '不誤吃 itemsmore');
+  assert.ok(!S.fileInZone('package.json', 'features/items'));
+  assert.ok(S.fileInZone('app/x/y.tsx', 'app/**/*.tsx'), 'glob ** + *');
+  assert.ok(!S.fileInZone('app/x/y.ts', 'app/**/*.tsx'), 'glob 副檔名不符');
+});
+
+test('checkScope：歸屬 / 越界 / 忽略 .flow specs', () => {
+  const zones = { 'F-1': ['features/auth-ui', 'api/auth'], 'F-2': ['features/items', 'api/items'] };
+  const r = S.checkScope([
+    'features/auth-ui/login.tsx',   // → F-1
+    'api/items/list.ts',            // → F-2
+    'package.json',                 // 越界（共用檔）
+    '.flow/state.json',             // 忽略
+    'specs/tasks.md',               // 忽略
+  ], zones);
+  assert.equal(r.ok, false);
+  assert.deepEqual(r.violations.map((v) => v.file), ['package.json']);
+  assert.equal(r.attributed.find((a) => a.file === 'features/auth-ui/login.tsx').feature, 'F-1');
+  assert.equal(r.attributed.find((a) => a.file === 'api/items/list.ts').feature, 'F-2');
+});
+
+test('checkScope：conflictZone 重疊（規劃問題）標 overlap 但不算越界', () => {
+  const r = S.checkScope(['shared/x/util.ts'], { 'F-1': ['shared/x'], 'F-2': ['shared/x'] });
+  assert.equal(r.ok, true, '重疊仍在某 zone 內，不算越界');
+  assert.equal(r.overlaps.length, 1);
+  assert.deepEqual(r.overlaps[0].features.sort(), ['F-1', 'F-2']);
+});
+
+test('checkScope：全部在 zone 內 → ok', () => {
+  const r = S.checkScope(['features/a/x.ts', 'features/a/y.ts'], { 'F-1': ['features/a'] });
+  assert.ok(r.ok);
+  assert.equal(r.violations.length, 0);
+});

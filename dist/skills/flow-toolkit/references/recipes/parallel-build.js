@@ -12,8 +12,12 @@ export const meta = {
 }
 
 // args.wave: [{ id, title, req, conflictZone, ui? }]；args.contractPath / args.reqPath
+// 成本路由（Reasoning Sandwich：plan/verify 高、中間 generation 低）：平行苦工 worker 走較便宜的 model，
+// 省 token＝同預算能 fan-out 更寬的波（多工 ~15x token，成本常是並行寬度的真天花板）。
+// 預設 'sonnet'，但 args.workerModel 可覆寫（model 當可抽換參數，不 hardcode model-specific 行為）。
 const wave = (args && args.wave) || []
 if (!wave.length) { log('parallel-build: 空波次，無事可做'); return [] }
+const WORKER_MODEL = (args && args.workerModel) || 'sonnet'
 
 const ATTACK_SCHEMA = {
   type: 'object', additionalProperties: false,
@@ -78,7 +82,7 @@ const results = await pipeline(
     (f.ui ? `涉 UI：依附帶的 ui-ux-pro-max component 建議，accessibility（ARIA/keyboard/focus）清單逐項實作。\n` : '') +
     `安全 red flag（SQLi/auth bypass/密碼明文/缺 WHERE 的 destructive query）→ 在 driveBy 標出。\n` +
     `回傳結構化結果：你改了哪些檔（files）、自檢（單元綠/真實資料）、blockers、driveBy。`,
-    { label: `gen:${f.id}`, phase: 'Generate', schema: GEN_SCHEMA }
+    { label: `gen:${f.id}`, phase: 'Generate', schema: GEN_SCHEMA, model: WORKER_MODEL }
   )
 )
 

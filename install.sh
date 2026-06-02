@@ -92,7 +92,7 @@ fi
 
 POST="$CLAUDE_HOME/FLOW-POST-INSTALL.md"
 {
-  echo "# Flow 安裝後手動步驟（$STAMP）"
+  echo "# Flow 安裝後手動步驟（${STAMP}）"
   echo
   if [ "${#MANUAL[@]}" -gt 0 ]; then
     echo "下列步驟需在 Claude Code 內或手動完成："

@@ -19,6 +19,15 @@
             "command": "node \"{{CLAUDE_HOME}}/hooks/flow-commit-gate.mjs\""
           }
         ]
+      },
+      {
+        "matcher": "Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"{{CLAUDE_HOME}}/hooks/flow-design-base-hint.mjs\""
+          }
+        ]
       }
     ],
     "SessionStart": [

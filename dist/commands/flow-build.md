@@ -61,7 +61,7 @@ Workflow 回來後，orchestrator 依拓樸序**一個一個**收尾每個 featu
 - **效能：每 feature 只跑便宜 smoke**（少量請求抓粗暴退化、fail-fast 早擋）；**嚴謹 p50/p95（代表性資料量、N+1/index/分頁）留到 `/flow-ship` 的完整效能閘門量一次**——避免「最貴又不可平行的嚴謹量測」在每 feature ×N 重燒，且 ship 完成謂詞本來就硬擋效能、不漏接。
 - **驗證與 commit 解耦**：驗證 PASS 才進 commit；某 feature FAIL/BLOCKED **不擋其他已 PASS feature 的 commit**（路由乾淨）。**綠了才 commit**。
 - **commit 前清驗證垃圾（雙軌、確定性閘門，呼叫 git-tools 之前 SHALL 做）**：
-  - ① **檔案型產物**（確定性）→ 跑 flow-toolkit 的 clean script（mac/linux `node ~/.claude/skills/flow-toolkit/clean-verify-artifacts.mjs --apply --gitignore`、Windows PS `node "$env:USERPROFILE\.claude\skills\flow-toolkit\clean-verify-artifacts.mjs" --apply --gitignore`）：白名單刪 Playwright `test-results/`/report、coverage、`*.log`、`.last-run.json`、一次性 debug 截圖/tmp，並補 `.gitignore`。**白名單式、不碰 source 測試檔／specs／.flow ledger**（省 `--apply` 為 dry-run 預覽）。
+  - ① **檔案型產物**（確定性）→ 跑 flow-toolkit 的 clean script（mac/linux `node ~/.claude/skills/flow-toolkit/clean-verify-artifacts.mjs --apply --gitignore`、Windows PS `node "$env:USERPROFILE\.claude\skills\flow-toolkit\clean-verify-artifacts.mjs" --apply --gitignore`）：白名單整刪 **Playwright MCP `.playwright-mcp/`（console-*.log／page-*.yml／截圖）**、Playwright `test-results/`/report、coverage、`*.log`、`.last-run.json`、一次性 debug 截圖/tmp，並補 `.gitignore`。**白名單式、不碰 source 測試檔／specs／.flow ledger／baseline**（省 `--apply` 為 dry-run 預覽）。**沒清就 commit 會被 `flow-commit-gate` 閘門一 exit 2 擋**。
   - ② **語意型殘留**（靠 review）→ 看本次 `git diff`，刪掉遷在 source 的一次性 debug code（`console.log`/`print`/暫時註解掉的塊／臨時驗證腳本）。clean script 不碰 source，這軌靠 review。
   - 清完才 commit，避免驗證垃圾污染交付 diff（對齊 Karpathy『極簡清理』；範圍/紀律見 `references/verification-playbook.md` §七）。
 - 完成一項（順序鐵則：**先標、再 commit**，閘門會強制）：

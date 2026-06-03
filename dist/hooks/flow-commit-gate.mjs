@@ -1,10 +1,12 @@
 #!/usr/bin/env node
-// Flow deterministic gate (PreToolUse on Bash) — 強制「先標、再 commit」。
-// 攔 `git commit`：若 commit message 點名了某個 flow task（canonical id 出現在訊息裡），
-// 但該 task 在 .flow/ledger 還不是 delivered → 擋下，叫模型先跑 `flow-state done <id>`。
-//   tasks.md 的 [x] 由 markTaskDone 翻 → 翻了才 delivered → delivered 了才放行 commit。
-// 設計鐵則：fail-open（解析不出訊息 / 非 flow 專案 / 非 git commit → 一律放行，絕不誤擋）。
+// Flow deterministic gate (PreToolUse on Bash) — 攔 `git commit`，兩道對稱的確定性閘門：
+//   閘門一「先清、再 commit」：staged 裡有驗證垃圾（Tier A 產物，含 .playwright-mcp 的 MCP console/page 殘留）
+//     → 擋下，叫模型先跑 clean-verify-artifacts --apply --gitignore（白名單判斷與 clean script 共用同一套規則）。
+//   閘門二「先標、再 commit」：commit message 點名某 flow task，但它在 .flow/ledger 還不是 delivered
+//     → 擋下，叫模型先跑 `flow-state done <id>`（tasks.md 的 [x] 翻了才 delivered，delivered 才放行）。
+// 設計鐵則：fail-open（解析不出 / 非 flow 專案 / 非 git commit / git 或 import 失敗 → 一律放行，絕不誤擋）。
 import { readFileSync, existsSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -29,6 +31,34 @@ process.stdin.on('end', async () => {
   const cwd = input.cwd ?? process.cwd();
   if (!existsSync(join(cwd, '.flow'))) return exit0(); // 非 flow 專案
 
+  // ── 閘門一：先清、再 commit ──
+  // staged 裡有驗證垃圾（Tier A 產物 + 產物目錄，含 .playwright-mcp 的 MCP 殘留）→ 擋下叫先清。
+  // 白名單判斷 import 自 clean-verify-artifacts（單一事實來源）。全程 fail-open：import / git 任一失敗都不擋，往下走閘門二。
+  try {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const cleanPath = join(here, '..', 'skills', 'flow-toolkit', 'clean-verify-artifacts.mjs');
+    const clean = await import(pathToFileURL(cleanPath).href);
+    let staged = '';
+    try {
+      staged = execFileSync('git', ['-C', cwd, 'diff', '--cached', '--name-only', '-z'], { maxBuffer: 1 << 26 }).toString('utf8');
+    } catch {} // 取不到 staged 清單 → 不擋
+    const trash = staged.split('\0').filter(Boolean).filter((p) => clean.isCommitBlockableArtifact(p));
+    if (trash.length) {
+      const show = trash.slice(0, 10).map((p) => '    ' + p).join('\n');
+      const more = trash.length > 10 ? `\n    …還有 ${trash.length - 10} 項` : '';
+      const reason = [
+        'Flow commit gate：擋下 commit —— 這些「驗證垃圾」已被 git add 進 staging，會污染交付 diff：',
+        show + more,
+        '  先清、再 commit（白名單式，保 source 測試檔/specs/.flow ledger/baseline）：',
+        `    node "${cleanPath}" --root "${cwd}" --apply --gitignore`,
+        '  （--gitignore 會補忽略規則，之後 git add -A 不會再把它們吃進來。別手改繞過本閘門。）',
+      ].join('\n');
+      process.stderr.write(reason + '\n');
+      process.exit(2); // exit 2 → Claude Code 擋下工具呼叫，把 stderr 餵回模型
+    }
+  } catch {} // import 不到 clean script / 其他例外 → fail-open，往下走閘門二
+
+  // ── 閘門二：先標、再 commit ──
   // 取 commit 訊息：-m "..."/'...' 或 -F <file>（git-tools 可能用任一種）。取不到就 fail-open。
   let msg = '';
   for (const m of cmd.matchAll(/-m\s+("([^"]*)"|'([^']*)'|(\S+))/g)) msg += ' ' + (m[2] ?? m[3] ?? m[4] ?? '');

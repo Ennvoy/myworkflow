@@ -58,7 +58,8 @@ bind/listen port 的產出物驗證前 SHALL 清 port：偵測 PID → 是本專
 
 ## 全綠後：驗證垃圾清理（失敗一律保留 artifact 供 debug）
 
-- 自動清：本輪自起 process（PID 辨識，外來禁盲殺）、測試報告、拋棄式驗證 DB/container
+- **檔案型產物（確定性，全綠後 SHALL 跑）**：`node "<flow-toolkit>/clean-verify-artifacts.mjs" --root <repo> --apply --gitignore`（路徑：Windows PS `$env:USERPROFILE\.claude\skills\flow-toolkit\`、mac/linux `~/.claude/skills/flow-toolkit/`）。白名單整刪 **Playwright MCP 的 `.playwright-mcp/`（console-*.log / page-*.yml a11y snapshot / 截圖）**、`test-results/`、coverage、`*.log`、`*.trace.zip`、`__pycache__` 等，並補 `.gitignore`；保 source 測試檔／specs／`.flow` ledger／baseline。**沒清就 commit 會被 `flow-commit-gate` 閘門一 exit 2 擋下**（先清、再 commit，對稱於「先標、再 commit」）。
+- 自起 process（PID 辨識，外來禁盲殺）、拋棄式驗證 DB/container 一併收。
 - **C-data 測試資料分層**：L0 可拋棄 DB 整個 drop / L1 持久 local 可精準識別 → DELETE 帶**精確 WHERE**（先列預估、差異即停手）/ L2 無法識別 → 列清單問 / L3 remote/共用/prod → 一律問
 - **絕不碰**：`.flow/` 狀態檔、無精確 WHERE 的 DB 刪除、tracked 非可重生檔、失敗時 artifact
 

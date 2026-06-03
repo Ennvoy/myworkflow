@@ -31,7 +31,7 @@ description: Flow Phase 5 — 出貨收束。跨 feature 整合 e2e + 完整效�
 
 ## Step 6：全系統垃圾兜底 + 出貨準備
 
-- **全系統清驗證垃圾（commit 前 SHALL 做，雙軌，同 `/flow-build` Step 5 / `references/verification-playbook.md` §七）**：① 跑 `clean-verify-artifacts.mjs --apply --gitignore` 清檔案型產物（整合 e2e／效能驗收會生最多 trace/screenshot/report/log，ship 前尤其多）；② review 全 diff 刪掉 source 內 debug 殘留。clean script 白名單式、保 source 測試檔／specs／.flow ledger／baseline 等 reference data。
+- **全系統清驗證垃圾（commit 前 SHALL 做，雙軌，同 `/flow-build` Step 5 / `references/verification-playbook.md` §七）**：① 跑 `clean-verify-artifacts.mjs --apply --gitignore` 清檔案型產物（整合 e2e／效能驗收會生最多 **`.playwright-mcp/` MCP 殘留**、trace/screenshot/report/log，ship 前尤其多）；② review 全 diff 刪掉 source 內 debug 殘留。clean script 白名單式、保 source 測試檔／specs／.flow ledger／baseline 等 reference data。**沒清就 commit 會被 `flow-commit-gate` 閘門一 exit 2 擋**。
 - D-source 改動 commit 前精準單點 revert（禁 `git checkout .`/`reset --hard`）。
 - 出貨準備：**呼叫 `git-tools` skill** 做智慧 commit+push（push 失敗回報、不擅自 `--force`）+ PR description（對應 REQ、列驗證證據與效能數字）。merge 衝突 / `.env` 等敏感檔才問使用者。
 

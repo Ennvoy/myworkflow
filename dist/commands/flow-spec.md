@@ -46,10 +46,11 @@ requirements 含 auth / 權限 / payment / 個資 / 合規 / audit 關鍵字 →
 
 ## Step 5：UI 方向對齊（**僅 web 類**，鐵則）
 
-1. 呼叫 `ui-ux-pro-max:ui-ux-pro-max` skill 取設計建議（style / palette / font pairing / product-type 規範）。未裝 → 提示使用者跑安裝檔的 ui-ux-pro-max 安裝指令（見 README），不提供 fallback。
-2. 依 `REQ-E2E-*` / 主功能列 **3–5 個關鍵畫面**，產靜態 HTML mockup 到 `specs/ui-mockups/`（Tailwind CDN + 設計 token；含一頁 `index.html` 總覽）。**含中文寫檔一律 UTF-8**（PowerShell 加 `-Encoding utf8`）。
+0. **選品牌設計系統基底（先做，lazy 載入）**：讀 `references/design-systems/index.md`（150 套大廠設計語言的分類索引，僅清單、約幾 KB），用 `AskUserQuestion` 讓使用者選一套當基底——依 `projectType`/需求推薦 3–4 個置首（工具/SaaS 類推 `shadcn`/`linear-app`/`vercel`、金流推 `stripe`、AI 產品推 `claude`/`openai`），**選項含「不用基底，純 ui-ux-pro-max」**。選定後**只讀選中那套**的 `references/design-systems/<slug>/DESIGN.md`（9 段規範）+ `tokens.css`（CSS 變數），**不全載**（context 零負擔）。設計系統為美學靈感、**非官方品牌資產**（見 `design-systems/NOTICE.md`）。
+1. 呼叫 `ui-ux-pro-max:ui-ux-pro-max` skill 取設計建議（style / palette / font pairing / product-type 規範）——**有選基底時：以基底 `DESIGN.md`/`tokens.css` 的色彩·排版·間距為準，ui-ux-pro-max 補強元件級互動/狀態/a11y 與 shadcn 範例**。未裝 → 提示使用者跑安裝檔的 ui-ux-pro-max 安裝指令（見 README），不提供 fallback。
+2. 依 `REQ-E2E-*` / 主功能列 **3–5 個關鍵畫面**，產靜態 HTML mockup 到 `specs/ui-mockups/`（Tailwind CDN + 設計 token；**有基底時把該套 `tokens.css` 的 `:root` 變數 inline 進 mockup `<style>`、verbatim 不臆造**；含一頁 `index.html` 總覽）。**含中文寫檔一律 UTF-8**（PowerShell 加 `-Encoding utf8`）。
 3. **主動開瀏覽器**把總覽頁送到使用者眼前（mac `open <url>` / Windows `Start-Process <url>` / Linux `xdg-open <url>`；0 摩擦，避免被滑過）。
-4. `AskUserQuestion` 收方向：方向 OK / 某幾頁要改 / 整個方向錯。**一次對焦完即凍結**，後續 plan/build 以此為錨點反推 API/DB。
+4. `AskUserQuestion` 收方向：方向 OK / 某幾頁要改 / 整個方向錯。**一次對焦完即凍結**，後續 plan/build 以此為錨點反推 API/DB。**凍結時記錄選用的品牌基底 slug**（寫進 requirements 或 `.flow/state.json`，plan/build 沿用其 tokens）。
 
 > 例外：`cli`/`api`/純後端跳過整個 Step 5；使用者明說「跳過 mockup」可豁免，但 SHALL 寫進 `### 開放問題` 並警告「整體方向風險押到 build 才暴露」。
 

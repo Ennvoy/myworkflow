@@ -32,6 +32,7 @@ description: Flow 工作流的參考檔倉庫與提示者。當使用者談到�
 - `references/perf-budget.md` — 效能硬閘門：量什麼、budget 怎麼設、p50/p95（`/flow-verify`、`/flow-ship` 用）
 - `references/convergence-guide.md` — context 預算、compaction、完成謂詞、文件生命週期（`/flow-compact` 用）
 - `references/recipes/` — Workflow 多工腳本（parallel-build.js / parallel-verify.js / research-sweep.js）
+- `references/design-systems/` — **150 套大廠品牌設計系統**（每套 `DESIGN.md` 9 段 + `tokens.css` CSS 變數 + `components.html`），`/flow-spec` UI 階段選一套當基底、**lazy 只讀選中的**（context 零負擔）；`index.md` 分類索引（22 類）、`build-index.mjs` 可重生、`NOTICE.md` 授權（取自 open-design Apache-2.0，美學靈感·非官方品牌資產）
 
 ## 工具腳本（直接 `node` 跑，不進 context）
 

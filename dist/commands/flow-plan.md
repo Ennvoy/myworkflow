@@ -24,7 +24,7 @@ requirements 含 LLM / 雲端 / 支付 / 行動 / 前端框架關鍵字 → **We
 
 ## Step 2.5：UI 對焦結論（**僅 web 類**）
 
-若 `specs/ui-mockups/` 存在，design.md SHALL 含一節「UI 對焦結論」：畫面清單、元件分解、互動流程、設計 token（color/font/spacing）。**後續技術方案以此為錨點反推 API / DB schema**（UI 先行，不是 schema 先行）。
+若 `specs/ui-mockups/` 存在，design.md SHALL 含一節「UI 對焦結論」：畫面清單、元件分解、互動流程、設計 token（color/font/spacing）、**選用的品牌設計系統基底 slug（若有，build 沿用其 `tokens.css`）**。**後續技術方案以此為錨點反推 API / DB schema**（UI 先行，不是 schema 先行）。
 
 ## Step 3：`specs/design.md`（技術決策 + 接縫契約）
 

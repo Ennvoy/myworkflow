@@ -65,12 +65,13 @@ Say "複製 Flow 檔案"
 Copy-Item (Join-Path $Dist 'commands\*') (Join-Path $ClaudeHome 'commands') -Recurse -Force
 Copy-Item (Join-Path $Dist 'skills\flow-toolkit') (Join-Path $ClaudeHome 'skills') -Recurse -Force
 Copy-Item (Join-Path $Dist 'skills\git-tools') (Join-Path $ClaudeHome 'skills') -Recurse -Force
+Copy-Item (Join-Path $Dist 'skills\design-system-base') (Join-Path $ClaudeHome 'skills') -Recurse -Force
 Copy-Item (Join-Path $Dist 'rules\flow.md') (Join-Path $ClaudeHome 'rules\flow.md') -Force
 Copy-Item (Join-Path $Dist 'hooks\*.mjs') (Join-Path $ClaudeHome 'hooks') -Force
 Copy-Item (Join-Path $Dist 'agents\*') (Join-Path $ClaudeHome 'agents') -Recurse -Force
 $cmdCount = (Get-ChildItem (Join-Path $ClaudeHome 'commands') -Filter 'flow*.md').Count
 $agentCount = (Get-ChildItem (Join-Path $ClaudeHome 'agents') -Filter '*.md' -ErrorAction SilentlyContinue).Count
-Ok "commands（$cmdCount 個 flow*.md）/ skills/flow-toolkit / skills/git-tools（commit+push+PR）/ rules/flow.md / hooks / agents（$agentCount 個：red-team/code-reviewer/spec-reviewer）已就位"
+Ok "commands（$cmdCount 個 flow*.md）/ skills/flow-toolkit / skills/git-tools（commit+push+PR）/ skills/design-system-base（150 套品牌基底）/ rules/flow.md / hooks / agents（$agentCount 個：red-team/code-reviewer/spec-reviewer）已就位"
 
 # 4) merge hook 接線進 settings.json
 & node (Join-Path $Dist 'install\merge-settings.mjs') $settingsPath (Join-Path $Dist 'hooks\settings.flow.json') $ClaudeHome

@@ -166,12 +166,38 @@ export function checkScope(changedFiles, zonesByFeature, opts = {}) {
   return { attributed, overlaps, violations, ok: violations.length === 0 };
 }
 
+// state.json.tasks 的 status 詞彙 → reconstruct 的 state 詞彙。
+// /flow-plan 把完整 task 表寫進 state.json（含 in-progress/todo），但常沒同步進 manifest/ledger；
+// 此映射讓「規劃了但還沒交付」的 task 也被 reconstruct 算進來，修 /flow-resume 漏算整波的盲點。
+const STATE_VOCAB = {
+  done: 'delivered', delivered: 'delivered',
+  'in-progress': 'building', in_progress: 'building', building: 'building',
+  verifying: 'verifying',
+  todo: 'pending', pending: 'pending', blocked: 'blocked',
+  'needs-decision': 'needs-decision', needs_decision: 'needs-decision',
+};
+const mapStateVocab = s => STATE_VOCAB[s] || 'pending';
+
 // 冷啟動重建：只讀磁碟 → 還原「現況 + 未完成動作」。任何 agent / 機器跑這個就接上。
+// 三來源合併（後者覆蓋前者）：manifest（規劃清單，帶 blockedBy/conflictZone）→ state.json.tasks
+// （當前迭代的豐富 task 表，含未交付）→ ledger（delivered 的權威快照，journal/commit gate 寫入、偽造不了）。
 export async function reconstruct(root) {
   const manifest = await readManifest(root);
+  const stateJson = await readStateJson(root);
   const tasks = {};
-  for (const l of await listLedger(root)) if (l.id) tasks[l.id] = l;
-  for (const t of (manifest.tasks || [])) if (!tasks[t.id]) tasks[t.id] = { id: t.id, state: 'pending' };
+  const order = [];                       // 穩定顯示/挑選順序：manifest → state.json → 僅 ledger
+  const seen = id => { if (!order.includes(id)) order.push(id); };
+
+  // 1) manifest 完整清單（若 flow-plan 有寫）：種 pending、保留 blockedBy
+  for (const t of (manifest.tasks || [])) { tasks[t.id] = { id: t.id, state: 'pending', blockedBy: t.blockedBy || [] }; seen(t.id); }
+  // 2) state.json.tasks：併入 in-progress/todo（過去 reconstruct 完全沒讀這裡 → 整波被漏）
+  for (const [id, t] of Object.entries((stateJson && stateJson.tasks) || {})) {
+    const prev = tasks[id] || { id };
+    tasks[id] = { ...prev, id, state: mapStateVocab(t.status), blockedBy: t.blockedBy || prev.blockedBy || [], verify: t.verify || prev.verify || '' };
+    seen(id);
+  }
+  // 3) ledger：delivered 的權威來源，最後覆蓋（granular state 以 ledger 為準）
+  for (const l of await listLedger(root)) { if (!l.id) continue; tasks[l.id] = { ...(tasks[l.id] || { id: l.id }), ...l }; seen(l.id); }
 
   const journal = await readJournal(root);
   const open = new Map();   // action.start 沒對應 action.done；key=id|action → 並行各自獨立、不互蓋
@@ -179,5 +205,5 @@ export async function reconstruct(root) {
     if (e.ev === 'action.start') open.set(e.id + '|' + e.action, { id: e.id, action: e.action });
     else if (e.ev === 'action.done') open.delete(e.id + '|' + e.action);
   }
-  return { manifest, tasks, dangling: [...open.values()], journalLength: journal.length };
+  return { manifest, tasks, order, dangling: [...open.values()], journalLength: journal.length };
 }

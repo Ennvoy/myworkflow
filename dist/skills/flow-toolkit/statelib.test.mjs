@@ -122,6 +122,42 @@ test('reconstruct：manifest task 無 ledger → pending 預設', async () => {
   });
 });
 
+// 關鍵回歸：state.json.tasks 的未交付 task（in-progress/todo）必須被 reconstruct 納入。
+// 這正是 /flow-resume「接不上、誤報全交付」的根因——舊 reconstruct 只讀 ledger/manifest，
+// 漏掉只存在 state.json 的整波 task（如 F-DASH-4a/4b/4c）。
+test('reconstruct：併入 state.json.tasks 未交付 task（修 /flow-resume 漏算盲點）', async () => {
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [] });        // manifest 空（真實漂移情境）
+    await S.writeLedger(root, 'F-A', { state: 'delivered' }); // ledger 只有已交付的
+    await S.writeStateJson(root, {                            // state.json 才有完整 task 表
+      tasks: {
+        'F-A': { status: 'done', blockedBy: [] },
+        'F-B': { status: 'in-progress', blockedBy: [] },
+        'F-C': { status: 'todo', blockedBy: ['F-B'] },
+      },
+    });
+    const v = await S.reconstruct(root);
+    assert.equal(Object.keys(v.tasks).length, 3, '三個 task 都在（非只 1 個 delivered）');
+    assert.equal(v.tasks['F-A'].state, 'delivered', 'ledger 權威 delivered 覆蓋 state.json');
+    assert.equal(v.tasks['F-B'].state, 'building', 'in-progress → building（過去被漏）');
+    assert.equal(v.tasks['F-C'].state, 'pending', 'todo → pending（過去被漏）');
+    assert.deepEqual(v.tasks['F-C'].blockedBy, ['F-B'], 'blockedBy 帶出供 pickNext 用');
+    assert.deepEqual(v.order.slice(0, 3), ['F-A', 'F-B', 'F-C'], 'order 保留 state.json 排序');
+  });
+});
+
+test('reconstruct：ledger-only task（不在 state.json）仍納入並附在 order 尾', async () => {
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [] });
+    await S.writeLedger(root, 'F-OLD', { state: 'delivered' });   // 前迭代遺留、不在 state.json
+    await S.writeStateJson(root, { tasks: { 'F-NEW': { status: 'todo', blockedBy: [] } } });
+    const v = await S.reconstruct(root);
+    assert.equal(v.tasks['F-OLD'].state, 'delivered');
+    assert.equal(v.tasks['F-NEW'].state, 'pending');
+    assert.ok(v.order.includes('F-OLD') && v.order.includes('F-NEW'));
+  });
+});
+
 test('state.json 相容 bridge round-trip（無 BOM）', async () => {
   await withRoot(async (root) => {
     await S.init(root, { project: 'p', tasks: [] });

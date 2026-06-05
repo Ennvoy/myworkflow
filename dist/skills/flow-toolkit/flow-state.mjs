@@ -26,14 +26,21 @@ function gitChangedFiles(r) {
   return files;
 }
 
-// 下一個可推進 task：非 delivered/needs-decision、且 blockedBy 已全 delivered
+// 下一個可推進 task：非 delivered/needs-decision、且 blockedBy 已全 delivered。
+// 順序來源：manifest（若有，帶 conflictZone-aware 排序）否則 reconstruct 合併出的 order（含 state.json 未交付 task）。
 function pickNext(view) {
   const done = id => (view.tasks[id] || {}).state === 'delivered';
-  for (const t of (view.manifest.tasks || [])) {
-    const s = (view.tasks[t.id] || { state: 'pending' }).state;
+  const manifestById = Object.fromEntries((view.manifest.tasks || []).map(t => [t.id, t]));
+  const ids = (view.manifest.tasks && view.manifest.tasks.length)
+    ? view.manifest.tasks.map(t => t.id)
+    : (view.order && view.order.length ? view.order : Object.keys(view.tasks));
+  for (const id of ids) {
+    const t = view.tasks[id] || { state: 'pending' };
+    const s = t.state || 'pending';
     if (s === 'delivered' || s === 'needs-decision') continue;
-    if ((s === 'pending' || s === 'blocked') && !(t.blockedBy || []).every(done)) continue;
-    return { id: t.id, state: s };
+    const blockedBy = t.blockedBy || (manifestById[id] || {}).blockedBy || [];
+    if ((s === 'pending' || s === 'blocked') && !blockedBy.every(done)) continue;
+    return { id, state: s };
   }
   return null;
 }

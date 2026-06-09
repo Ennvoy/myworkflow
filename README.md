@@ -67,7 +67,7 @@ git clone https://github.com/Ennvoy/myworkflow.git flow && cd flow && chmod +x i
 - **可恢復狀態（殺不死）**：write-ahead journal + 冷啟動 `reconstruct`，狀態寫進 `.flow/` + git；關機 / 換 session / 換電腦純讀檔接手，**並行多 worker 的中斷點各自獨立、不互蓋**。
 - **紅藍軍獨立 reviewer**：red-team（寫 code 前列攻擊面 + failingTestHint）、code-reviewer（出貨前全 diff 審）、spec-reviewer（需求審查）——各自獨立 context、看不到主對話。
 - **確定性閘門**：git commit+push（走 git-tools skill：智慧分群提交＋安全推送）、`.flow` 狀態寫入、`flow-commit-gate`（先標再 commit）、`flow-verify-gate`（沒驗不准標完成）、verify runner 都是 hook / script / skill 確定性節點，模型不能假裝過關。
-- **文件收束防腐化**：context 70% / 單檔 > 50KB / ship `COMPLETE` 三觸發歸檔，主檔保持「當前迭代 + 接縫契約 + 索引」精簡態。
+- **文件收束防腐化**：單檔 > 50KB（`flow-size-check` hook 自動提醒）/ ship `COMPLETE` 兩道自動觸發歸檔，context 吃緊時另建議手動跑 `/flow-compact`；主檔保持「當前迭代 + 接縫契約 + 索引」精簡態。
 - **自包含一鍵裝**：commands / agents / skills / rules / hooks 全打包，冪等可重跑、自動備份，新電腦 `git clone` → 跑一支 script 即可。
 
 ---

@@ -85,8 +85,9 @@ switch (cmd) {
     // 任一變動檔落在所有 conflictZone 之外（worker 越界改了共用檔/foundation）→ exit 2 擋整合。
     const wave = (flag('--wave') || '').split(',').map((s) => s.trim()).filter(Boolean);
     if (!wave.length) { console.error('usage: flow-state scope --wave <id1,id2,...>'); process.exit(1); }
-    const view = await S.reconstruct(root);
-    const byId = Object.fromEntries((view.manifest.tasks || []).map((t) => [t.id, t]));
+    // scope 只需 manifest 的 conflictZone，不必跑全量 reconstruct（省讀 state.json + 全 ledger + journal）。
+    const manifest = await S.readManifest(root);
+    const byId = Object.fromEntries((manifest.tasks || []).map((t) => [t.id, t]));
     const zonesByFeature = {}, missing = [];
     for (const id of wave) {
       const cz = byId[id] && byId[id].conflictZone;

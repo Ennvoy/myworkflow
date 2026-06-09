@@ -13,8 +13,12 @@ export const meta = {
 }
 
 // args.sources: [{ id, prompt }]；args.question
+// 成本路由（context firewall 的廣度讀＝苦力活，非高 reasoning 對抗審查）：平行來源 worker 走較便宜 model，
+//   省 token＝同預算能 fan-out 更多來源（多工 ~15x token，成本常是並行寬度的真天花板）。
+//   預設 'sonnet'，args.sourceModel 可覆寫（model 當可抽換參數，不 hardcode model-specific 行為）。
 const sources = (args && args.sources) || []
 if (!sources.length) { log('research-sweep: 無來源'); return [] }
+const SOURCE_MODEL = (args && args.sourceModel) || 'sonnet'
 
 const FINDING_SCHEMA = {
   type: 'object', additionalProperties: false,
@@ -44,7 +48,7 @@ const results = await parallel(
     `你的來源/範圍：${s.prompt}\n` +
     '紀律：只回客觀證據（引文/數字/檔案行號），查不到就在 gaps 明說缺口、禁腦補。' +
     '你是 context firewall——把大量閱讀蒸餾成精簡 findings 回傳，不要回傳原文全文。',
-    { label: `research:${s.id}`, phase: 'Research', schema: FINDING_SCHEMA }
+    { label: `research:${s.id}`, phase: 'Research', schema: FINDING_SCHEMA, model: SOURCE_MODEL }
   ))
 )
 

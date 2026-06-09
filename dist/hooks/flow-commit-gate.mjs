@@ -74,9 +74,10 @@ process.stdin.on('end', async () => {
     S = await import(pathToFileURL(statelibPath).href); // Windows 反斜線路徑也安全
   } catch { return exit0(); } // 載不到 statelib → 放行
 
-  let view;
-  try { view = await S.reconstruct(cwd); } catch { return exit0(); }
-  const ids = (view.manifest.tasks || []).map((t) => t.id).filter(Boolean);
+  // 先用便宜的 readManifest 取 id 清單，比對訊息有沒有點名 task；沒點名就免跑全量 reconstruct（多數 docs/chore commit 走這條）。
+  let manifest;
+  try { manifest = await S.readManifest(cwd); } catch { return exit0(); }
+  const ids = (manifest.tasks || []).map((t) => t.id).filter(Boolean);
   if (!ids.length) return exit0();
 
   // task id 在訊息裡以單字邊界出現？前面不可是 \w 或 -（避免吃進更大的 token）、後面不可接 \w 或 -。
@@ -89,11 +90,14 @@ process.stdin.on('end', async () => {
     if (m && m[1] !== id && m[1].length >= 3) out.push(m[1]);
     return out;
   };
+  const named = ids.filter((id) => needles(id).some((n) => wordHit(n, msg)));
+  if (!named.length) return exit0(); // 訊息沒點名任何 task → 免跑全量 reconstruct，直接放行
+
+  // 訊息點名了 task → 才跑全量 reconstruct，用三來源合併（manifest→state.json→ledger）判 delivered（語意與原本一致）。
+  let view;
+  try { view = await S.reconstruct(cwd); } catch { return exit0(); }
   // 找出「訊息點名、但還沒 delivered」的 task。
-  const blocking = ids.filter((id) => {
-    if (!needles(id).some((n) => wordHit(n, msg))) return false;
-    return (view.tasks[id] || {}).state !== 'delivered';
-  });
+  const blocking = named.filter((id) => (view.tasks[id] || {}).state !== 'delivered');
   if (!blocking.length) return exit0();
 
   const list = blocking.join(', ');

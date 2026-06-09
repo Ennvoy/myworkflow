@@ -46,6 +46,10 @@ cp -Rf "$DIST"/skills/design-system-base "$CLAUDE_HOME/skills/"
 cp -f "$DIST"/rules/flow.md "$CLAUDE_HOME/rules/flow.md"
 cp -f "$DIST"/hooks/*.mjs "$CLAUDE_HOME/hooks/"
 cp -Rf "$DIST"/agents/* "$CLAUDE_HOME/agents/"
+# 寫安裝來源/版本標記（供 flow-session-start 非阻擋漂移提醒：改了 dist 沒重裝時提醒）
+FLOW_VERSION="$(cat "$SCRIPT_DIR/VERSION" 2>/dev/null | tr -d '[:space:]' || true)"
+printf '{"version":"%s","source":"%s","installedAt":"%s"}\n' "$FLOW_VERSION" "$SCRIPT_DIR" "$STAMP" > "$CLAUDE_HOME/.flow-version.json"
+ok "已寫 .flow-version.json（v$FLOW_VERSION，來源 $SCRIPT_DIR）"
 ok "commands / skills/flow-toolkit / skills/git-tools（commit+push+PR）/ skills/design-system-base（150 套品牌基底）/ rules/flow.md / hooks / agents 已就位"
 
 node "$DIST/install/merge-settings.mjs" "$SETTINGS" "$DIST/hooks/settings.flow.json" "$CLAUDE_HOME"

@@ -69,6 +69,12 @@ Copy-Item (Join-Path $Dist 'skills\design-system-base') (Join-Path $ClaudeHome '
 Copy-Item (Join-Path $Dist 'rules\flow.md') (Join-Path $ClaudeHome 'rules\flow.md') -Force
 Copy-Item (Join-Path $Dist 'hooks\*.mjs') (Join-Path $ClaudeHome 'hooks') -Force
 Copy-Item (Join-Path $Dist 'agents\*') (Join-Path $ClaudeHome 'agents') -Recurse -Force
+# 寫安裝來源/版本標記（供 flow-session-start 非阻擋漂移提醒：改了 dist 沒重裝時提醒）
+$flowVersion = ''
+try { $flowVersion = (Get-Content (Join-Path $ScriptDir 'VERSION') -Raw -Encoding utf8 -ErrorAction Stop).Trim() } catch {}
+$prov = @{ version = $flowVersion; source = $ScriptDir; installedAt = $stamp } | ConvertTo-Json -Compress
+[IO.File]::WriteAllText((Join-Path $ClaudeHome '.flow-version.json'), $prov, (New-Object Text.UTF8Encoding($false)))
+Ok "已寫 .flow-version.json（v$flowVersion，來源 $ScriptDir）"
 $cmdCount = (Get-ChildItem (Join-Path $ClaudeHome 'commands') -Filter 'flow*.md').Count
 $agentCount = (Get-ChildItem (Join-Path $ClaudeHome 'agents') -Filter '*.md' -ErrorAction SilentlyContinue).Count
 Ok "commands（$cmdCount 個 flow*.md）/ skills/flow-toolkit / skills/git-tools（commit+push+PR）/ skills/design-system-base（150 套品牌基底）/ rules/flow.md / hooks / agents（$agentCount 個：red-team/code-reviewer/spec-reviewer）已就位"

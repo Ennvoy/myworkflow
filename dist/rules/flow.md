@@ -59,7 +59,7 @@ specs 一 concern 一檔、凍結後每迴圈重讀；**計畫是可丟棄／可
 
 **原則：每加一個新步驟，要嘛綁進閘門、要嘛做成會 exit 2 的 script，不留純散文 claim 點**——散文會被滑過，模型只在「有確定性節點擋著」的地方才乖乖照做。
 
-兩道 PreToolUse hook（自動擋）：① `flow-verify-gate`（TaskUpdate）—`verify` 空/`none` 擋 task 完成；② `flow-commit-gate`（Bash/git commit）—兩道：staged 含驗證垃圾（含 Playwright MCP 的 `.playwright-mcp/` 殘留）exit 2＝**先清再 commit**；commit 點名某 task 但還沒 `flow-state done`（tasks.md `[x]`＋ledger delivered）exit 2＝**先標再 commit**。一道整合前 SHALL 跑的 script 閘門：③ `flow-state scope --wave`—worker 改到宣告 `conflictZone` 之外的檔（共用檔/foundation）就 exit 2，用 **git 真實變動**守同 repo 平行的檔案安全（check 確定性、模型偽造不了 diff）。git commit+push（`git-tools` skill）、`.flow/` 狀態寫入、verify runner 都是確定性節點，不靠模型判斷。完成一個 task SHALL 跑 `flow-state done <id>`，別手改檔繞過任一閘門。
+兩道 PreToolUse hook（自動擋）：① `flow-verify-gate`（TaskUpdate）—`verify` 空/`none` 擋 task 完成；② `flow-commit-gate`（Bash/PowerShell 的 git commit）—三道：staged 含 **secrets**（`.env`/私鑰類）exit 2＝**先移出 staging**；staged 含驗證垃圾（含 Playwright MCP 的 `.playwright-mcp/` 殘留）exit 2＝**先清再 commit**（`--amend` 同樣過這兩道）；commit 點名某 task 但還沒 `flow-state done`（tasks.md `[x]`＋ledger delivered）exit 2＝**先標再 commit**。兩道整合前 SHALL 跑的 script 閘門：③ `flow-state scope --wave`—worker 改到宣告 `conflictZone` 之外的檔（共用檔/foundation）就 exit 2，用 **git 真實變動**守同 repo 平行的檔案安全（check 確定性、模型偽造不了 diff）；④ `flow-state redteam --wave`—紅軍 high 攻擊未全 `covered` 或對應 `testFile` 不實存（`.flow/redteam/<id>.json`）就 exit 2，守「攻擊面真的變成了測試」。git commit+push（`git-tools` skill）、`.flow/` 狀態寫入、verify runner 都是確定性節點，不靠模型判斷。完成一個 task SHALL 跑 `flow-state done <id>`——**done 自帶閘門**：state.json `verify`/`tdd` 空/`none` 即 exit 2、交付即歸零綠燈（下一個 task 須有自己的新綠燈），別手改檔繞過任一閘門。
 
 ## 語言與環境
 

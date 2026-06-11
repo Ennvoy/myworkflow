@@ -211,12 +211,25 @@ test('resolveId：精確優先、唯一尾段匹配、無 manifest 原樣回', a
   });
 });
 
+test('resolveId：歧義（同尾段對到多個 canonical）→ 拒絕並列候選，不靜默挑一個', async () => {
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [{ id: 'F-A-W0-5' }, { id: 'F-B-W0-5' }] });
+    await assert.rejects(
+      () => S.resolveId(root, 'W0-5'),
+      (e) => e.code === 'AMBIGUOUS_ID' && e.candidates.length === 2,
+      '歧義要丟錯，避免翻錯行/開幽靈 ledger'
+    );
+    assert.equal(await S.resolveId(root, 'F-A-W0-5'), 'F-A-W0-5', '完整 canonical 不受影響');
+  });
+});
+
 test('markTaskDone：翻 tasks.md [x] + ledger→delivered（一次原子）', async () => {
   await withRoot(async (root) => {
     await S.init(root, { project: 'p', tasks: [{ id: 'F-1186-W0-1' }, { id: 'F-1186-W0-2' }] });
     await mkdir(path.join(root, 'specs'), { recursive: true });
     await writeFile(path.join(root, 'specs', 'tasks.md'),
       '- [ ] **F-1186-W0-1 · DB**\n- [ ] **F-1186-W0-2 · labels**\n', 'utf8');
+    await S.writeStateJson(root, { verify: 'ok:e2e', tdd: 'green' });   // done 閘門需要真綠燈
 
     // 用短 token 呼叫也要能解析到 canonical
     const r = await S.markTaskDone(root, 'W0-2', { commit: 'abc1234' });
@@ -233,13 +246,15 @@ test('markTaskDone：翻 tasks.md [x] + ledger→delivered（一次原子）', a
   });
 });
 
-test('markTaskDone：冪等（已 delivered 再呼叫不重複翻、可補 commit）', async () => {
+test('markTaskDone：冪等（已 delivered 再呼叫不重複翻、可補 commit、不再過閘門）', async () => {
   await withRoot(async (root) => {
     await S.init(root, { project: 'p', tasks: [{ id: 'F-1' }] });
     await mkdir(path.join(root, 'specs'), { recursive: true });
     await writeFile(path.join(root, 'specs', 'tasks.md'), '- [ ] **F-1 · a**\n', 'utf8');
+    await S.writeStateJson(root, { verify: 'ok:e2e', tdd: 'green' });
     const r1 = await S.markTaskDone(root, 'F-1');
     assert.equal(r1.alreadyDelivered, false);
+    // 交付後綠燈已歸零（verify=none），但冪等重呼（補 commit）不過閘門、不被擋
     const r2 = await S.markTaskDone(root, 'F-1', { commit: 'deadbee' });
     assert.equal(r2.alreadyDelivered, true);
     assert.equal((await S.readLedger(root, 'F-1')).commit, 'deadbee', '冪等但能補 commit');
@@ -249,9 +264,42 @@ test('markTaskDone：冪等（已 delivered 再呼叫不重複翻、可補 commi
 test('markTaskDone：無 tasks.md 不炸、仍寫 ledger', async () => {
   await withRoot(async (root) => {
     await S.init(root, { project: 'p', tasks: [{ id: 'F-1' }] });
+    await S.writeStateJson(root, { verify: 'ok:smoke', tdd: 'n/a' });
     const r = await S.markTaskDone(root, 'F-1');
     assert.equal(r.tasksMd.found, false);
     assert.equal((await S.readLedger(root, 'F-1')).state, 'delivered');
+  });
+});
+
+// ── done 閘門（堵「不走 TaskUpdate 直接 flow-state done」的權威路徑旁路 + stale 綠燈白嫖）──
+
+test('markTaskDone：done 閘門——verify 空/none → 拒標 delivered、tasks.md 不翻', async () => {
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [{ id: 'F-1' }] });
+    await mkdir(path.join(root, 'specs'), { recursive: true });
+    await writeFile(path.join(root, 'specs', 'tasks.md'), '- [ ] **F-1 · a**\n', 'utf8');
+    await S.writeStateJson(root, { verify: 'none', tdd: 'green' });
+    await assert.rejects(() => S.markTaskDone(root, 'F-1'), (e) => e.code === 'VERIFY_GATE');
+    const md = await readFile(path.join(root, 'specs', 'tasks.md'), 'utf8');
+    assert.match(md, /- \[ \] \*\*F-1/, '閘門擋下時 tasks.md 不動');
+    assert.notEqual((await S.readLedger(root, 'F-1')).state, 'delivered', 'ledger 也不動');
+    // state.json 整個缺 verify 欄（從沒跑過 /flow-verify）同樣擋
+    await S.writeStateJson(root, {});
+    await assert.rejects(() => S.markTaskDone(root, 'F-1'), (e) => e.code === 'VERIFY_GATE');
+  });
+});
+
+test('markTaskDone：交付成功即把 state.json verify/tdd 歸零（堵 stale 綠燈白嫖）', async () => {
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [{ id: 'F-1' }, { id: 'F-2' }] });
+    await S.writeStateJson(root, { phase: 'building', verify: 'ok:e2e', tdd: 'green' });
+    await S.markTaskDone(root, 'F-1');
+    const st = await S.readStateJson(root);
+    assert.equal(st.verify, 'none', '交付即歸零');
+    assert.equal(st.tdd, 'none');
+    assert.equal(st.phase, 'building', '其他欄位保留');
+    // 下一個 task 借不到 F-1 的舊綠燈
+    await assert.rejects(() => S.markTaskDone(root, 'F-2'), (e) => e.code === 'VERIFY_GATE');
   });
 });
 
@@ -265,6 +313,21 @@ test('fileInZone：前綴 + 邊界，不誤吃相似前綴', () => {
   assert.ok(!S.fileInZone('package.json', 'features/items'));
   assert.ok(S.fileInZone('app/x/y.tsx', 'app/**/*.tsx'), 'glob ** + *');
   assert.ok(!S.fileInZone('app/x/y.ts', 'app/**/*.tsx'), 'glob 副檔名不符');
+});
+
+test('fileInZone：globstar 零層匹配 + 大小寫不敏感（Windows/macOS）', () => {
+  assert.ok(S.fileInZone('src/index.ts', 'src/**/*.ts'), '**/ 零層也匹配（src/index.ts ∈ src/**/*.ts）');
+  assert.ok(S.fileInZone('src/a/b/c.ts', 'src/**/*.ts'), '**/ 多層仍匹配');
+  assert.ok(S.fileInZone('x.ts', '**/*.ts'), '開頭 **/ 零層');
+  assert.ok(!S.fileInZone('src/a/b.tsx', 'src/**/*.ts'), '副檔名仍要符');
+  assert.ok(S.fileInZone('SRC/Index.TS', 'src/**/*.ts'), 'glob 大小寫不敏感');
+  assert.ok(S.fileInZone('Features/Items/list.tsx', 'features/items'), '前綴 zone 大小寫不敏感');
+});
+
+test('fileInZone：中文路徑段（git core.quotepath=false 輸出 UTF-8 原文後可正常比對）', () => {
+  assert.ok(S.fileInZone('src/報表/匯出.ts', 'src/報表'), '中文前綴 zone');
+  assert.ok(S.fileInZone('src/報表/a/匯出.ts', 'src/**/*.ts'), '中文路徑過 globstar');
+  assert.ok(!S.fileInZone('src/儀表板/x.ts', 'src/報表'), '不同中文目錄不誤吃');
 });
 
 test('checkScope：歸屬 / 越界 / 忽略 .flow specs', () => {

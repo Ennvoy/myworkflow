@@ -32,6 +32,16 @@ warn() { echo "   !!  $1" >&2; }
 [ -d "$DIST" ] || { echo "找不到 dist/ 於 $DIST —— 請在 Flow 套件根目錄執行 install.sh" >&2; exit 1; }
 command -v node >/dev/null 2>&1 || { echo "找不到 node（Claude Code 必備），請先安裝 Node.js" >&2; exit 1; }
 
+# 安裝前跑 dist 測試（確定性閘門：裝壞的 dist 裝不出去）
+say "跑 dist 測試（node --test：statelib / clean-verify / hooks 閘門）"
+if [ "$(find "$DIST" -name '*.test.mjs' | wc -l)" -gt 0 ]; then
+  find "$DIST" -name '*.test.mjs' -print0 | xargs -0 node --test \
+    || { echo "dist 測試未過 —— 中止安裝，先修紅再裝。" >&2; exit 1; }
+  ok "dist 測試全綠"
+else
+  warn "dist 內無 *.test.mjs，跳過測試閘門"
+fi
+
 say "安裝目標 ClaudeHome = $CLAUDE_HOME"
 mkdir -p "$CLAUDE_HOME"/{commands,skills,rules,hooks,agents}
 
@@ -44,7 +54,7 @@ cp -Rf "$DIST"/skills/flow-toolkit "$CLAUDE_HOME/skills/"
 cp -Rf "$DIST"/skills/git-tools "$CLAUDE_HOME/skills/"
 cp -Rf "$DIST"/skills/design-system-base "$CLAUDE_HOME/skills/"
 cp -f "$DIST"/rules/flow.md "$CLAUDE_HOME/rules/flow.md"
-cp -f "$DIST"/hooks/*.mjs "$CLAUDE_HOME/hooks/"
+for f in "$DIST"/hooks/*.mjs; do case "$f" in *.test.mjs) continue;; esac; cp -f "$f" "$CLAUDE_HOME/hooks/"; done
 cp -Rf "$DIST"/agents/* "$CLAUDE_HOME/agents/"
 # 寫安裝來源/版本標記（供 flow-session-start 非阻擋漂移提醒：改了 dist 沒重裝時提醒）
 FLOW_VERSION="$(cat "$SCRIPT_DIR/VERSION" 2>/dev/null | tr -d '[:space:]' || true)"

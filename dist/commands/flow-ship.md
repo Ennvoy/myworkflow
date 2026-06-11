@@ -8,7 +8,7 @@ description: Flow Phase 5 — 出貨收束。跨 feature 整合 e2e + 完整效�
 
 ## Step 1：全 diff 獨立審查（藍軍）
 
-對 `main..HEAD` 全 diff 跑獨立 `code-reviewer` subagent（另開 context）：紅軍提的攻擊面是否真有防禦、每個 REQ 找不找得到對應實作、code smell、安全/效能潛在問題。**finding 不論是否在本次 diff 範圍 SHALL 全列**（順手修紀律）；安全 red flag 一律暫停。diff 含 auth/RBAC/migration/payment/金錢/個資 → 建議跑 codex 獨立對抗審查（裝了才問）。
+對 `main..HEAD` 全 diff 跑獨立 `code-reviewer` subagent（另開 context）：紅軍攻擊面（讀 `.flow/redteam/*.json`，build 落檔的機讀清單，**必有輸入**——缺檔＝build 流程缺陷，列為問題）是否真有防禦、每個 REQ 找不找得到對應實作、code smell、安全/效能潛在問題。**finding 不論是否在本次 diff 範圍 SHALL 全列**（順手修紀律）；安全 red flag 一律暫停。diff 含 auth/RBAC/migration/payment/金錢/個資 → 建議跑 codex 獨立對抗審查（裝了才問）。
 
 ## Step 2：跨 feature 整合 journey
 

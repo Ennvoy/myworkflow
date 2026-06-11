@@ -3,6 +3,7 @@
 // 全域裝一次（~/.claude/skills/flow-toolkit），對「當前專案」生效（讀 cwd 或 --root 的 .flow/）。
 // 決策/討論一律回 Claude（彈窗）；狀態都在各專案的 .flow/。進度看這支的文字輸出；平行波看 /workflows。
 import path from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import * as S from './statelib.mjs';
 
@@ -15,7 +16,8 @@ const root = path.resolve(flag('--root', process.cwd()));
 function gitChangedFiles(r) {
   let out = '';
   // -uall：展開未追蹤目錄到「個別檔」（預設會把整個未追蹤目錄收合成一行，scope 比對需要檔案層級）。
-  try { out = execSync('git status --porcelain -uall', { cwd: r, encoding: 'utf8' }); } catch { return []; }
+  // core.quotepath=false：中文/非 ASCII 檔名輸出 UTF-8 原文而非 octal escape（否則 zone 比對必假陽性）。
+  try { out = execSync('git -c core.quotepath=false status --porcelain -uall', { cwd: r, encoding: 'utf8' }); } catch { return []; }
   const files = [];
   for (const line of out.split('\n')) {
     if (!line.trim()) continue;
@@ -68,11 +70,21 @@ switch (cmd) {
     break;
   case 'done': {
     // 原子完成一個 task：翻 tasks.md [x] + ledger→delivered。一個指令取代三條會被漏掉的散文步驟。
+    // 自帶 done 閘門（statelib）：state.json verify/tdd 空/none → exit 2（先真跑 /flow-verify）；交付即把綠燈歸零。
     // 用法：flow-state done <taskId> [--commit <sha>]（taskId 可給 canonical 或唯一尾段如 W0-5）
     const id = argv[1];
     if (!id || id.startsWith('--')) { console.error('usage: flow-state done <taskId> [--commit <sha>]'); process.exit(1); }
     const commit = flag('--commit');
-    const r = await S.markTaskDone(root, id, commit ? { commit } : {});
+    let r;
+    try {
+      r = await S.markTaskDone(root, id, commit ? { commit } : {});
+    } catch (e) {
+      if (e && e.code === 'VERIFY_GATE') { console.error(e.message); process.exit(2); }   // 確定性 done 閘門：沒真驗綠不准 delivered
+      if (e && e.code === 'AMBIGUOUS_ID') { console.error('✗ ' + e.message); process.exit(1); }
+      throw e;
+    }
+    if (!((await S.readManifest(root)).tasks || []).some(t => t.id === r.id))
+      console.error(`⚠ manifest 查無「${r.id}」——已以原樣建 ledger（id 打錯？canonical id 見 .flow/manifest.json）`);
     const md = r.tasksMd.changed ? 'tasks.md [x] 已翻' : (r.tasksMd.found ? 'tasks.md 本已 [x]' : '⚠ tasks.md 無對應行（id 對不上？）');
     const lg = r.alreadyDelivered ? 'ledger 本已 delivered' : 'ledger→delivered';
     console.log(`✓ ${r.id}：${md}；${lg}${commit ? `；commit=${commit}` : ''}`);
@@ -113,10 +125,42 @@ switch (cmd) {
     console.log('\n✓ 無檔案越界：本波所有變動都落在宣告的 conflictZone 內。');
     break;
   }
+  case 'redteam': {
+    // 紅軍對賬閘門（確定性，整合前與 scope 一起跑）：驗 .flow/redteam/<id>.json 存在、
+    // 每個 high 攻擊有 status=covered 的對應項、且其 testFile 真實存在（檔案存在性 worker 偽造不了）。
+    // 檔案格式（orchestrator 從 parallel-build 回傳落檔）：{ attacks: [...redTeam], coverage: [...attackCoverage] }
+    // 用法：flow-state redteam --wave F-1,F-2
+    const wave = (flag('--wave') || '').split(',').map((s) => s.trim()).filter(Boolean);
+    if (!wave.length) { console.error('usage: flow-state redteam --wave <id1,id2,...>'); process.exit(1); }
+    const problems = [];
+    for (const id of wave) {
+      const p = path.join(root, '.flow', 'redteam', id + '.json');
+      if (!existsSync(p)) { problems.push(`${id}：缺 .flow/redteam/${id}.json（紅軍清單未落檔——flow-build Step 2 漏了）`); continue; }
+      let rec;
+      try { rec = JSON.parse(readFileSync(p, 'utf8')); } catch { problems.push(`${id}：.flow/redteam/${id}.json 不是合法 JSON`); continue; }
+      const coverage = rec.coverage || [];
+      for (const a of (rec.attacks || [])) {
+        if (String(a.severity || '').toLowerCase() !== 'high') continue;
+        const c = coverage.find((x) => x.attackId === a.id && x.status === 'covered');
+        if (!c) { problems.push(`${id}/${a.id}（high）：無 covered 對應項——high 攻擊不准 skipped，先補失敗安全測試轉綠`); continue; }
+        if (!c.testFile || !existsSync(path.resolve(root, c.testFile)))
+          problems.push(`${id}/${a.id}（high）：testFile 不存在（${c.testFile || '未填'}）——coverage 是自報的，檔案得真的在`);
+      }
+    }
+    if (problems.length) {
+      console.error('✗ 紅軍對賬未過：');
+      for (const x of problems) console.error('  ' + x);
+      console.error('  暫停整合：補測試/落檔後重跑。別跳過本閘門硬整合（high 攻擊面沒防禦＝出貨即漏洞）。');
+      process.exit(2);
+    }
+    console.log('✓ 紅軍對賬通過：本波 high 攻擊全數 covered 且 testFile 實存。');
+    break;
+  }
   default:
     console.log(`flow-state <resume|status|done|scope> [--root <path>]
   resume | status        冷啟動：reconstruct 印現況 + 下一步（換 session/電腦/中斷後接手；平行波看 /workflows）
-  done <id> [--commit]   標一個 task 完成：翻 tasks.md [x] + ledger→delivered（先標、再 commit）
+  done <id> [--commit]   標一個 task 完成：翻 tasks.md [x] + ledger→delivered（自帶 verify 閘門；先標、再 commit）
   scope --wave <ids>     同 repo 平行檔案安全閘門：git 真實變動 vs 各 feature conflictZone，越界 exit 2（整合前跑）
+  redteam --wave <ids>   紅軍對賬閘門：.flow/redteam/<id>.json 的 high 攻擊須全 covered 且 testFile 實存，否則 exit 2
 決策/討論一律回 Claude（彈窗）；狀態都在專案的 .flow/。`);
 }

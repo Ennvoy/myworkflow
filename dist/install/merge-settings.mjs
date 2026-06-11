@@ -40,15 +40,22 @@ if (typeof settings.hooks !== 'object' || settings.hooks === null) settings.hook
 
 let added = 0;
 let skipped = 0;
+let updated = 0;
 for (const [event, entries] of Object.entries(frag.hooks)) {
   if (!Array.isArray(settings.hooks[event])) settings.hooks[event] = [];
   for (const entry of entries) {
     const cmds = (entry.hooks || []).map((h) => h.command);
-    const present = settings.hooks[event].some((e) =>
+    const hit = settings.hooks[event].find((e) =>
       (e.hooks || []).some((h) => cmds.includes(h.command))
     );
-    if (present) {
-      skipped++;
+    if (hit) {
+      // 同 command 已接線：matcher 改版時就地更新（如 Bash → Bash|PowerShell），否則跳過。
+      // 只動「整個 entry 都是本 fragment 的 command」的條目——使用者若把自己的 hook 併進同 entry，不連帶改其觸發範圍。
+      const pureFlowEntry = (hit.hooks || []).every((h) => cmds.includes(h.command));
+      if ((entry.matcher ?? '') !== (hit.matcher ?? '')) {
+        if (pureFlowEntry) { hit.matcher = entry.matcher; updated++; }
+        else { console.error(`！matcher 需更新為「${entry.matcher}」但該 entry 含非 Flow hook，請手動調整：${cmds[0]}`); skipped++; }
+      } else skipped++;
       continue;
     }
     settings.hooks[event].push(entry);
@@ -58,4 +65,4 @@ for (const [event, entries] of Object.entries(frag.hooks)) {
 
 // BOM-less UTF-8 (Node default) so Claude Code parses it cleanly.
 writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n', 'utf8');
-console.log(`hooks merged into settings.json: +${added} added, ${skipped} already present`);
+console.log(`hooks merged into settings.json: +${added} added, ${updated} matcher updated, ${skipped} already present`);

@@ -13,7 +13,7 @@ model: opus
 - 本次變動的 git diff（基準 `main..HEAD`，或檔案清單）
 - `specs/requirements.md` 路徑
 - `specs/design.md` 路徑（含接縫契約、Decision Log）
-- 紅軍（red-team）先前列出的攻擊面清單（若有）
+- 紅軍攻擊面：讀 `.flow/redteam/*.json`（/flow-build 每 feature 機讀落檔，**必有**；缺檔＝build 流程缺陷，列為問題）
 
 你的任務：**找 5-10 個 main agent 可能漏掉的具體問題**。每個問題必須是 actionable 的（可直接修），不是空話。
 
@@ -25,7 +25,7 @@ model: opus
 - **找不到對應 code 的 REQ → 列為問題**（「REQ-005 的 email 驗證流程，在 code 中找不到實作」）
 
 ### 2. 紅軍攻擊面驗證
-- 對紅軍列的每個攻擊情境，在 code 中找對應防禦（紅軍 failingTestHint 是否真有對應的失敗安全測試 + 防禦碼）
+- 讀 `.flow/redteam/*.json`，對紅軍列的每個攻擊情境（含 id），在 code 中找對應防禦（紅軍 failingTestHint 是否真有對應的失敗安全測試 + 防禦碼）
 - **找不到防禦 → 列為問題**（「紅軍 A2 SQL injection，但 query 仍用字串拼接而非 parameterized」）
 
 ### 3. 與 design.md / 接縫契約的偏離

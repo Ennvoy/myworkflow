@@ -45,6 +45,15 @@ if (-not (Test-Path $Dist)) { throw "找不到 dist/ 於 $Dist —— 請在 Flo
 $node = Get-Command node -ErrorAction SilentlyContinue
 if (-not $node) { throw "找不到 node（Claude Code 必備）。請先裝 Node.js 再重跑。" }
 
+# 0.5) 安裝前跑 dist 測試（確定性閘門：裝壞的 dist 裝不出去）
+Say "跑 dist 測試（node --test：statelib / clean-verify / hooks 閘門）"
+$testFiles = @(Get-ChildItem $Dist -Recurse -Filter '*.test.mjs' | ForEach-Object FullName)
+if ($testFiles.Count -gt 0) {
+  & node --test @testFiles
+  if ($LASTEXITCODE -ne 0) { throw "dist 測試未過（exit $LASTEXITCODE）—— 中止安裝，先修紅再裝。" }
+  Ok "dist 測試全綠（$($testFiles.Count) 個測試檔）"
+} else { Warn "dist 內無 *.test.mjs，跳過測試閘門" }
+
 Say "安裝目標 ClaudeHome = $ClaudeHome"
 
 # 1) 建目錄
@@ -67,7 +76,7 @@ Copy-Item (Join-Path $Dist 'skills\flow-toolkit') (Join-Path $ClaudeHome 'skills
 Copy-Item (Join-Path $Dist 'skills\git-tools') (Join-Path $ClaudeHome 'skills') -Recurse -Force
 Copy-Item (Join-Path $Dist 'skills\design-system-base') (Join-Path $ClaudeHome 'skills') -Recurse -Force
 Copy-Item (Join-Path $Dist 'rules\flow.md') (Join-Path $ClaudeHome 'rules\flow.md') -Force
-Copy-Item (Join-Path $Dist 'hooks\*.mjs') (Join-Path $ClaudeHome 'hooks') -Force
+Copy-Item (Join-Path $Dist 'hooks\*.mjs') (Join-Path $ClaudeHome 'hooks') -Force -Exclude '*.test.mjs'
 Copy-Item (Join-Path $Dist 'agents\*') (Join-Path $ClaudeHome 'agents') -Recurse -Force
 # 寫安裝來源/版本標記（供 flow-session-start 非阻擋漂移提醒：改了 dist 沒重裝時提醒）
 $flowVersion = ''

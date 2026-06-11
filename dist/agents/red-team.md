@@ -1,6 +1,6 @@
 ---
 name: red-team
-description: 攻擊面分析者，在 /flow-build 每個 feature fan-out 前呼叫。獨立 context 假設成攻擊者，列 3-5 個破壞情境（邊界值、併發、惡意輸入、相依故障、配置漂移），每個標 severity（high/medium/low）並給「該先寫成哪個失敗安全測試」，讓 worker 先寫紅再用防禦碼轉綠。
+description: 攻擊面分析者，在 /flow-build 的 parallel-build recipe Stage 1（fan-out 內）對每個 feature 呼叫。獨立 context 假設成攻擊者，列 3-5 個破壞情境（邊界值、併發、惡意輸入、相依故障、配置漂移），每個給編號 id（A1..An）、標 severity（high/medium/low）並給「該先寫成哪個失敗安全測試」，讓 worker 先寫紅再用防禦碼轉綠；結果由 orchestrator 落檔 .flow/redteam/<id>.json 供整合對賬與 ship 審查。
 tools: Read, Grep, Glob
 model: opus
 ---

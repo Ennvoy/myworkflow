@@ -112,15 +112,42 @@ export function flipCheckbox(md, id) {
   return { text: lines.join(eol), found, changed };
 }
 // 把 raw id 解析成 manifest 的 canonical id（精確優先 → 唯一尾段匹配 → 原樣）。
+// 歧義（一個尾段對到多個 canonical）不靜默挑一個：丟錯列候選逼用全名——避免翻錯行/開幽靈 ledger。
 export async function resolveId(root, raw) {
   const ids = ((await readManifest(root)).tasks || []).map(t => t.id);
   if (ids.includes(raw)) return raw;
   const hits = ids.filter(id => idMatches(id, raw));
+  if (hits.length > 1) {
+    const e = new Error(`id「${raw}」有歧義，對到多個 task：${hits.join(', ')}——請改用完整 canonical id。`);
+    e.code = 'AMBIGUOUS_ID';
+    e.candidates = hits;
+    throw e;
+  }
   return hits.length === 1 ? hits[0] : raw;
 }
+const isNoneVal = v => { const s = String(v ?? '').trim(); return s === '' || /^none$/i.test(s); };
 // 原子完成：翻 tasks.md [x] + ledger transition→delivered（冪等）。供 flow-state done / PostToolUse 共用。
+// done 閘門（與 flow-verify-gate 同語意，堵「不走 TaskUpdate 直接 done」的權威路徑旁路）：
+//   首次 delivered SHALL 有真驗證綠燈（state.json verify/tdd 非空非 none，由 /flow-verify 真跑綠後寫入）；
+//   交付成功即把全域 verify/tdd 歸零成 none——下一個 task 必須有自己的新綠燈，堵「借上一個 task 的 stale 綠燈」。
+//   已 delivered 的冪等重呼（如補 --commit）不過閘門。
 export async function markTaskDone(root, rawId, patch = {}) {
   const id = await resolveId(root, rawId);
+  const cur = await readLedger(root, id);
+  const from = cur.state || 'pending';
+  if (from !== 'delivered') {
+    const st = await readStateJson(root);
+    if (isNoneVal(st.verify) || isNoneVal(st.tdd)) {
+      const e = new Error([
+        `Flow done gate：「${id}」還沒有真驗證綠燈，不能標 delivered。`,
+        isNoneVal(st.verify) ? '  - .flow/state.json "verify" 空/none → 先跑 /flow-verify，真跑綠了寫入 verify="ok:<證據ref>"。' : '',
+        isNoneVal(st.tdd) ? '  - .flow/state.json "tdd" 空/none → TDD 紅→綠，或例外時寫 "n/a"/"skipped:<reason>"。' : '',
+        '  別手改 state.json 假填過閘門（系統性違規）；驗證真的綠了再 done。',
+      ].filter(Boolean).join('\n'));
+      e.code = 'VERIFY_GATE';
+      throw e;
+    }
+  }
   let flip = { found: false, changed: false };
   const tp = tasksMdPath(root);
   if (existsSync(tp)) {
@@ -128,9 +155,11 @@ export async function markTaskDone(root, rawId, patch = {}) {
     flip = flipCheckbox(md, id);
     if (flip.changed) await writeFile(tp, flip.text, 'utf8');   // UTF-8 無 BOM
   }
-  const cur = await readLedger(root, id);
-  const from = cur.state || 'pending';
   if (from !== 'delivered' || patch.commit) await transition(root, id, from, 'delivered', patch);
+  if (from !== 'delivered') {
+    const st = await readStateJson(root);
+    await writeStateJson(root, { ...st, verify: 'none', tdd: 'none' });  // 交付即歸零，堵 stale 綠燈白嫖
+  }
   return { id, fromState: from, alreadyDelivered: from === 'delivered', tasksMd: flip };
 }
 
@@ -138,15 +167,20 @@ export async function markTaskDone(root, rawId, patch = {}) {
 // 同 repo 多 worker 平行只靠「各寫各自不重疊的檔」保安全。這支用 git 的真實變動（模型偽造不了）
 // 比對每個 feature 宣告的 conflictZone，揪出落在所有 sandbox 之外的檔（worker 越界改了共用檔/foundation）。
 // 匹配：glob（* / **）→ regex；否則前綴 + 邊界（後接 / . - 或結尾），避免 features/items 誤吃 features/itemsmore。
+// 一律大小寫不敏感（Windows/macOS 檔案系統皆 case-insensitive；同 repo 大小寫衝突極罕見，誤放遠少於誤擋）。
 const normPath = (f) => String(f).replace(/^\.\//, '').replace(/\\/g, '/').replace(/\/$/, '');
 function zoneToRe(zone) {
   const z = normPath(zone);
   if (z.includes('*')) {
     const re = z.replace(/[.+^${}()|[\]]/g, '\\$&')
-                .replace(/\*\*/g, '__GLOBSTAR__').replace(/\*/g, '[^/]*').replace(/__GLOBSTAR__/g, '.*');
-    return new RegExp('^' + re + '$');
+                .replace(/\*\*\//g, '__GLOBSTARSLASH__')      // **/ 連斜線一起吃 → 零層目錄也匹配（src/**/x ∋ src/x）
+                .replace(/\*\*/g, '__GLOBSTAR__')
+                .replace(/\*/g, '[^/]*')
+                .replace(/__GLOBSTARSLASH__/g, '(?:[^/]*/)*')
+                .replace(/__GLOBSTAR__/g, '.*');
+    return new RegExp('^' + re + '$', 'i');
   }
-  return new RegExp('^' + z.replace(/[.*+^${}()|[\]\\]/g, '\\$&') + '($|[/.-])');
+  return new RegExp('^' + z.replace(/[.*+^${}()|[\]\\]/g, '\\$&') + '($|[/.-])', 'i');
 }
 export function fileInZone(file, zone) { return zoneToRe(zone).test(normPath(file)); }
 // changedFiles: string[]（git 變動檔）; zonesByFeature: { [id]: string[] }

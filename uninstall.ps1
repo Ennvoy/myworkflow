@@ -56,11 +56,13 @@ if (Test-Path $cmdDir) {
 }
 $ft = Join-Path $ClaudeHome 'skills\flow-toolkit'
 if (Test-Path $ft) { $targets.Add($ft) }
+$dsb = Join-Path $ClaudeHome 'skills\design-system-base'
+if (Test-Path $dsb) { $targets.Add($dsb) }   # install.ps1 有裝 → 反安裝也要清（否則殘留、仍被當 active skill 載入）
 $gt = Join-Path $ClaudeHome 'skills\git-tools'
 if ($removeGit -and (Test-Path $gt)) { $targets.Add($gt) }
 $rf = Join-Path $ClaudeHome 'rules\flow.md'
 if (Test-Path $rf) { $targets.Add($rf) }
-foreach ($hk in 'flow-verify-gate.mjs', 'flow-session-start.mjs', 'flow-size-check.mjs', 'flow-commit-gate.mjs') {
+foreach ($hk in 'flow-verify-gate.mjs', 'flow-session-start.mjs', 'flow-size-check.mjs', 'flow-commit-gate.mjs', 'flow-design-base-hint.mjs', 'flow-stall-monitor.mjs', 'flow-auto-gate.mjs') {
   $p = Join-Path $ClaudeHome "hooks\$hk"
   if (Test-Path $p) { $targets.Add($p) }
 }

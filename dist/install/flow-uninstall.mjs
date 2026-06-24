@@ -20,7 +20,11 @@ if (!settingsPath || !claudeMdPath) {
 }
 
 // Flow's hook scripts identify Flow's registrations regardless of path/quoting.
-const FLOW_HOOK_SCRIPTS = ['flow-verify-gate.mjs', 'flow-session-start.mjs', 'flow-size-check.mjs', 'flow-commit-gate.mjs'];
+// 完整 7 支（與 dist/hooks/settings.flow.json 註冊一致；漏列會殘留註冊指向已刪檔 → 每次工具呼叫 spawn 失敗 node）。
+const FLOW_HOOK_SCRIPTS = [
+  'flow-verify-gate.mjs', 'flow-session-start.mjs', 'flow-size-check.mjs', 'flow-commit-gate.mjs',
+  'flow-design-base-hint.mjs', 'flow-stall-monitor.mjs', 'flow-auto-gate.mjs',
+];
 const isFlowEntry = (entry) =>
   (entry.hooks || []).some(
     (h) => typeof h.command === 'string' && FLOW_HOOK_SCRIPTS.some((s) => h.command.includes(s))

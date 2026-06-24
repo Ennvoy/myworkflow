@@ -91,7 +91,7 @@ Ok "commands（$cmdCount 個 flow*.md）/ skills/flow-toolkit / skills/git-tools
 # 4) merge hook 接線進 settings.json
 & node (Join-Path $Dist 'install\merge-settings.mjs') $settingsPath (Join-Path $Dist 'hooks\settings.flow.json') $ClaudeHome
 if ($LASTEXITCODE -ne 0) { throw "settings.json merge 失敗（exit $LASTEXITCODE）。已備份，請檢查既有 settings.json 是否合法 JSON。" }
-Ok "hook 接線已 merge 進 settings.json（verify-gate / session-start / commit-gate / size-check）"
+Ok "hook 接線已 merge 進 settings.json（verify-gate / session-start / commit-gate / size-check / stall-monitor / auto-gate / design-base-hint）"
 
 # 5) 外部 skill 安裝（依補充指定；用各自官方指令）
 if (-not $SkipExternal) {

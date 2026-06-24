@@ -40,9 +40,10 @@ if [ -d "$CLAUDE_HOME/commands" ]; then
   while IFS= read -r f; do TARGETS+=("$f"); done < <(find "$CLAUDE_HOME/commands" -maxdepth 1 -name 'flow*.md' 2>/dev/null)
 fi
 [ -d "$CLAUDE_HOME/skills/flow-toolkit" ] && TARGETS+=("$CLAUDE_HOME/skills/flow-toolkit")
+[ -d "$CLAUDE_HOME/skills/design-system-base" ] && TARGETS+=("$CLAUDE_HOME/skills/design-system-base")  # install.sh 有裝 → 也要清
 { [ "$REMOVE_GIT" -eq 1 ] && [ -d "$CLAUDE_HOME/skills/git-tools" ]; } && TARGETS+=("$CLAUDE_HOME/skills/git-tools")
 [ -f "$CLAUDE_HOME/rules/flow.md" ] && TARGETS+=("$CLAUDE_HOME/rules/flow.md")
-for hk in flow-verify-gate.mjs flow-session-start.mjs flow-size-check.mjs flow-commit-gate.mjs; do
+for hk in flow-verify-gate.mjs flow-session-start.mjs flow-size-check.mjs flow-commit-gate.mjs flow-design-base-hint.mjs flow-stall-monitor.mjs flow-auto-gate.mjs; do
   [ -f "$CLAUDE_HOME/hooks/$hk" ] && TARGETS+=("$CLAUDE_HOME/hooks/$hk")
 done
 for ag in red-team.md code-reviewer.md spec-reviewer.md; do

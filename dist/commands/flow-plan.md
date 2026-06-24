@@ -12,6 +12,8 @@ description: Flow Phase 2 — 設計。讀凍結的 requirements 產出 architec
 
 完整讀 `specs/requirements.md`（+ web 類讀 `specs/ui-mockups/`）。**不要**把整個既有 codebase 預先塞進 context——用 Grep/Glob/Read 隨用隨查（just-in-time，省 context 防腐化）。
 
+**先取已知死路**（防再生撞同一面牆）：跑 `flow-state resume` 看 `.flow/lessons.ndjson` 的「⚠️ 已知死路」。**計畫可丟棄、但失敗教訓不該丟**——再生時別重選上次失敗過的 approach（`reconstruct` 已自動帶出、delivered task 的死路會自動失效）。
+
 ## Step 1.5：高變動領域查證（命中才做）
 
 requirements 含 LLM / 雲端 / 支付 / 行動 / 前端框架關鍵字 → **WebSearch 查證**當前最佳實踐/版本，附**時間戳**寫進 design.md Decision Log（這些領域過時很快，憑記憶會錯）。

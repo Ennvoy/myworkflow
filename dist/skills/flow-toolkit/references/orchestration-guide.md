@@ -25,11 +25,24 @@
 ### 2. 釘契約（編譯期擋發散）
 跨 worker 的接縫用 design.md 釘好的**單一 type/schema**，各 worker import 同一份。API 回的形狀 ≠ UI 期望 → 編譯就紅，不會等到 runtime。
 
-### 3. 成本路由（依任務價值選模型級別）
+### 3. 成本路由＝兩根正交軸（model × effort）
+
+**軸一：model 級別（依任務價值選）**
 - **Opus**：orchestrator 編排 + 高風險審查（red-team / code-reviewer / Evaluator）
 - **Sonnet**：平行苦工 worker（建置 feature）
 - **Haiku**：窄/便宜分類（legacy 掃描、分類）
 > 升級模型級別 > 在弱模型上加倍 token。Anthropic：Opus lead + Sonnet workers 勝過單 Opus 90.2%。
+
+**軸二：reasoning effort（同 model 內的檔位，與 model 軸正交）**——`effort` 是 Workflow `agent()` 官方 opt（`low/medium/high/xhigh/max`）：
+
+| 階段 | effort | 為什麼 |
+|---|---|---|
+| plan / verify(Evaluator) / ship / 紅軍 | **high（不降級）** | Reasoning Sandwich：planning + verification 兩端高 reasoning |
+| build worker 的 generate | **medium** | 機械性實作（`parallel-build.js` 的 `WORKER_EFFORT`） |
+| 純格式化 / 遷移 / 分類窄活 | **low / none** | 明確任務，高 effort 是純浪費 |
+
+> inverse-scaling：對明確任務強拉 effort 反降準（倒 U）、均一高 effort 比 balanced 差。effort 預設是 per-recipe 寫死常數（`WORKER_EFFORT`/`EVAL_EFFORT`/`RED_EFFORT`，args 可覆寫），**別讓模型在 thinking 裡自調**（同 §4「寫死分級」紀律）。
+> 註：`effort` 是 `agent()` 文件化選項；若當前 Workflow runtime 不支援未知 opt 則**靜默 no-op**——只損失 token 節省、**不影響正確性/安全**（傳 effort 本身永遠安全）。
 
 ### 4. effort 分級寫死進 orchestrator（別讓模型自由發揮 breadth）
 - 簡單查找：1 agent、3–10 tool calls

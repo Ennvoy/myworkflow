@@ -16,6 +16,13 @@
 - 同時驗到 (a) API 真接通 (b) 資料正確性（query/join/filter/**scope**/序列化/型別）(c) 效能（真 DB 延遲/N+1/index/分頁）
 - 真依賴未 ready → 標 **BLOCKED**，禁 mock fallback 假裝綠
 
+## 第五鐵則：從入口走完整 journey（禁直接 goto 目標頁）
+
+**導航版的「禁 mock 假綠」**：頁面孤立能動 ≠ 使用者到得了。**只有一個 `goto`** 指向「這條 journey 的真實使用者起點」，其後全用 `getByRole(...).click()` 等**真實互動**串到目標頁、再操作、斷言結果。
+- 直接 `goto('/deep/target')` 跳過：斷掉的導航連結、路徑上的 auth/session 把關、沿途累積的狀態、以及「真實使用者到底到不到得了」。
+- **入口不是教條**：一般功能起點＝login → 首頁 → 導航進去；**分享連結 / email 連結 / 付款回調類**起點**就是那個連結本身**（仍走「收到→點開→看到」的真實流程，不是 goto 內部頁）。
+- Evaluator 對「直接 deep-link 跳目標頁」判 journey 維度 **FAIL**，並記下實際點擊軌跡當證據。
+
 ## 完整 spec 範本
 
 存到 `tests/e2e/<feature>.realdata.spec.ts`：
@@ -63,9 +70,19 @@ test.describe('REQ-E2E-002 建立並讀取 item（真實資料鏈路）', () => 
       consoleErrors.push(`[network] ${r.method()} ${r.url()} ${r.failure()?.errorText}`));
   });
 
-  test('UI 從真 API 讀回剛 seed 進真 DB 的資料', async ({ page }) => {
+  test('從入口走完整 journey 到 items 頁、真 API→真 DB 讀回', async ({ page }) => {
+    // === 鐵則五：從入口走完整 journey（禁直接 goto('/items')）===
+    // 唯一的 goto＝這條 journey 的真實起點（此例為登入頁）；其後全用真實點擊導航。
+    await page.goto('/login');
+    await page.getByLabel(/email/i).fill(process.env.SMOKE_USER ?? 'demo@example.com');
+    await page.getByLabel(/password|密碼/i).fill(process.env.SMOKE_PASS ?? 'demo-pass');
+    await page.getByRole('button', { name: /sign in|登入/i }).click();
+    await expect(page.getByRole('heading', { name: /dashboard|首頁/i }), '應真的登入成功進首頁').toBeVisible();
+    // 從首頁用真實點擊導航進目標功能（順帶驗：導航連結沒斷、auth 過得了、不是 deep-link 抄捷徑）
+    await page.getByRole('link', { name: /items|項目/i }).click();
+    await expect(page).toHaveURL(/\/items/);
+
     // === 鐵則四：UI → 真 API → 真 DB 讀回（非 mock）===
-    await page.goto('/items');
     // UI 上要真的看得到那筆「經真 create API 進真 DB」的資料
     const row = page.getByText(`seed-${RUN_TAG}`);
     await expect(row, 'UI 應顯示從真 DB 撈回的 seed 資料；看不到=鏈路沒接通').toBeVisible();
@@ -151,6 +168,7 @@ const WHITELIST = [/favicon\.ico/, /OTS parsing error/];  // 每條都附註解�
 - whitelist 超過 5 條 = red flag（噪音這麼多代表 code 本身有問題）
 
 ## 自查
+- [ ] **從入口走完整 journey**（唯一 goto＝真實起點、其後全真實點擊導航到目標；禁直接 goto 目標頁）
 - [ ] seed 走**真 create API**進真 DB（不是 mock、不是繞 API 直接 INSERT）
 - [ ] UI 真的顯示從真 DB 撈回的資料（看不到就是鏈路沒接通）
 - [ ] console/pageerror listener attach + 結尾 assert 零

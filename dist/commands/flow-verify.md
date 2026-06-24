@@ -17,6 +17,8 @@ description: Flow Phase 4 — 獨立驗證。另開 context 的 Evaluator 用 Pl
 
 可用 `references/recipes/parallel-verify.js`（Workflow 腳本）對多個維度/feature 平行起獨立 Evaluator。
 
+**decorrelation 兩級**：上面是「跨 context」級（全新 context＋對抗人設，已是業界硬規格）。對**沒有 runner 可錨定的 inferential 維度**（security / 耦合度這類純 LLM 語義判斷）可再上一級「**跨 model 家族**」評估，進一步去 self-preference bias（模型偏愛自己風格的產出）。但**有真 runner 的維度（功能 / 真實鏈路 / 效能）以 runner 為唯一真、不換 model**——外接一個讀不懂執行軌跡的 model 反而更差（CMU 反例）。故跨 model 只套在 inferential 軟維度，computational 維度照跑 runner。
+
 ## 鐵則二：真實資料鏈路（禁 mock 假綠）
 
 涉資料的驗證 SHALL 走 **UI → 真 API → 真 query → 真 DB**（可拋棄/local test DB）。**禁止**在 API client/網路層/前端用 mock/stub/MSW/寫死 fixture 攔截回假 response 冒充功能完成。
@@ -31,6 +33,8 @@ Web 驗證（完整範本 `references/playwright-real-data-template.md`）：
 1. **production build**（禁 dev server 噪音：`build && preview/start`，不是 `dev`）
 2. **Playwright `--headed`**（禁 headless；使用者要親眼看 / AI 透過 listener 抓 error）
 3. **attach `page.on('console')` + `page.on('pageerror')` listener**，結尾 `expect(errors).toHaveLength(0)` + 關鍵 UI 斷言 + **打真 API 端點驗 status/shape** + **查真 DB 狀態**
+4. **從入口走完整 journey（禁直接 `goto` 目標頁）**——這是**導航版的「禁 mock 假綠」**（鐵則二的姊妹）：只有一個 `goto` 指向**這條 journey 的真實使用者起點**，其後全用 `getByRole(...).click()` 等真實互動串到目標頁、再操作功能、斷言結果。直接 deep-link 跳目標＝頁面孤立能動 ≠ 使用者到得了（跳過斷掉的導航連結、路徑上的 auth/session 把關、沿途累積狀態）。
+   - **入口不是教條**：多數功能起點＝login → 首頁 → 導航進去；**分享連結 / email 連結 / 付款回調類**起點**就是那個連結本身**（但仍走「收到→點開→看到內容」的真實流程，不是 goto 內部頁）。Evaluator 對「直接 deep-link 跳目標頁」判該 journey 維度 **FAIL**，並記下實際點擊軌跡當證據。
 
 **永不信任 exit 0（rendering gap）**：改了檔但沒真正 materialise 會靜默 no-op，agent 卻以為成功。**斷言實際產物**（DB 撈得到剛 seed 的列、UI 畫得出來、API 回正確 shape），不是看 code 對不對。
 
@@ -46,7 +50,7 @@ Web 驗證（完整範本 `references/playwright-real-data-template.md`）：
 
 - **Computational sensor**（便宜、確定性、ms–秒）：lint / type-check / unit / 既有測試 → **每個迴圈先跑**，當快速回饋（先擋語法錯，別在貴的 headed e2e 上燒一輪）。
 - **Inferential sensor**（貴、LLM 語義）：security / 耦合 review → 慢節奏跑。
-- **修復迴圈**：失敗 → 自動修 → 重跑。**便宜迴圈無放棄上限**；**貴迴圈（完整 headed e2e / CI）有界**：1 次 + 1 次自動修 → 升級暫停問使用者。**check-in 間隔**（連 3 輪未過 / 同錯連 2 輪改動無效）→ 暫停問使用者，回覆後繼續，狀態維持「未完成」。**check-in 是暫停不是終止**，絕不到間隔就收工放生半成品。
+- **修復迴圈**：失敗 → 自動修 → 重跑。**便宜迴圈放寬上限但非無限**——lint/type/unit/build 命令會被 `flow-stall-monitor` 斷路器記帳，同一失敗連 ≥N 輪注入 STALL、自駕下連 ≥N+3 輪 `flow-auto-gate` 硬擋（防「lint 一直紅但每次不一樣」整夜燒）；**貴迴圈（完整 headed e2e / CI）有界**：1 次 + 1 次自動修 → 升級暫停問使用者。**check-in 間隔**（連 3 輪未過 / 同錯連 2 輪改動無效）→ 暫停問使用者，回覆後繼續，狀態維持「未完成」。**check-in 是暫停不是終止**，絕不到間隔就收工放生半成品。
 
 ## Step 0：起服務前置（避免驗到卡 port 的舊 build）
 

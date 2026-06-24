@@ -30,4 +30,4 @@ compaction **先壓縮/歸檔最新的尾巴與已完成段落**，保住開頭�
 
 ## 與收束終點的關係
 
-compact 是「**過程中**」的 context 衛生；真正的「**做完了**」是 `/flow-ship` 的完成謂詞（task 全 `[x]` + e2e 綠 + 效能達標 → `COMPLETE`）。兩者別混：compact 不代表完成，只是讓長流程不腐化。
+compact 是「**過程中**」的 context 衛生；真正的「**做完了**」是 `/flow-ship` 的完成謂詞（task 全 `[x]` + 所有 `REQ-E2E-*` 綠 + 效能達標 → `COMPLETE`）。兩者別混：compact 不代表完成，只是讓長流程不腐化。

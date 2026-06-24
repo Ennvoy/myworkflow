@@ -26,6 +26,8 @@ description: Flow Phase 1 — 訪談定版。蘇格拉底式一次一題彈窗�
 - 非功能需求：**效能目標**（哪個畫面/操作要多快）、安全、相容
 - 明確的**驗收條件**（怎樣算這條需求做完）
 
+**異常路徑自檢閘門（SHALL，初輪收斂後、grill-me 前跑一次）**：對每條主功能，SHALL 用 `AskUserQuestion` 逐項確認這 **6 類異常**都已釐清處置——**空狀態 / 輸入錯（格式·型別·超長）/ 權限不足 / 併發衝突 / 相依故障（上游 5xx·timeout）/ 網路斷**（interview-guide：「異常路徑是最常漏的」）。任一未覆蓋 → 補問一輪，釘成 EARS `Unwanted` 條（`若 <異常>，系統應 <處置>`）。**這直接餵自駕**：自駕途中 AI 要猜的 C 類需求分歧，多半就是這裡沒問乾淨的異常處置——**spec 釘得越死，自駕（T1 放手）途中要猜的越少、放手越安全**。
+
 **蘇格拉底初輪收斂後，grill-me 深挖閘門（SHALL，不可跳）**：初輪訪談一收斂，**就 SHALL 用 `AskUserQuestion` 跳一題**「要進 grill-me 對決策樹逐分支深挖，還是直接凍結？」（選項①深挖（建議）②直接凍結）。**這一問是鐵則、漏問＝流程缺陷**（別自行假設使用者要直接凍結就略過）。選深挖 → 實際呼叫 `grill-me` skill（mattpocock/skills，安裝檔已裝整套）對需求 **連續質問到每個決策分支釐清**（一次一題、能查 code 先查、每題給推薦答案）。grill-me ＝「在主 context 跟使用者互動深挖」。
 
 接著（可選但建議）對「你自己整理出的需求」呼叫獨立 `spec-reviewer` subagent（另開 context、**看不到主對話＝外部視角，與 grill-me 互補不重疊**），請它回一份 5–7 條質疑清單（邊界、衝突、隱含假設、缺失異常路徑），把質疑帶回再彈窗跟使用者對焦。
@@ -35,7 +37,7 @@ description: Flow Phase 1 — 訪談定版。蘇格拉底式一次一題彈窗�
 格式見 `references/ears-cheatsheet.md`。一律：
 - **User Story**：作為 `<role>`，我想要 `<action>`，以便 `<benefit>`。
 - **EARS 驗收條件**：`REQ-001：當 <trigger> 時，系統應 <response>`（API 名/欄位/狀態碼保留英文）。
-- **`REQ-E2E-*`**：可 demo 的端到端 user journey（Phase 4/5 的驗證來源）。
+- **`REQ-E2E-*`**：可 demo 的端到端 user journey（Phase 4/5 的驗證來源）。**SHALL 從入口寫到目標**（例：`登入 → 首頁 → 點 X 卡片 → 進 Y 頁 → 操作 Z → 斷言結果`），不是只描述目標頁——驗證要從真實起點走完整導航（禁直接 goto 目標頁，見 `playwright-real-data-template.md` 第五鐵則）。
 - **`REQ-PERF-*`**：效能 budget（例：`REQ-PERF-001：dashboard 首屏 LCP < 2.5s（p95）`）——**這是 Phase 5 的硬閘門，沒寫等於放棄效能驗收**。
 - RBAC 命中 → 注入 `REQ-RBAC-001..007`（動態角色/權限存 DB、super admin short-circuit）。
 - 一個 concern 一段，清楚可逐條對應。結尾留 `### 開放問題` 收尚未拍板的。

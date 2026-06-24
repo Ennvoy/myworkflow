@@ -55,7 +55,7 @@ Workflow 回來後，orchestrator 依拓樸序**一個一個**收尾每個 featu
 - **檔案安全閘門（確定性，整合前 SHALL 先跑、不靠模型自律）**：跑 `flow-state scope --wave <本波 ids>`（mac/linux `node ~/.claude/skills/flow-toolkit/flow-state.mjs scope --wave F-1,F-2`、Windows PS 對應路徑）。它用 **git 真實變動**比對各 feature 宣告的 `conflictZone`——任一檔落在**所有** conflictZone 之外（worker 越界改了共用檔/foundation）→ **exit 2 暫停**，查清是哪個 worker 越界、該檔該不該走序列 foundation，**別硬整合**（這是同 repo 平行的檔案安全底線，模型偽造不了 git diff）。`overlap` 警告＝規劃時 conflictZone 沒切乾淨（同波兩 feature 改同檔有覆寫風險）→ 回 plan 修。
 - **紅軍對賬閘門（確定性，與 scope 同點 SHALL 跑）**：跑 `flow-state redteam --wave <本波 ids>`（路徑同 scope）。它讀 `.flow/redteam/<id>.json`——缺檔、任一 **high** 攻擊無 `covered` 對應項、或其 `testFile` 實際不存在（檔案存在性 script 親驗，worker 自報偽造不了）→ **exit 2 暫停**該波整合，補失敗安全測試轉綠／補落檔後重跑。
 - 掃每個結果的 `driveBy`：**安全/資料正確性 red flag（SQL injection、auth bypass、密碼明文、destructive query 缺 WHERE）一律暫停**告知使用者（順手修紀律）。
-- 有 `blockers` 的標 BLOCKED／needs-decision，跳過。
+- 有 `blockers` 的標 BLOCKED／needs-decision，跳過；**順手 `flow-state lesson <id> --approach "<試過什麼>" --why "<為何卡住>"`** 記失敗記憶（防下波再生又撞同一面牆；自駕長流程尤其需要）。
 - 其餘一次一個進 Step 5（驗證 → 清垃圾 → done → commit）。
 
 ## Step 5：feature 自身驗證 → per-task commit（序列，一次一個；驗證與 commit 解耦）

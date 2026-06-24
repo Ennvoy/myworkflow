@@ -7,7 +7,9 @@
 ## 一、working set 精簡（防腐化）
 
 - **working set 壓在視窗 ~40–50% 以下**保持精簡（利用率越高 attention 越稀釋，n² 效應）。
-- **`/flow-compact` 由 SDD 檔案大小觸發**：`specs/` 任一檔 >50KB → `flow-size-check` hook（SessionStart + 送訊息時）`statSync` 確定性偵測、自動提醒歸檔已交付細節。
+- **`/flow-compact` 由兩個獨立判據觸發**（`flow-size-check` hook，SessionStart + 送訊息時，各自節流、非阻擋）：
+  - **① SDD 檔膨脹**：`specs/` 任一 `.md` >50KB（`statSync` 量檔，抓「文件越寫越長」）。
+  - **② 對話 context 腐化**：讀 hook 的 `transcript_path`（JSONL）取最後一則 assistant `usage`，算真實視窗 input 用量（`input + cache_read + cache_creation`）>~120k（約 60%）——抓「specs 小但對話長」這種 size 判據看不到的腐化，**無人盯著的自駕長流程尤其需要**。50KB 是保守參考下限、非硬閾值；context 腐化以視窗百分比為準。
 - **薄 root + on-demand**：always-on 只放憲法目錄，specs / reference 用到才載。
 - **subagent context firewall**：吵雜/大 context 工作丟獨立 subagent，只收回 1–2k 蒸餾結果。
 - **just-in-time 讀取**：傳檔案路徑/handle，不把整個檔內容塞進 prompt；用 Grep/Glob/Read 隨用隨查。
@@ -27,6 +29,7 @@ prompt cache 命中價 = miss 的 1/10，而 cache 靠 **prefix 穩定**。所�
 | `specs/design.md` | plan 階段 | 已實作決策摘要 | **接縫契約、未完成 REQ、open questions 留主檔** |
 | `specs/tasks.md` | plan 階段 | 已 `[x]` 段詳情收一行 | `[ ]`/`[x]` 狀態是完成謂詞判據，保持可讀 |
 | `.flow/state.json` | 每 action write-ahead | 已完成 action journal 歸檔 | 當前 phase + 未完成 dangling 保留 |
+| `.flow/lessons.ndjson` | 標 BLOCKED / stall 升級時記失敗 approach | delivered task 的死路自動失效（reconstruct 濾掉）、硬上限 5 筆丟最舊 | 只記 approach→why、**禁貼計畫全文**（短指紋，避免又污染 context） |
 
 **計畫是可丟棄/可再生的**：tasks/design 從 requirements 重生的成本 = 一個 planning loop。別把它當聖物無止盡打磨——「再潤一次同一個檔」是 context 腐化的來源，不是進步。
 

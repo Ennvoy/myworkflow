@@ -25,9 +25,11 @@ description: Flow Phase 5 — 出貨收束。跨 feature 整合 e2e + 完整效�
 
 `specs/tasks.md` 的 `X-*` 段**全部 `[x]` 才放行**；未清 → 暫停列出，問使用者本輪清還是進 Backlog（明說延後才寫 Backlog 留紀錄）。
 
-## Step 5：完成謂詞（收束的終點）
+## Step 5：完成謂詞（收束的終點，確定性閘門守）
 
-檢查：**所有 `tasks.md` F-*/P-* `[x]` ∧ 所有 `REQ-E2E-*` 綠 ∧ 所有 `REQ-PERF-*` 達 budget ∧ X-* 清空**。全中 → 寫 state.json `phase="shipped"`、發完成訊號 `<promise>COMPLETE</promise>`，**停止迭代**（防無限寫入：滿足謂詞就收，不再打磨）。任一未中 → 回對應階段，**不准出通過報告**。
+**發 COMPLETE 前 SHALL 跑 `flow-state complete-check`**（mac/linux `node ~/.claude/skills/flow-toolkit/flow-state.mjs complete-check`、Windows PS 對應路徑）——它確定性掃 `specs/tasks.md` **任一未完成 `[ ]` 即 exit 2 拒發 COMPLETE**（自駕無人盯著時尤其要，防模型自報全中提早收工）。
+
+通過後再人工核對謂詞全集：**所有 `tasks.md` F-*/P-* `[x]`（complete-check 已守）∧ 所有 `REQ-E2E-*` 綠（per-task done 閘門逐項守 verify）∧ 所有 `REQ-PERF-*` 達 budget ∧ X-* 清空**。全中 → 寫 state.json `phase="shipped"`、發 `<promise>COMPLETE</promise>`，**停止迭代**（滿足謂詞就收，不再打磨）。任一未中 → 回對應階段，**不准出通過報告**。
 
 ## Step 6：全系統垃圾兜底 + 出貨準備
 

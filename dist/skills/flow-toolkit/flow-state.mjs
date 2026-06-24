@@ -9,8 +9,26 @@ import * as S from './statelib.mjs';
 
 const argv = process.argv.slice(2);
 const cmd = argv[0] || 'help';
-const flag = (n, d) => { const i = argv.indexOf(n); return i >= 0 ? argv[i + 1] : d; };
+// flag 值不接受以 -- 開頭（避免 `--choice --why x` 把 --why 當值，或缺值時吃到下個 flag）。
+const flag = (n, d) => { const i = argv.indexOf(n); const v = i >= 0 ? argv[i + 1] : undefined; return (v !== undefined && !v.startsWith('--')) ? v : d; };
 const root = path.resolve(flag('--root', process.cwd()));
+
+// 解析 id 成 canonical；歧義（同尾段對多個 task）拒絕並列候選 exit 1，不靜默挑一個（decision/lesson 共用）。
+async function resolveIdOrExit(id) {
+  try { return await S.resolveId(root, id); }
+  catch (e) { if (e && e.code === 'AMBIGUOUS_ID') { console.error('✗ ' + e.message); process.exit(1); } return id; }
+}
+// 紅軍 testFile 內容驗證（不只 existsSync 檔名）：非空 + 含測試框架關鍵字，堵「touch 空檔/恆綠殼即過閘」。
+function testFileProblem(testFile) {
+  if (!testFile) return '未填 testFile';
+  const abs = path.resolve(root, testFile);
+  if (!existsSync(abs)) return `testFile 不存在（${testFile}）`;
+  let content = '';
+  try { content = readFileSync(abs, 'utf8'); } catch { return `testFile 讀不到（${testFile}）`; }
+  if (content.trim().length < 20) return `testFile 形同空檔（${testFile}）——touch 空檔不算 covered`;
+  if (!/\b(test|it|describe|expect|assert)\b|def\s+test_|@Test/i.test(content)) return `testFile 不含測試框架關鍵字（${testFile}）`;
+  return null;
+}
 
 // git 真實變動檔（staged + unstaged + untracked）。模型偽造不了——這是 scope 閘門的事實來源。
 function gitChangedFiles(r) {
@@ -54,9 +72,14 @@ async function resume() {
   const L = [];
   L.push(`\n=== flow resume :: ${view.manifest.project || '(未命名)'}  (phase: ${view.manifest.phase || '?'}) ===`);
   L.push(`已交付 ${by('delivered')}/${tasks.length} | 開發中 ${by('building')} | 驗收中 ${by('verifying')} | 待開發 ${by('pending') + by('blocked')} | ⚠️ 等你決策 ${by('needs-decision')}`);
+  L.push(`推進模式：${view.mode === 'auto' ? '🤖 自駕（spec 定版後自動推進、只 T1 分歧停；resume 續跑自駕，不每階段問）' : '🙋 每階段停（manual）'}`);
   const need = tasks.filter(t => t.state === 'needs-decision');
   if (need.length) { L.push(`\n⚠️ 等你決策（回 Claude 以彈窗拍板）：`); for (const t of need) L.push(`   - ${t.id}：${t.decision || '需要你決策'}`); }
   if (view.dangling.length) { L.push(`\n↻ 未完成動作（對帳會冪等補做）：`); for (const d of view.dangling) L.push(`   - ${d.id} → ${d.action}`); }
+  if (view.lessons && view.lessons.length) {
+    L.push(`\n⚠️ 已知死路（再生計畫別重走、見 .flow/lessons.ndjson）：`);
+    for (const ls of view.lessons) L.push(`   - ${ls.id}：${ls.failedApproach || '?'} ✗ ${ls.why || ''}`);
+  }
   const next = pickNext(view);
   L.push(`\n下一步：${next ? `推進 ${next.id}（${next.state} → 下一階段）` : (need.length ? '等你決策後才有得做' : '無可推進（全部完成或卡依賴）')}\n`);
   console.log(L.join('\n'));
@@ -140,11 +163,11 @@ switch (cmd) {
       try { rec = JSON.parse(readFileSync(p, 'utf8')); } catch { problems.push(`${id}：.flow/redteam/${id}.json 不是合法 JSON`); continue; }
       const coverage = rec.coverage || [];
       for (const a of (rec.attacks || [])) {
-        if (String(a.severity || '').toLowerCase() !== 'high') continue;
+        const sev = String(a.severity || '').toLowerCase();
         const c = coverage.find((x) => x.attackId === a.id && x.status === 'covered');
-        if (!c) { problems.push(`${id}/${a.id}（high）：無 covered 對應項——high 攻擊不准 skipped，先補失敗安全測試轉綠`); continue; }
-        if (!c.testFile || !existsSync(path.resolve(root, c.testFile)))
-          problems.push(`${id}/${a.id}（high）：testFile 不存在（${c.testFile || '未填'}）——coverage 是自報的，檔案得真的在`);
+        if (sev === 'high' && !c) { problems.push(`${id}/${a.id}（high）：無 covered 對應項——high 攻擊不准 skipped，先補失敗安全測試轉綠`); continue; }
+        // 任何 covered（含 medium/low）都驗 testFile 真實有效（非空 + 含測試關鍵字），堵「touch 空檔即過閘」
+        if (c) { const prob = testFileProblem(c.testFile); if (prob) problems.push(`${id}/${a.id}（${sev || '?'}）：${prob}——coverage 是自報的，檔案得真的是測試`); }
       }
     }
     if (problems.length) {
@@ -156,11 +179,73 @@ switch (cmd) {
     console.log('✓ 紅軍對賬通過：本波 high 攻擊全數 covered 且 testFile 實存。');
     break;
   }
+  case 'decision': {
+    // 記一個自駕自決分歧（T1 放手下、spec 沒釘死的 C 類需求分歧由 AI 自決並留審計）。
+    // 用法：flow-state decision <taskId> --choice "<決定了什麼>" --why "<理由>" [--question "<分歧點>"]
+    // 全部自決也都進 journal（ev:'decision'，append-only 審計線），decisions/<id>.json 留最新快照。
+    const id = argv[1];
+    if (!id || id.startsWith('--')) { console.error('usage: flow-state decision <taskId> --choice "<決定>" --why "<理由>" [--question "<分歧>"]'); process.exit(1); }
+    const choice = flag('--choice') || '';
+    if (!choice) { console.error('需給 --choice（你自決了什麼）'); process.exit(1); }
+    const rid = await resolveIdOrExit(id);
+    try { await S.recordDecision(root, rid, { question: flag('--question') || '', choice, why: flag('--why') || '', by: 'auto' }); }
+    catch (e) { if (e && e.code === 'UNSAFE_ID') { console.error('✗ ' + e.message); process.exit(1); } throw e; }
+    console.log(`✓ 已記自決：${rid}：${choice}${flag('--why') ? `（${flag('--why')}）` : ''}`);
+    console.log('  審計線在 .flow/journal.ndjson（ev:decision）；最新快照在 .flow/decisions/。使用者可事後翻、要改再說。');
+    break;
+  }
+  case 'lesson': {
+    // 記一條失敗記憶（防計畫再生撞同一面牆）。寫入點：標 BLOCKED、stall 升級時順手記。
+    // 用法：flow-state lesson <taskId> --approach "<試過什麼>" --why "<為何失敗>"
+    const id = argv[1];
+    if (!id || id.startsWith('--')) { console.error('usage: flow-state lesson <taskId> --approach "<試過什麼>" --why "<為何失敗>"'); process.exit(1); }
+    const approach = flag('--approach') || '';
+    const why = flag('--why') || '';
+    if (!approach && !why) { console.error('需至少給 --approach 或 --why（只記 approach→why，禁貼計畫全文）'); process.exit(1); }
+    const rid = await resolveIdOrExit(id);
+    await S.appendLesson(root, { id: rid, failedApproach: approach, why });
+    console.log(`✓ 已記死路：${rid}：${approach} ✗ ${why}`);
+    console.log('  下次 reconstruct / flow-plan 再生會自動帶出，避免重走（delivered 後自動失效）。');
+    break;
+  }
+  case 'guardrail-check': {
+    // 自駕前置硬閘門：確認 stall 斷路器在線（settings.json PostToolUse 含 flow-stall-monitor）。
+    // /flow 寫 mode:auto 前 SHALL 跑；缺則 exit 2，退回每階段停、不假裝自駕（無花費上限下唯一剎車不能缺）。
+    const home = flag('--claude-home') || process.env.CLAUDE_HOME ||
+      path.join(process.env.USERPROFILE || process.env.HOME || '', '.claude');
+    let raw = '';
+    try { raw = readFileSync(path.join(home, 'settings.json'), 'utf8'); }
+    catch { console.error(`✗ 找不到 ${path.join(home, 'settings.json')}——無法確認護欄在線。先跑 install 裝 Flow hooks 再啟用自駕。`); process.exit(2); }
+    if (!/flow-stall-monitor\.mjs/.test(raw)) {
+      console.error('✗ 自駕護欄缺失：settings.json 沒有 flow-stall-monitor（doom-loop 斷路器）。');
+      console.error('  無花費上限下這是唯一剎車。重跑 install 裝齊 hooks 再啟用自駕，或本次走「每階段停」。');
+      process.exit(2);
+    }
+    console.log('✓ 自駕護欄在線：stall 斷路器（flow-stall-monitor）已註冊，可啟用自駕。');
+    break;
+  }
+  case 'complete-check': {
+    // 完成謂詞硬閘門（ship 出口）：tasks.md 全 [x]（無未完成 [ ]）才准發 COMPLETE。
+    // /flow-ship Step 5 SHALL 跑；自駕下尤其要（防模型自報全中提早收工）。REQ-E2E/PERF 由 per-task done 閘門逐項守。
+    const tp = path.join(root, 'specs', 'tasks.md');
+    if (!existsSync(tp)) { console.error('✗ 查無 specs/tasks.md——無法判定完成謂詞，不准發 COMPLETE。'); process.exit(2); }
+    const md = readFileSync(tp, 'utf8');
+    const open = (md.match(/^\s*[-*]\s*\[ \]/gm) || []).length;
+    const xstar = (md.match(/\bX-[A-Za-z]\w*/g) || []).length;
+    if (open > 0) { console.error(`✗ 完成謂詞未達：tasks.md 還有 ${open} 個未完成 [ ]。自駕不准在此發 COMPLETE，回 build 補完。`); process.exit(2); }
+    console.log(`✓ tasks.md 全數 [x]${xstar ? `（注意：尚見 ${xstar} 處 X-* cross-cutting 標記，ship 前確認已清）` : ''}。`);
+    console.log('  仍須確認所有 REQ-E2E-*/REQ-PERF-* 經 /flow-verify 真綠（per-task done 閘門已逐項守 verify/tdd）。');
+    break;
+  }
   default:
-    console.log(`flow-state <resume|status|done|scope> [--root <path>]
-  resume | status        冷啟動：reconstruct 印現況 + 下一步（換 session/電腦/中斷後接手；平行波看 /workflows）
+    console.log(`flow-state <resume|status|done|scope|redteam|lesson|decision|guardrail-check|complete-check> [--root <path>]
+  resume | status        冷啟動：reconstruct 印現況 + 下一步 + 已知死路（換 session/電腦/中斷後接手；平行波看 /workflows）
   done <id> [--commit]   標一個 task 完成：翻 tasks.md [x] + ledger→delivered（自帶 verify 閘門；先標、再 commit）
   scope --wave <ids>     同 repo 平行檔案安全閘門：git 真實變動 vs 各 feature conflictZone，越界 exit 2（整合前跑）
   redteam --wave <ids>   紅軍對賬閘門：.flow/redteam/<id>.json 的 high 攻擊須全 covered 且 testFile 實存，否則 exit 2
+  lesson <id> --approach "<a>" --why "<w>"   記一條失敗記憶（防再生撞同一面牆；標 BLOCKED/stall 升級時記）
+  decision <id> --choice "<c>" --why "<w>"   記一個自駕自決分歧（T1 放手下 AI 自決的 C 類需求分歧留審計）
+  guardrail-check        自駕前置：確認 settings.json 含 stall 斷路器，缺則 exit 2（/flow 寫 mode:auto 前跑）
+  complete-check         完成謂詞硬閘門：tasks.md 全 [x] 才准發 COMPLETE，否則 exit 2（/flow-ship 出口跑）
 決策/討論一律回 Claude（彈窗）；狀態都在專案的 .flow/。`);
 }

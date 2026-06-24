@@ -5,6 +5,7 @@
 //   → 回傳每 feature 的 {feature, files, selfCheck, attackCoverage, blockers, driveBy, redTeam}。
 //   orchestrator 收到後 SHALL：① 把 redTeam 落檔 .flow/redteam/<id>.json（ship 的 code-reviewer 必讀輸入）
 //   ② 對賬 attackCoverage——任一 high 攻擊無 covered 項或 testFile 不存在 → 該 feature 暫停（flow-build Step 4）。
+//   ③ blockers 非空的 feature＝該 worker 終止，orchestrator **不得 re-spawn 同一 worker**，直接帶進 flow-build Step 4 人工閘門（升級而非靜默丟棄、不悶燒整波 token）。
 
 export const meta = {
   name: 'flow-parallel-build',
@@ -16,12 +17,15 @@ export const meta = {
 }
 
 // args.wave: [{ id, title, req, conflictZone, ui? }]；args.contractPath / args.reqPath
-// 成本路由（Reasoning Sandwich：plan/verify 高、中間 generation 低）：平行苦工 worker 走較便宜的 model，
-// 省 token＝同預算能 fan-out 更寬的波（多工 ~15x token，成本常是並行寬度的真天花板）。
-// 預設 'sonnet'，但 args.workerModel 可覆寫（model 當可抽換參數，不 hardcode model-specific 行為）。
+// 成本路由＝兩根正交軸（Reasoning Sandwich）：
+//   ① model 軸——平行苦工 worker 走較便宜 model（預設 'sonnet'，args.workerModel 可覆寫），省 token＝同預算 fan-out 更寬的波。
+//   ② effort 軸（同 model 內的 reasoning_effort）——機械性 generate 用中檔（worker），高價值對抗審查（紅軍）維持高檔不降級。
+//      inverse-scaling：對明確任務強拉 effort 反降準、均一高 effort 比 balanced 差。兩軸皆可覆寫、不 hardcode model/effort 行為。
 const wave = (args && args.wave) || []
 if (!wave.length) { log('parallel-build: 空波次，無事可做'); return [] }
-const WORKER_MODEL = (args && args.workerModel) || 'sonnet'
+const WORKER_MODEL  = (args && args.workerModel)  || 'sonnet'
+const WORKER_EFFORT = (args && args.workerEffort)  || 'medium'   // 平行苦工 generate：中檔
+const RED_EFFORT    = (args && args.redTeamEffort) || 'high'     // 紅軍對抗審查：高檔不降級
 
 const ATTACK_SCHEMA = {
   type: 'object', additionalProperties: false,
@@ -85,7 +89,7 @@ const results = await pipeline(
   (f) => agent(
     `你是 red-team 攻擊面分析者。針對 feature「${f.title}」(${f.id})，讀 ${args.reqPath} 對應 REQ 與現有 code，` +
     `列 3–5 個破壞情境（邊界值 / 併發 / 惡意輸入 / 相依故障 / 配置漂移），每個給編號 id（A1..An）、標 severity，並給「該先寫成哪個失敗安全測試」。`,
-    { label: `red:${f.id}`, phase: 'RedTeam', schema: ATTACK_SCHEMA, agentType: 'red-team' }
+    { label: `red:${f.id}`, phase: 'RedTeam', schema: ATTACK_SCHEMA, agentType: 'red-team', effort: RED_EFFORT }
   ),
   // Stage 2：同 repo 生成（吃上一步攻擊面）——平行寫各自不重疊的檔，不 commit、不跑整包 build
   (attack, f) => agent(
@@ -98,12 +102,13 @@ const results = await pipeline(
     `  真的不適用才標 skipped+reason——**high severity 不准 skipped**（orchestrator 會驗 testFile 存在、不覆蓋會被擋整合）。\n` +
     `TDD：Red 先寫你自己的測試檔、單跑出真 assertion failure → Green 最小實作轉綠 → Refactor。\n` +
     `真實資料鏈路：涉 API/資料 SHALL 打真後端真 DB、禁 mock 假綠；真依賴未 ready（上游 5xx/未實作）→ 標 BLOCKED，不准 mock fallback。\n` +
+    `**硬出口**：撞 hard block（上游 5xx / 未實作 / rate-limited / 型別契約缺）→ 立即在 blockers 回報並**停止本 worker**，禁反覆重試或自行降級 mock（悶燒會吃掉整波 ~15x token）。\n` +
     `**你只負責生成，不做整合**：可單跑你自己的單元測試檔（TDD）；但**不要**跑整包 build / tsc / 起 dev server / git add / git commit\n` +
     `  （那些會跟其他 worker 搶 .next/tsbuildinfo/port 與 .git/index.lock）——整包 build、驗證、commit 由主流程序列做。\n` +
     (f.ui ? `涉 UI：依附帶的 ui-ux-pro-max component 建議，accessibility（ARIA/keyboard/focus）清單逐項實作。\n` : '') +
     `安全 red flag（SQLi/auth bypass/密碼明文/缺 WHERE 的 destructive query）→ 在 driveBy 標出。\n` +
     `回傳結構化結果：你改了哪些檔（files）、自檢（單元綠/真實資料）、attackCoverage、blockers、driveBy。`,
-    { label: `gen:${f.id}`, phase: 'Generate', schema: GEN_SCHEMA, model: WORKER_MODEL }
+    { label: `gen:${f.id}`, phase: 'Generate', schema: GEN_SCHEMA, model: WORKER_MODEL, effort: WORKER_EFFORT }
   ).then((g) => (g ? { ...g, redTeam: (attack && attack.attacks) || [] } : g))  // 紅軍清單隨結果帶回 → orchestrator 落檔 .flow/redteam/<id>.json
 )
 

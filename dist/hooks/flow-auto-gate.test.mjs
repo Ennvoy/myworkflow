@@ -1,0 +1,73 @@
+// flow-auto-gate.test.mjs — 自駕硬閘門 hook（node --test）
+// 驗：mode:auto 時 裝新相依/破壞性 DB/硬 stall → exit 2；bare install/有 WHERE/manual/非 Flow → 放行(fail-open)。
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { mkdtemp, rm } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import * as S from '../skills/flow-toolkit/statelib.mjs';
+
+const HOOK = fileURLToPath(new URL('./flow-auto-gate.mjs', import.meta.url));
+const run = input => spawnSync('node', [HOOK], { input: JSON.stringify(input), encoding: 'utf8' }).status;
+async function withAuto(fn, mode = 'auto') {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'autogate-'));
+  await S.init(root, { project: 'p', tasks: [] });
+  await S.writeStateJson(root, { mode, phase: 'building' });
+  try { await fn(root); } finally { await rm(root, { recursive: true, force: true }); }
+}
+const bash = (root, command) => ({ tool_name: 'Bash', tool_input: { command }, cwd: root });
+
+test('mode:auto — 裝新相依 → exit 2；bare install / ci → 放行', async () => {
+  await withAuto(async (root) => {
+    assert.equal(run(bash(root, 'npm install react')), 2, 'npm install <pkg>');
+    assert.equal(run(bash(root, 'npm i -D vitest')), 2, 'npm i -D <pkg>');
+    assert.equal(run(bash(root, 'yarn add lodash')), 2, 'yarn add');
+    assert.equal(run(bash(root, 'pip install flask')), 2, 'pip install <pkg>');
+    assert.equal(run(bash(root, 'cargo add serde')), 2, 'cargo add');
+    assert.equal(run(bash(root, 'npm install')), 0, 'bare install 還原 lockfile 放行');
+    assert.equal(run(bash(root, 'npm ci')), 0, 'npm ci 放行');
+    assert.equal(run(bash(root, 'pnpm install --frozen-lockfile')), 0, 'frozen install 放行');
+  });
+});
+
+test('mode:auto — 破壞性 DB → exit 2；有 WHERE / SELECT → 放行', async () => {
+  await withAuto(async (root) => {
+    assert.equal(run(bash(root, 'psql -c "DROP TABLE users"')), 2, 'DROP TABLE');
+    assert.equal(run(bash(root, 'mysql -e "TRUNCATE orders"')), 2, 'TRUNCATE');
+    assert.equal(run(bash(root, 'psql -c "DELETE FROM users"')), 2, '無 WHERE 的 DELETE');
+    assert.equal(run(bash(root, 'psql -c "UPDATE users SET active=0"')), 2, '無 WHERE 的 UPDATE');
+    assert.equal(run(bash(root, 'psql -c "DELETE FROM users WHERE id=1"')), 0, '有 WHERE 放行');
+    assert.equal(run(bash(root, 'psql -c "SELECT * FROM users"')), 0, 'SELECT 放行');
+  });
+});
+
+test('mode:auto — 軟 STALL 連續被忽略到 hardThreshold → 下次同 runner 硬擋 exit 2', async () => {
+  await withAuto(async (root) => {
+    const cmd = 'pytest tests/test_x.py';
+    const bucket = S.runnerBucket(cmd);
+    for (let i = 0; i < 6; i++) await S.recordVerifyAttempt(root, bucket, 'SAMESIG', 1);   // soft3+3=6
+    assert.equal(run(bash(root, cmd)), 2, '連 6 輪同失敗 → 硬擋');
+    // 不同 runner 不受影響
+    assert.equal(run(bash(root, 'pytest tests/test_y.py')), 0, '別條 runner 放行');
+  });
+});
+
+test('mode:manual — 一律放行（不干擾非自駕）', async () => {
+  await withAuto(async (root) => {
+    assert.equal(run(bash(root, 'npm install react')), 0);
+    assert.equal(run(bash(root, 'psql -c "DROP TABLE users"')), 0);
+  }, 'manual');
+});
+
+test('非 Flow / 壞 JSON / 非 Bash 工具 → fail-open exit 0', async () => {
+  await withAuto(async (root) => {
+    assert.equal(run({ tool_name: 'Write', tool_input: {}, cwd: root }), 0, '非 Bash 放行');
+  });
+  // 無 .flow
+  const tmp = await mkdtemp(path.join(os.tmpdir(), 'noflow-'));
+  assert.equal(run(bash(tmp, 'npm install react')), 0, '非 Flow 放行');
+  await rm(tmp, { recursive: true, force: true });
+  assert.equal(spawnSync('node', [HOOK], { input: '{bad', encoding: 'utf8' }).status, 0, '壞 JSON 放行');
+});

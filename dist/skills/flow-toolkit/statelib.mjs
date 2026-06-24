@@ -4,6 +4,7 @@
 // 修掉「單檔 state.json 多 worker 互蓋」硬傷。state.json 保留為當前 task 衍生指標（相容既有 hook）。
 import { mkdir, readFile, writeFile, appendFile, readdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 
 const dir          = root => path.join(root, '.flow');
@@ -11,8 +12,16 @@ const ledgerDir    = root => path.join(dir(root), 'ledger');
 const decisionsDir = root => path.join(dir(root), 'decisions');
 const manifestPath = root => path.join(dir(root), 'manifest.json');
 const journalPath  = root => path.join(dir(root), 'journal.ndjson');
+const lessonsPath  = root => path.join(dir(root), 'lessons.ndjson');
 const statePath    = root => path.join(dir(root), 'state.json');
 const nowISO = () => new Date().toISOString();
+
+// id 直接當檔名（ledger/decisions/<id>.json），故拒含路徑分隔/.. 的 id，防自駕模型傳惡意 id 寫出 .flow 之外。
+function safeId(id) {
+  const s = String(id ?? '').trim();
+  if (!s || /[\/\\]|\.\./.test(s)) { const e = new Error(`不安全或空的 id：「${s}」`); e.code = 'UNSAFE_ID'; throw e; }
+  return s;
+}
 
 async function readJSON(p, fallback) {
   if (!existsSync(p)) return fallback;
@@ -37,10 +46,10 @@ export async function writeManifest(root, manifest) {
 }
 
 export async function writeLedger(root, id, obj) {
-  await writeJSON(path.join(ledgerDir(root), id + '.json'), { ...obj, id, updatedAt: nowISO() });
+  await writeJSON(path.join(ledgerDir(root), safeId(id) + '.json'), { ...obj, id, updatedAt: nowISO() });
 }
 export async function readLedger(root, id) {
-  return readJSON(path.join(ledgerDir(root), id + '.json'), {});
+  return readJSON(path.join(ledgerDir(root), safeId(id) + '.json'), {});
 }
 export async function listLedger(root) {
   const d = ledgerDir(root);
@@ -60,6 +69,76 @@ export async function readJournal(root) {
   return raw.split('\n').filter(Boolean).map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
 }
 
+// ── stall 偵測（doom-loop 斷路器）：runner 辨識 + 失敗指紋 + 連續計數 ──
+// 自駕無花費上限時的防失控底線。flow-stall-monitor hook 在 runner 失敗時 recordVerifyAttempt、成功時記 sig='ok' 重置。
+// 同 bucket 同 sig 連續 ≥N 即 doom loop。偵測「優先用 runner 真實 exit code、無則 best-effort 掃失敗標記」。
+// 分桶 key 用 runnerBucket(命令)、不靠 state.task（生產不寫該欄）——同一條測試的連續失敗自然同桶、不同測試自然分桶。
+
+// runner 含 test + build/typecheck/lint（會回 exit code 的命令型迴圈也要接到）；排除套件管理 install/add 與純印出（偽陽）。
+const RUNNER_RE = /\b(pytest|jest|vitest|mocha|playwright|cypress|rspec|phpunit|unittest)\b|\b(go|cargo|dotnet)\s+(test|build)\b|\b(gradlew?|mvn)\b[\s\S]*\b(test|build|verify)\b|\btsc\b|\bnode\s+--test\b|\b(npm|pnpm|yarn|bun)\s+(run\s+)?(test|build|lint|typecheck|check|tsc)\b/i;
+export function isRunnerCommand(cmd) {
+  const s = String(cmd || '');
+  if (/^\s*(echo|printf|cat|grep|rg|ls|which|type)\b/.test(s)) return false;     // 純印出/查找含 runner 字樣不算
+  if (/\b(npm|pnpm|yarn|bun|pip|pip3|cargo|go|gem|composer|poetry)\s+(install|add|i|ci|get|remove|uninstall|sync)\b/.test(s)) return false; // 套件管理非 verify runner
+  return RUNNER_RE.test(s);
+}
+
+// 把 runner 命令正規化成穩定的「失敗分桶 key」：去 flag、小寫、壓空白。
+// 同一條測試重跑→同 bucket；不同測試/檔→不同 bucket。cwd 已由 .flow 位置隔離專案。
+export function runnerBucket(cmd) {
+  return String(cmd || '').split(/\s+/).filter(t => t && !t.startsWith('-')).join(' ').toLowerCase().slice(0, 200) || '_runner';
+}
+
+// 失敗指紋去噪：抽「失敗特徵行」（非首行 banner），正規化掉路徑/耗時/行號/seed 等易變 token，
+// 讓「同一個失敗」跨輪穩定（不被噪音打散→該斷不斷）、「不同失敗」不被固定 banner 併成同指紋（→偽 stall）。
+const normSig = t => String(t || '')
+  .replace(/\x1b\[[0-9;]*m/g, '')                          // ANSI 色碼
+  .replace(/[A-Za-z]:\\[^\s:]+|(?:\/[\w.\-]+)+\//g, '<p>')  // 絕對/長路徑（Win C:\… / Unix /a/b/）
+  .replace(/\b\d+(?:\.\d+)?\s?(?:ms|s|sec|m)\b/gi, '<t>')   // 耗時 3.2s / 120ms
+  .replace(/:\d+(?::\d+)?\b/g, ':<n>')                      // 行:列號
+  .replace(/\b0x[0-9a-f]+\b/gi, '<h>')                      // hex
+  .replace(/\b\d{4,}\b/g, '<n>')                            // 長數字（seed/pid/timestamp）
+  .toLowerCase().replace(/\s+/g, ' ').trim();
+const FAILLINE_RE = /(FAILED|\bFAIL\b|AssertionError|\w+Error\b|Traceback|Exception\b|✗|✘|\bnot ok\b|expect\(|●|×|panic:)/i;
+export function verifyFailSig(cmd, output) {
+  const lines = String(output || '').split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  const feat = lines.filter(l => FAILLINE_RE.test(l));
+  const basis = feat.length ? [...new Set(feat)].sort().join('\n') : (lines[0] || '');   // 撈不到特徵行才退回首行
+  return createHash('sha1').update(normSig(cmd) + '|' + normSig(basis)).digest('hex').slice(0, 12);
+}
+
+// 尾端連續同 sig 的 verify.attempt 數（換 sig＝有變化／成功記 'ok'＝歸 1）。bucket id 精確比對。純函式。
+export function stallCount(journal, id) {
+  const sigs = (journal || []).filter(e => e && e.ev === 'verify.attempt' && e.id === id).map(e => e.sig);
+  if (!sigs.length) return 0;
+  const last = sigs[sigs.length - 1];
+  if (last === 'ok') return 0;                              // 末筆是成功→無連敗
+  let n = 0;
+  for (let i = sigs.length - 1; i >= 0 && sigs[i] === last; i--) n++;
+  return n;
+}
+export async function recordVerifyAttempt(root, id, sig, exit) {
+  await appendJournal(root, { ev: 'verify.attempt', id, sig, exit });
+}
+
+// ── 失敗記憶（防計畫再生撞同一面牆）：append-only、硬上限 N 筆丟最舊；──
+// delivered task 的死路由 reconstruct 自動濾掉（不再相關），不需手動標 stale。
+const LESSON_CAP = 5;
+export async function readLessons(root) {
+  const p = lessonsPath(root);
+  if (!existsSync(p)) return [];
+  const raw = await readFile(p, 'utf8');
+  return raw.split('\n').filter(Boolean).map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
+}
+export async function appendLesson(root, lesson) {
+  await mkdir(dir(root), { recursive: true });
+  const kept = [...await readLessons(root), {
+    id: lesson.id, failedApproach: lesson.failedApproach, why: lesson.why, stale: !!lesson.stale, at: nowISO(),
+  }].slice(-LESSON_CAP);
+  await writeFile(lessonsPath(root), kept.map(o => JSON.stringify(o)).join('\n') + '\n', 'utf8');
+  await appendJournal(root, { ev: 'lesson', id: lesson.id });
+}
+
 // 狀態轉移：更新 ledger 快照 + 記 journal（單筆轉移即原子，不需 start/done 包覆）
 export async function transition(root, id, from, to, patch = {}) {
   const cur = await readLedger(root, id);
@@ -72,10 +151,10 @@ export async function actionStart(root, id, action) { await appendJournal(root, 
 export async function actionDone(root, id, action, result) { await appendJournal(root, { ev: 'action.done', id, action, result }); }
 
 export async function recordDecision(root, id, decision) {
-  await writeJSON(path.join(decisionsDir(root), id + '.json'), { id, ...decision, at: decision.at || nowISO() });
+  await writeJSON(path.join(decisionsDir(root), safeId(id) + '.json'), { id, ...decision, at: decision.at || nowISO() });
   await appendJournal(root, { ev: 'decision', id, choice: decision.choice, by: decision.by });
 }
-export async function readDecision(root, id) { return readJSON(path.join(decisionsDir(root), id + '.json'), {}); }
+export async function readDecision(root, id) { return readJSON(path.join(decisionsDir(root), safeId(id) + '.json'), {}); }
 
 // state.json 相容 bridge：當前 task 衍生指標（既有 flow-verify-gate / flow-session-start hook 只讀這個）
 export async function writeStateJson(root, state) { await writeJSON(statePath(root), state); }
@@ -239,5 +318,7 @@ export async function reconstruct(root) {
     if (e.ev === 'action.start') open.set(e.id + '|' + e.action, { id: e.id, action: e.action });
     else if (e.ev === 'action.done') open.delete(e.id + '|' + e.action);
   }
-  return { manifest, tasks, order, dangling: [...open.values()], journalLength: journal.length };
+  const lessons = (await readLessons(root)).filter(L => !L.stale && (tasks[L.id] || {}).state !== 'delivered');
+  const mode = (stateJson && stateJson.mode) || 'manual';   // 推進模式由檔案帶出（resume 不靠記憶判斷自駕/manual）
+  return { manifest, tasks, order, dangling: [...open.values()], journalLength: journal.length, lessons, mode };
 }

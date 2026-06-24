@@ -17,6 +17,10 @@
           {
             "type": "command",
             "command": "node \"{{CLAUDE_HOME}}/hooks/flow-commit-gate.mjs\""
+          },
+          {
+            "type": "command",
+            "command": "node \"{{CLAUDE_HOME}}/hooks/flow-auto-gate.mjs\""
           }
         ]
       },
@@ -26,6 +30,17 @@
           {
             "type": "command",
             "command": "node \"{{CLAUDE_HOME}}/hooks/flow-design-base-hint.mjs\""
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"{{CLAUDE_HOME}}/hooks/flow-stall-monitor.mjs\""
           }
         ]
       }

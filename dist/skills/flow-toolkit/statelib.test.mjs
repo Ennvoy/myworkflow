@@ -357,3 +357,124 @@ test('checkScope：全部在 zone 內 → ok', () => {
   assert.ok(r.ok);
   assert.equal(r.violations.length, 0);
 });
+
+// ── stall 偵測（doom-loop 斷路器）：runner 辨識 + 失敗指紋 + 連續計數 ──
+// 自駕無花費上限時的唯一防失控閘門。偵測走真實 exit code + journal（模型偽造/遺忘不了）。
+
+test('isRunnerCommand：辨識 test + build/typecheck runner、排除套件管理 install 與純印出', () => {
+  assert.ok(S.isRunnerCommand('pytest tests/'));
+  assert.ok(S.isRunnerCommand('python -m pytest -q'));
+  assert.ok(S.isRunnerCommand('npm test'));
+  assert.ok(S.isRunnerCommand('npm run test:e2e'));
+  assert.ok(S.isRunnerCommand('npx playwright test'));
+  assert.ok(S.isRunnerCommand('go test ./...'));
+  assert.ok(S.isRunnerCommand('node --test foo.test.mjs'));
+  assert.ok(S.isRunnerCommand('vitest run'));
+  assert.ok(S.isRunnerCommand('python -m unittest'));
+  assert.ok(S.isRunnerCommand('./gradlew test'));
+  // 擴含會回 exit code 的 build/typecheck/lint 命令型迴圈（rank 5 非 runner doom loop）
+  assert.ok(S.isRunnerCommand('tsc --noEmit'), 'tsc');
+  assert.ok(S.isRunnerCommand('npm run build'), 'build 迴圈也要接到');
+  assert.ok(S.isRunnerCommand('pnpm run typecheck'), 'typecheck');
+  assert.ok(S.isRunnerCommand('go build ./...'), 'go build');
+  // 偽陽排除
+  assert.ok(!S.isRunnerCommand('git status'));
+  assert.ok(!S.isRunnerCommand('ls -la'));
+  assert.ok(!S.isRunnerCommand('npm install'), '裝套件非 runner');
+  assert.ok(!S.isRunnerCommand('npm install jest'), '裝 jest 含 runner 字樣但仍非 runner');
+  assert.ok(!S.isRunnerCommand('pip install pytest'), '裝 pytest 仍非 runner');
+  assert.ok(!S.isRunnerCommand('echo pytest'), '純印出含 runner 字樣不算');
+});
+
+test('runnerBucket：去 flag、同測試重跑同桶、不同檔不同桶', () => {
+  assert.equal(S.runnerBucket('pytest tests/test_x.py -v --tb=short'), S.runnerBucket('pytest tests/test_x.py'), '同測試去 flag 後同桶');
+  assert.notEqual(S.runnerBucket('pytest tests/test_x.py'), S.runnerBucket('pytest tests/test_y.py'), '不同檔不同桶');
+  assert.equal(S.runnerBucket('NPM RUN TEST'), 'npm run test', '小寫正規化');
+  assert.ok(S.runnerBucket('') === '_runner', '空命令有 fallback key');
+});
+
+test('verifyFailSig：抽失敗特徵行（非 banner）；同失敗去噪後穩定、不同失敗不同指紋', () => {
+  // 過鬆防呆：首行同為 pytest banner，但失敗 test 不同 → 不同指紋（舊「取首行」會誤判同指紋）
+  const banner = '==== test session starts ====';
+  const a = S.verifyFailSig('pytest', `${banner}\nFAILED tests/test_a.py::test_x - AssertionError: 1 != 2`);
+  const b = S.verifyFailSig('pytest', `${banner}\nFAILED tests/test_b.py::test_y - ImportError: foo`);
+  assert.notEqual(a, b, 'banner 相同但失敗不同 → 不同指紋（不被 banner 併成偽 stall）');
+  // 過嚴防呆：同一個失敗，但訊息含不同耗時/絕對路徑/行號 → 去噪後同指紋（才湊得到連 3）
+  const c1 = S.verifyFailSig('pytest tests/test_a.py', 'FAILED test_x - took 3.2s\n  at /home/alice/proj/x.py:42');
+  const c2 = S.verifyFailSig('pytest tests/test_a.py', 'FAILED test_x - took 9.7s\n  at /home/bob/work/x.py:88');
+  assert.equal(c1, c2, '同失敗但路徑/耗時/行號變動 → 去噪後同指紋（斷路器才累得到）');
+  assert.ok(/^[0-9a-f]{8,}$/.test(a), '指紋是 hex');
+  // 撈不到特徵行 → fallback 首行（不炸）
+  assert.ok(S.verifyFailSig('cmd', 'just some non-failure output').length >= 8);
+});
+
+test('stallCount：尾端同 sig 連續、bucket 精確比對、成功 ok 歸 0、換 sig 歸 1', () => {
+  const j = [
+    { ev: 'verify.attempt', id: 'b1', sig: 'X' },
+    { ev: 'task.transition', id: 'b1' },
+    { ev: 'verify.attempt', id: 'b1', sig: 'Y' },
+    { ev: 'verify.attempt', id: 'b1', sig: 'Y' },
+    { ev: 'verify.attempt', id: 'b1', sig: 'Y' },
+  ];
+  assert.equal(S.stallCount(j, 'b1'), 3, '尾端 Y 連 3');
+  assert.equal(S.stallCount(j, 'b2'), 0, '不同 bucket 不算');
+  assert.equal(S.stallCount(j.concat([{ ev: 'verify.attempt', id: 'b1', sig: 'Z' }]), 'b1'), 1, '換 sig 歸 1');
+  assert.equal(S.stallCount(j.concat([{ ev: 'verify.attempt', id: 'b1', sig: 'ok' }]), 'b1'), 0, '末筆成功(ok) 歸 0');
+  // 關鍵回歸（生產形狀）：另一 bucket 的不同失敗交錯插進來，不該沖掉 b1 的連敗
+  const interleaved = [
+    { ev: 'verify.attempt', id: 'b1', sig: 'Y' },
+    { ev: 'verify.attempt', id: 'b2', sig: 'Q' },
+    { ev: 'verify.attempt', id: 'b1', sig: 'Y' },
+    { ev: 'verify.attempt', id: 'b2', sig: 'R' },
+    { ev: 'verify.attempt', id: 'b1', sig: 'Y' },
+  ];
+  assert.equal(S.stallCount(interleaved, 'b1'), 3, '跨 bucket 交錯失敗不沖掉本桶連敗（修 _current 串味）');
+});
+
+test('recordVerifyAttempt → journal 有 verify.attempt，stallCount 連 3 抓到', async () => {
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [{ id: 'F-1' }] });
+    const bucket = S.runnerBucket('pytest tests/test_x.py');
+    await S.recordVerifyAttempt(root, bucket, 'SIG', 1);
+    await S.recordVerifyAttempt(root, bucket, 'SIG', 1);
+    await S.recordVerifyAttempt(root, bucket, 'SIG', 1);
+    const jr = await S.readJournal(root);
+    assert.equal(S.stallCount(jr, bucket), 3);
+  });
+});
+
+test('safeId：含路徑分隔/.. 的 id 寫入被拒（防自駕傳惡意 id 寫出 .flow 之外）', async () => {
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [] });
+    await assert.rejects(() => S.recordDecision(root, '../../evil', { choice: 'x' }), (e) => e.code === 'UNSAFE_ID');
+    await assert.rejects(() => S.writeLedger(root, 'a/b', { state: 'x' }), (e) => e.code === 'UNSAFE_ID');
+    await S.recordDecision(root, 'F-1', { choice: 'ok' });   // 正常 id 不受影響
+    assert.equal((await S.readDecision(root, 'F-1')).choice, 'ok');
+  });
+});
+
+// ── 失敗記憶（防計畫再生撞同一面牆）：append-only、cap 5、delivered task 自動濾掉 ──
+
+test('appendLesson / readLessons round-trip + 硬上限 5 筆丟最舊', async () => {
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [] });
+    for (let i = 1; i <= 7; i++) await S.appendLesson(root, { id: 'F-1', failedApproach: 'a' + i, why: 'w' + i });
+    const ls = await S.readLessons(root);
+    assert.equal(ls.length, 5, '只留最近 5 筆');
+    assert.equal(ls[0].failedApproach, 'a3', '最舊兩筆被丟');
+    assert.equal(ls[4].failedApproach, 'a7');
+    assert.ok((await S.readJournal(root)).some(e => e.ev === 'lesson'));
+  });
+});
+
+test('reconstruct：帶出 active lessons，delivered task 的 lesson 自動濾掉', async () => {
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [{ id: 'F-1' }, { id: 'F-2' }] });
+    await S.appendLesson(root, { id: 'F-1', failedApproach: 'mock fallback', why: '真依賴未 ready' });
+    await S.appendLesson(root, { id: 'F-2', failedApproach: 'wrong index', why: 'N+1' });
+    await S.writeLedger(root, 'F-2', { state: 'delivered' });   // F-2 已交付 → 其死路不再相關
+    const v = await S.reconstruct(root);
+    assert.equal(v.lessons.length, 1, 'delivered 的濾掉');
+    assert.equal(v.lessons[0].id, 'F-1');
+  });
+});

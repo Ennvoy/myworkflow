@@ -13,11 +13,13 @@ export const meta = {
 }
 
 // args.targets: [{ id, kind: 'web'|'api'|'e2e'|'perf', req, journey }]
-// 成本路由：Evaluator 是高價值對抗審查（Reasoning Sandwich 的 verify 端＝高 reasoning），預設【不降級】，
-// 繼承 orchestrator 級別；args.evaluatorModel 可覆寫（不 hardcode model-specific，守 model 可抽換）。
+// 成本路由（兩軸皆「不降級」——Reasoning Sandwich 的 verify 端＝高）：
+//   model 軸——Evaluator 是高價值對抗審查，預設繼承 orchestrator 級別；args.evaluatorModel 可覆寫（守 model 可抽換）。
+//   effort 軸——預設 'high'；args.evaluatorEffort 可覆寫但不該降級（降級＝與「對抗審查不降級」自相矛盾）。
 const targets = (args && args.targets) || []
 if (!targets.length) { log('parallel-verify: 無 target'); return [] }
-const EVAL_MODEL = args && args.evaluatorModel
+const EVAL_MODEL  = args && args.evaluatorModel
+const EVAL_EFFORT = (args && args.evaluatorEffort) || 'high'
 
 const VERDICT_SCHEMA = {
   type: 'object', additionalProperties: false,
@@ -30,7 +32,7 @@ const VERDICT_SCHEMA = {
       items: {
         type: 'object', additionalProperties: false,
         properties: {
-          name: { type: 'string', description: '如 functionality / real-data-chain / console-clean / perf-p95' },
+          name: { type: 'string', description: '如 functionality / journey-from-entry / real-data-chain / console-clean / perf-p95' },
           pass: { type: 'boolean' },
           evidence: { type: 'string', description: '客觀證據：截圖路徑 / 數字 / API status / DB 撈回結果' },
         },
@@ -59,9 +61,11 @@ const results = await parallel(
     '2. Web 三鐵則：production build（非 dev）+ Playwright headed + console/pageerror listener 結尾零 error。\n' +
     '3. 永不信任 exit 0：斷言實際產物（DB 撈得到剛 seed 的列、UI 畫得出來、API 回正確 shape）。\n' +
     '4. 效能硬閘門：對真 DB 真資料量量 p50+p95，任一維度超 budget → 該維度 FAIL（不准用平均救）。\n' +
+    '5. 從入口走完整 journey（導航版禁假綠）：UI journey SHALL 從「這條 journey 的真實使用者起點」（login/landing，或分享/email/付款回調連結本身）出發、' +
+    '用真實點擊導航抵達目標頁再操作；**若 test 直接 goto 目標頁/deep-link 跳過導航 → journey-from-entry 維度 FAIL**，evidence 記下實際點擊軌跡（步驟序列）。\n' +
     '真依賴未 ready → BLOCKED（不是 PASS、不是用 mock 假裝）。\n' +
     '逐維度回報 pass + 客觀 evidence，整體 verdict = 任一維度 FAIL 則 FAIL。',
-    { label: `verify:${t.id}`, phase: 'Verify', schema: VERDICT_SCHEMA, ...(EVAL_MODEL ? { model: EVAL_MODEL } : {}) }
+    { label: `verify:${t.id}`, phase: 'Verify', schema: VERDICT_SCHEMA, ...(EVAL_MODEL ? { model: EVAL_MODEL } : {}), ...(EVAL_EFFORT ? { effort: EVAL_EFFORT } : {}) }
   ))
 )
 

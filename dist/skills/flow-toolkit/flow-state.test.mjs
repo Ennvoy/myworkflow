@@ -147,3 +147,69 @@ test('decision：歧義尾段 id → exit 1 並列候選（不靜默 fallback）
     assert.match(r.err, /F-A-W0-5/);
   });
 });
+
+const READY_REQ = [
+  '# 需求', 'REQ-001：當 X 時，系統應 Y。',
+  'REQ-E2E-001：登入 → 首頁 → 操作 → 斷言。',
+  'REQ-PERF-001：dashboard LCP < 2.5s（p95）。',
+  '### 開放問題', '無',
+].join('\n');
+async function writeReq(root, md) {
+  await mkdir(path.join(root, 'specs'), { recursive: true });
+  await writeFile(path.join(root, 'specs', 'requirements.md'), md, 'utf8');
+}
+
+test('spec-ready：查無 requirements.md → exit 2', async () => {
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [] });
+    const r = run(['spec-ready'], root);
+    assert.equal(r.code, 2);
+    assert.match(r.err, /requirements\.md/);
+  });
+});
+
+test('spec-ready：開放問題未清零 → exit 2 並列出未收斂項', async () => {
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [] });
+    await writeReq(root, READY_REQ.replace('### 開放問題\n無', '### 開放問題\n- 刪父層時子資源連帶失效？'));
+    const r = run(['spec-ready'], root);
+    assert.equal(r.code, 2);
+    assert.match(r.err, /未收斂/);
+    assert.match(r.err, /子資源/);
+  });
+});
+
+test('spec-ready：清零＋REQ 齊 → exit 0（檢查不寫 phase）', async () => {
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [] });
+    await S.writeStateJson(root, { mode: 'auto' });
+    await writeReq(root, READY_REQ);
+    const r = run(['spec-ready'], root);
+    assert.equal(r.code, 0, r.err);
+    assert.notEqual((await S.readStateJson(root)).phase, 'spec-done', '純檢查不該寫 phase');
+  });
+});
+
+test('spec-ready --freeze：通過才寫 phase=spec-done + journal，且保留 mode', async () => {
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [] });
+    await S.writeStateJson(root, { mode: 'auto', verify: 'none' });
+    await writeReq(root, READY_REQ);
+    const r = run(['spec-ready', '--freeze'], root);
+    assert.equal(r.code, 0, r.err);
+    const st = await S.readStateJson(root);
+    assert.equal(st.phase, 'spec-done');
+    assert.equal(st.mode, 'auto', 'read-modify-write 保留既有欄位');
+    assert.ok((await S.readJournal(root)).some(e => e.ev === 'spec.frozen'), 'journal 留 spec.frozen 審計');
+  });
+});
+
+test('spec-ready --freeze：未收斂 → exit 2 且不寫 phase', async () => {
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [] });
+    await writeReq(root, READY_REQ.replace('REQ-E2E-001：登入 → 首頁 → 操作 → 斷言。\n', ''));  // 抽掉 REQ-E2E
+    const r = run(['spec-ready', '--freeze'], root);
+    assert.equal(r.code, 2);
+    assert.notEqual((await S.readStateJson(root)).phase, 'spec-done', '沒過閘門不准凍結');
+  });
+});

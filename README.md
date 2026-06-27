@@ -46,7 +46,7 @@ git clone https://github.com/Ennvoy/myworkflow.git flow && cd flow && chmod +x i
 
 | 指令 | 階段 | 做什麼 |
 |---|---|---|
-| `/flow-spec` | 訪談定版 | 蘇格拉底一次一題彈窗 + grill-me 深挖 + 獨立 spec-reviewer → 凍結 `requirements.md`(EARS) → ui-ux-pro-max 產 HTML mockup、開瀏覽器、彈窗定 UI |
+| `/flow-spec` | 訪談定版 | 蘇格拉底一次一題彈窗 + grill-me 深挖 + 獨立 spec-reviewer，**收斂迴圈問到 `### 開放問題` 清零**（`flow-state spec-ready` 閘門守）→ 凍結 `requirements.md`(EARS) → ui-ux-pro-max 產 HTML mockup、開瀏覽器、彈窗定 UI |
 | `/flow-plan` | 設計 | 架構 + **接縫契約釘一處**（編譯期擋發散）+ 垂直切片 + 依賴分波 |
 | `/flow-build` | 多工交付 | 波次內 Workflow 腳本 fan-out 同 repo 平行生成 worker，紅軍 → TDD → 序列整合（驗證/commit 一個個）→ per-task commit+push（走 git-tools skill） |
 | `/flow-verify` | 獨立驗證 | 另開 context 的**對抗性 Evaluator** 用 Playwright headed 真點擊、打真 API、查真 DB；效能硬閘門 |
@@ -60,7 +60,7 @@ git clone https://github.com/Ennvoy/myworkflow.git flow && cd flow && chmod +x i
 
 ## 功能特點
 
-- **需求訪談**：蘇格拉底一次一題彈窗（每題附推薦答案）+ grill-me 連續深挖 + **獨立 context** 的 spec-reviewer 外部視角；web 類用 HTML mockup 把 UI 方向釘死在最早能看見實體的時點。
+- **需求訪談（收斂到零開放問題才凍結）**：蘇格拉底一次一題彈窗（每題附推薦答案）+ grill-me 連續深挖 + **獨立 context** 的 spec-reviewer 外部視角，**收斂迴圈把 `### 開放問題` 問到清零**，由 `flow-state spec-ready` 確定性閘門守（沒清零擋住產 mockup / 凍結）+ `flow-spec-gate` hook 擋裸寫繞過——**這是自駕不跑歪的源頭**（spec 沒問乾淨＝自駕途中只能猜）；web 類用 HTML mockup 把 UI 方向釘死在最早能看見實體的時點。
 - **多工並行（Workflow 模式）**：波次內 fan-out 同 repo 平行生成 worker（只寫各自不重疊的檔）、序列整合、階段間人工閘門；foundation 先序列、features 才並行（靠 `conflictZone` 算準）；成本路由（Opus 編排 / 審查、Sonnet 平行苦工）。
 - **真實資料鏈路驗證（禁 mock 假綠）**：對抗性 Evaluator + Playwright headed + 假資料經**真 create API seed 進真 DB 再讀回**；真依賴未 ready 標 BLOCKED，不准 mock fallback 假裝綠。
 - **效能硬閘門**：load / render / API 延遲 budget，**p50 + p95**，任一維度不達標 = FAIL，高平均不能買回失敗維度。

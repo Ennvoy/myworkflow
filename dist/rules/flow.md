@@ -5,7 +5,7 @@
 
 ## 操作迴圈（5 階段，打 `/flow` 一鍵或單階段跑；`/flow` 可選**自駕**：spec 定版後自動跑到出貨、只 T1 分歧停）
 
-1. `/flow-spec` — **訪談定版**：蘇格拉底一次一題彈窗 → 凍結 `specs/requirements.md`(EARS) → ui-ux-pro-max 產 HTML mockup、開瀏覽器、彈窗定 UI → 凍結。
+1. `/flow-spec` — **訪談定版**：蘇格拉底一次一題彈窗、**收斂迴圈問到 `### 開放問題` 清零**（`flow-state spec-ready` 閘門守，沒清零擋住產 mockup）→ 凍結 `specs/requirements.md`(EARS) → ui-ux-pro-max 產 HTML mockup、開瀏覽器、彈窗定 UI → 走 `spec-ready --freeze` 凍結。spec 釘越死＝自駕途中 AI 要猜的越少＝越不跑歪。
 2. `/flow-plan` — **設計**：讀凍結 specs → `specs/design.md`（架構＋接縫契約釘一處）＋ `specs/tasks.md`（垂直切片＋依賴分波）。計畫可丟棄再生，不打磨。
 3. `/flow-build` — **多工交付**：波次內 fan-out 同 repo 平行生成 worker、序列整合，階段間你拍板。紅軍先行、TDD、per-task commit。
 4. `/flow-verify` — **獨立驗證**：另開 context 的 Evaluator 用 Playwright headed 真點擊、打真 API、查真 DB，對照契約。真實資料鏈路＋效能硬閘門。
@@ -60,7 +60,7 @@ specs 一 concern 一檔、凍結後每迴圈重讀；**計畫是可丟棄／可
 
 **原則：每加一個新步驟，要嘛綁進閘門、要嘛做成會 exit 2 的 script，不留純散文 claim 點**——散文會被滑過，模型只在「有確定性節點擋著」的地方才乖乖照做。
 
-兩道 PreToolUse hook（自動擋）：① `flow-verify-gate`（TaskUpdate）—`verify` 空/`none` 擋 task 完成；② `flow-commit-gate`（Bash/PowerShell 的 git commit）—三道：staged 含 **secrets**（`.env`/私鑰類）exit 2＝**先移出 staging**；staged 含驗證垃圾（含 Playwright MCP 的 `.playwright-mcp/` 殘留）exit 2＝**先清再 commit**（`--amend` 同樣過這兩道）；commit 點名某 task 但還沒 `flow-state done`（tasks.md `[x]`＋ledger delivered）exit 2＝**先標再 commit**。兩道整合前 SHALL 跑的 script 閘門：③ `flow-state scope --wave`—worker 改到宣告 `conflictZone` 之外的檔（共用檔/foundation）就 exit 2，用 **git 真實變動**守同 repo 平行的檔案安全（check 確定性、模型偽造不了 diff）；④ `flow-state redteam --wave`—紅軍 high 攻擊未全 `covered` 或對應 `testFile` 不實存（`.flow/redteam/<id>.json`）就 exit 2，守「攻擊面真的變成了測試」。git commit+push（`git-tools` skill）、`.flow/` 狀態寫入、verify runner 都是確定性節點，不靠模型判斷。完成一個 task SHALL 跑 `flow-state done <id>`——**done 自帶閘門**：state.json `verify`/`tdd` 空/`none` 即 exit 2、交付即歸零綠燈（下一個 task 須有自己的新綠燈），別手改檔繞過任一閘門。另有**非阻擋偵測節點**（注入 additionalContext，非 exit 2）：`flow-stall-monitor`（PostToolUse）讀 runner 真實 exit code 記 journal，同失敗連 ≥N 輪注入 STALL 升級＝**自駕無花費上限時的 doom-loop 斷路器**；`flow-size-check` 讀 transcript 真實 context 用量提醒收束。
+三道 PreToolUse hook（自動擋）：① `flow-verify-gate`（TaskUpdate）—`verify` 空/`none` 擋 task 完成；② `flow-commit-gate`（Bash/PowerShell 的 git commit）—三道：staged 含 **secrets**（`.env`/私鑰類）exit 2＝**先移出 staging**；staged 含驗證垃圾（含 Playwright MCP 的 `.playwright-mcp/` 殘留）exit 2＝**先清再 commit**（`--amend` 同樣過這兩道）；commit 點名某 task 但還沒 `flow-state done`（tasks.md `[x]`＋ledger delivered）exit 2＝**先標再 commit**；③ `flow-spec-gate`（Write/Edit/Bash/PowerShell）—擋「裸寫 `.flow/state.json` 把 phase 轉成 `spec-done`」繞過需求收斂閘門，凍結只能走 `flow-state spec-ready --freeze` 正門（自駕下模型竄改不了狀態檔，與 done-gate 同 belt-and-suspenders）。三道 SHALL 跑的 script 閘門：④ `flow-state spec-ready`（凍結前）—`specs/requirements.md` 的 `### 開放問題` 沒清零、或缺 `REQ-`/`REQ-E2E-`/`REQ-PERF-` 就 exit 2，把「訪談問乾淨才准凍結」釘成確定性節點＝**自駕不跑歪的源頭閘門**（`--freeze` 通過才寫 `spec-done`）；⑤ `flow-state scope --wave`（整合前）—worker 改到宣告 `conflictZone` 之外的檔（共用檔/foundation）就 exit 2，用 **git 真實變動**守同 repo 平行的檔案安全（check 確定性、模型偽造不了 diff）；⑥ `flow-state redteam --wave`（整合前）—紅軍 high 攻擊未全 `covered` 或對應 `testFile` 不實存（`.flow/redteam/<id>.json`）就 exit 2，守「攻擊面真的變成了測試」。git commit+push（`git-tools` skill）、`.flow/` 狀態寫入、verify runner 都是確定性節點，不靠模型判斷。完成一個 task SHALL 跑 `flow-state done <id>`——**done 自帶閘門**：state.json `verify`/`tdd` 空/`none` 即 exit 2、交付即歸零綠燈（下一個 task 須有自己的新綠燈），別手改檔繞過任一閘門。另有**非阻擋偵測節點**（注入 additionalContext，非 exit 2）：`flow-stall-monitor`（PostToolUse）讀 runner 真實 exit code 記 journal，同失敗連 ≥N 輪注入 STALL 升級＝**自駕無花費上限時的 doom-loop 斷路器**；`flow-size-check` 讀 transcript 真實 context 用量提醒收束。
 
 ## 語言與環境
 

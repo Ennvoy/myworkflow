@@ -5,6 +5,7 @@
 ## 邊界：spec 互動、其後自駕
 
 - **spec 階段照常互動**（蘇格拉底訪談、異常路徑自檢、spec-reviewer、UI 對焦定版）——人在這裡把需求問透，這是「談需求」本身，不是要抽離的關卡。
+  - **收斂是確定性閘門、非散文自評**：訪談 SHALL 跑成收斂迴圈到 `### 開放問題` 清零，由 `flow-state spec-ready`（exit 2）守、`spec-ready --freeze` 凍結、`flow-spec-gate` hook 擋裸寫繞過。**這是自駕安全的源頭**：spec 沒問乾淨＝自駕途中 C 類分歧暴增＝AI 猜歪沒人擋。把「問乾淨」做成 exit 2，下面 T1 放手才安全。
 - **spec 凍結後**：`plan → build → verify → ship` **自動接續、階段交界不暫停**，只有下面 T1 必停集合會同步彈窗。完成謂詞達標 → 發 `<promise>COMPLETE</promise>` 收束。
 
 ## T1 必停集合（自駕下「碰到就立刻同步彈窗」的唯一清單）

@@ -15,7 +15,7 @@ description: Flow 工作流的參考檔倉庫與提示者。當使用者談到�
 
 | 指令 | 階段 | 一句話 |
 |---|---|---|
-| `/flow-spec` | 訪談定版 | 蘇格拉底彈窗 → 凍結 requirements → UI mockup 定版 |
+| `/flow-spec` | 訪談定版 | 蘇格拉底彈窗 → 收斂到開放問題清零（spec-ready 閘門）→ 凍結 requirements → UI mockup 定版 |
 | `/flow-plan` | 設計 | 架構 + 接縫契約 + 垂直切片分波 |
 | `/flow-build` | 多工交付 | 波次內同 repo 平行生成 worker，紅軍→TDD→序列整合 |
 | `/flow-verify` | 獨立驗證 | 獨立 Evaluator + Playwright 真點擊 + 真 API/DB + 效能硬閘門 |

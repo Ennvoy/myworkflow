@@ -34,7 +34,7 @@ Flow 的狀態**全在磁碟**，不在對話 context（harness 鐵則：狀態�
 ## 3. 五階段設計理由
 
 ### Phase 1 `/flow-spec` — 為什麼「對話優先 + 凍結」
-研究：別一次性叫 agent 直接做（context anxiety → 抄捷徑）。先長談需求 → 寫成 specs 檔 → 凍結 → 之後每迴圈確定性重讀同一份（「stack 每次同樣方式配置」）。UI-first：方向錯在幾頁靜態 HTML 擋掉，比 build 到一半才發現便宜 10 倍。彈窗一次一題對齊「模型評估 breadth 易失準」與使用者真正的決策需求。
+研究：別一次性叫 agent 直接做（context anxiety → 抄捷徑）。先長談需求 → 寫成 specs 檔 → 凍結 → 之後每迴圈確定性重讀同一份（「stack 每次同樣方式配置」）。UI-first：方向錯在幾頁靜態 HTML 擋掉，比 build 到一半才發現便宜 10 倍。彈窗一次一題對齊「模型評估 breadth 易失準」與使用者真正的決策需求。**訪談做成收斂迴圈到 `### 開放問題` 清零，由 `flow-state spec-ready`（exit 2）守、`spec-ready --freeze` 凍結、`flow-spec-gate` hook 擋裸寫繞過**——把「問乾淨才凍結」釘成確定性閘門，是自駕不跑歪的源頭（spec 沒問乾淨＝自駕途中 C 類分歧暴增、AI 猜歪沒人擋）。
 
 ### Phase 2 `/flow-plan` — 為什麼「接縫契約釘一處 + 計畫可丟棄」
 研究：Böckeler「約束解空間」——跨層介面用單一 type/schema 釘死，**編譯期**就擋「API 形狀 ≠ UI 期望」。計畫是可從 requirements 再生的，別當聖物無止盡打磨（打磨同一個檔 = context 腐化來源）。
@@ -61,7 +61,7 @@ n² attention：可用上限 ~170k、~147k 退化、>60% 變笨。ETH 實證巨�
 Anthropic Managed Agents「brain/hands/session 解耦」+ append-only event log + wake/resume。Flow：狀態進 specs/+.flow/+git，worker 是同 repo 的 cattle（只寫各自不重疊的檔），殺不死、純讀檔 resume。
 
 ### C. 確定性閘門（防假裝過關）
-Stripe「確定性節點夾住 agentic 迴圈」：git/commit/state 寫入/verify runner 是確定性 hook/script，不靠模型判斷。`flow-verify-gate` hook 在 verify 空/none 時 exit 2 擋下 TaskUpdate completed——模型沒真跑就過不了關。
+Stripe「確定性節點夾住 agentic 迴圈」：git/commit/state 寫入/verify runner 是確定性 hook/script，不靠模型判斷。`flow-verify-gate` hook 在 verify 空/none 時 exit 2 擋下 TaskUpdate completed——模型沒真跑就過不了關。同理 `flow-state spec-ready`（凍結前驗 `### 開放問題` 清零）+ `flow-spec-gate` hook（擋裸寫 `phase=spec-done` 繞過）把「需求收斂才准凍結」釘成 exit 2——凍結只能走正門、自駕下模型竄改不了狀態檔。
 
 ## 5. 為什麼 hook 用 Node 不用 PowerShell
 

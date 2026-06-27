@@ -25,6 +25,15 @@
         ]
       },
       {
+        "matcher": "Write|Edit|Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"{{CLAUDE_HOME}}/hooks/flow-spec-gate.mjs\""
+          }
+        ]
+      },
+      {
         "matcher": "Write",
         "hooks": [
           {

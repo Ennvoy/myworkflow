@@ -40,11 +40,23 @@ description: Flow Phase 1 — 訪談定版。蘇格拉底式一次一題彈窗�
 - **`REQ-E2E-*`**：可 demo 的端到端 user journey（Phase 4/5 的驗證來源）。**SHALL 從入口寫到目標**（例：`登入 → 首頁 → 點 X 卡片 → 進 Y 頁 → 操作 Z → 斷言結果`），不是只描述目標頁——驗證要從真實起點走完整導航（禁直接 goto 目標頁，見 `playwright-real-data-template.md` 第五鐵則）。
 - **`REQ-PERF-*`**：效能 budget（例：`REQ-PERF-001：dashboard 首屏 LCP < 2.5s（p95）`）——**這是 Phase 5 的硬閘門，沒寫等於放棄效能驗收**。
 - RBAC 命中 → 注入 `REQ-RBAC-001..007`（動態角色/權限存 DB、super admin short-circuit）。
-- 一個 concern 一段，清楚可逐條對應。結尾留 `### 開放問題` 收尚未拍板的。
+- 一個 concern 一段，清楚可逐條對應。`### 開放問題` 收訪談途中還沒拍板的——但**凍結前 SHALL 全部清零**（見 Step 4.5）：每一項要嘛解決成 REQ/EARS、要嘛移到 `### 延後決策` 段並 `flow-state decision` 記錄（附 AI 建議預設），**不留懸空項給自駕猜**。真的零開放問題就寫「無」。
 
 ## Step 4：高風險獨立審查（命中才做）
 
 requirements 含 auth / 權限 / payment / 個資 / 合規 / audit 關鍵字 → 建議跑獨立模型對抗審查（若裝了 Codex companion）。不命中靜默跳過。
+
+## Step 4.5：需求收斂閘門（鐵則，產 mockup 前先過）
+
+訪談是**收斂迴圈**，不是問一輪就算：grill-me + spec-reviewer 反覆問，把每個決策分支問到拍板、`### 開放問題` 一項項清掉，直到**某一輪問不出新問題**才算收斂。收斂後 SHALL 跑確定性閘門：
+
+```
+flow-state spec-ready
+```
+
+它機檢 `specs/requirements.md`：`### 開放問題` 沒清零、或缺 `REQ-`/`REQ-E2E-`/`REQ-PERF-` 任一 → **exit 2**，把未收斂項列回來繼續問。**綠了才往下做 Step 5 mockup**。這直接堵自駕跑歪——**spec 沒問乾淨就凍結，自駕途中 AI 只能猜（C 類分歧），猜歪了沒人擋**。真無法當場拍板的，移到 `### 延後決策` 段並 `flow-state decision` 記錄（附 AI 建議預設），**不留懸空項在 `### 開放問題`**。
+
+> 為什麼這裡要硬閘門：訪談「問完了沒」本是模型自評的散文判斷，會被滑過。把「開放問題清零」做成 exit 2 的 `spec-ready`，模型才真的乖乖問到底（憲法確定性閘門原則）。
 
 ## Step 5：UI 方向對齊（**僅 web 類**，鐵則）
 
@@ -54,15 +66,22 @@ requirements 含 auth / 權限 / payment / 個資 / 合規 / audit 關鍵字 →
 3. **主動開瀏覽器**把總覽頁送到使用者眼前（mac `open <url>` / Windows `Start-Process <url>` / Linux `xdg-open <url>`；0 摩擦，避免被滑過）。
 4. `AskUserQuestion` 收方向：方向 OK / 某幾頁要改 / 整個方向錯。**一次對焦完即凍結**，後續 plan/build 以此為錨點反推 API/DB。**凍結時記錄選用的品牌基底 slug**（寫進 requirements 或 `.flow/state.json`，plan/build 沿用其 tokens）。
 
-> 例外：`cli`/`api`/純後端跳過整個 Step 5；使用者明說「跳過 mockup」可豁免，但 SHALL 寫進 `### 開放問題` 並警告「整體方向風險押到 build 才暴露」。
+> 例外：`cli`/`api`/純後端跳過整個 Step 5；使用者明說「跳過 mockup」可豁免，但 SHALL 用 `flow-state decision` 記成一筆「UI 方向延後／自負風險」的決策（**不是寫進 `### 開放問題`**——那會被 spec-ready 閘門擋住凍結），並警告「整體方向風險押到 build 才暴露」。
 
 ## Step 6：凍結閘門
 
-`AskUserQuestion` 白話問：「需求已凍結成 `specs/requirements.md`＋UI 方向已定，是否進 `/flow-plan` 設計？」——使用者明確說繼續才推進（流程鐵則：每階段須使用者拍板）。寫 `.flow/state.json`：`phase="spec-done"`。
+`AskUserQuestion` 白話問：「需求已凍結成 `specs/requirements.md`＋UI 方向已定，是否進 `/flow-plan` 設計？」——使用者明確說繼續才推進（流程鐵則：每階段須使用者拍板）。拍板後 SHALL 走凍結的**唯一正門**：
+
+```
+flow-state spec-ready --freeze
+```
+
+它先再驗一次收斂（開放問題清零＋REQ 齊），通過才寫 `.flow/state.json`：`phase="spec-done"`＋落 journal `spec.frozen`。**別手改 state.json 裸寫 `phase=spec-done` 繞過**——`flow-spec-gate` hook 會 exit 2 擋裸寫轉移（自駕下模型竄改不了）。
 
 ## 完成判準（self-check）
 - [ ] 訪談全程用彈窗、一次一題、有推薦答案
 - [ ] **grill-me 深挖閘門已彈窗問過**（深挖／直接凍結二選一）——漏問即不合格
 - [ ] `specs/requirements.md` 存在，含 REQ-XXX + REQ-E2E-* + REQ-PERF-*
+- [ ] **`### 開放問題` 已收斂為零、`flow-state spec-ready` 綠**（產 mockup 前）——這是防自駕跑歪的源頭閘門
 - [ ] web 類：`specs/ui-mockups/` 有 3–5 頁 + 已開瀏覽器 + 已彈窗定版
-- [ ] 凍結閘門已問、state.json 已更新
+- [ ] 凍結走 `flow-state spec-ready --freeze`（非裸寫 state.json）、使用者已拍板

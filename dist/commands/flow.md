@@ -41,7 +41,7 @@ description: Flow 一鍵總控 — 偵測起始 phase，選自駕（spec 定版�
 依偵測結果呼叫對應命令（`/flow-spec` → `/flow-plan` → `/flow-build` → `/flow-verify`（build 內含）→ `/flow-ship`）。
 
 - **`mode:"manual"`**：每個階段的凍結/推進閘門 SHALL 用 `AskUserQuestion` 白話問，使用者明確說繼續才進下一階段。
-- **`mode:"auto"`**：spec 互動定版（訪談/異常路徑自檢/UI 對焦照常，這是「談需求」、人本來就在）；**凍結後階段交界不暫停、自動推進**。只有 **T1 必停集合**（需求骨架變動／裝新相依／破壞性 DB／安全紅旗／stall 升級／波次策略偏離平行）同步彈窗；其餘 spec 沒釘死的 C 類需求分歧 **AI 自決並 `flow-state decision <id>` 記審計線**，不打斷使用者。細節見 `references/autonomous-mode.md`。
+- **`mode:"auto"`**：spec 互動定版（訪談/異常路徑自檢/UI 對焦照常，這是「談需求」、人本來就在）；**凍結走 `flow-state spec-ready --freeze`＝`### 開放問題` 清零才放行**，故自駕 spec→plan 不會帶「沒問乾淨」的需求衝出去（源頭防跑歪）。**凍結後階段交界不暫停、自動推進**。只有 **T1 必停集合**（需求骨架變動／裝新相依／破壞性 DB／安全紅旗／stall 升級／波次策略偏離平行）同步彈窗；其餘 spec 沒釘死的 C 類需求分歧 **AI 自決並 `flow-state decision <id>` 記審計線**，不打斷使用者。細節見 `references/autonomous-mode.md`。
 
 ## Step 2：SDD 檔案收束
 

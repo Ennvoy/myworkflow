@@ -237,8 +237,38 @@ switch (cmd) {
     console.log('  仍須確認所有 REQ-E2E-*/REQ-PERF-* 經 /flow-verify 真綠（per-task done 閘門已逐項守 verify/tdd）。');
     break;
   }
+  case 'spec-ready': {
+    // 需求訪談收斂閘門（凍結的「正門」）：掃 specs/requirements.md。
+    // ### 開放問題 沒清零、或缺 REQ-/REQ-E2E-/REQ-PERF- → exit 2。直接餵自駕安全：
+    // spec 沒問乾淨就凍結＝自駕途中 AI 只能猜＝跑歪；這裡擋住「沒收斂就往下」。
+    // 用法：flow-state spec-ready            僅檢查（訪談收斂後、產 mockup 前跑；綠了才往下）
+    //       flow-state spec-ready --freeze   檢查通過才寫 phase="spec-done"（凍結唯一正門，取代裸寫 state.json）
+    const rp = path.join(root, 'specs', 'requirements.md');
+    if (!existsSync(rp)) {
+      console.error('✗ 查無 specs/requirements.md——還沒有可凍結的需求。先跑 /flow-spec 訪談並寫 requirements.md。');
+      process.exit(2);
+    }
+    const { open, problems } = S.specReadiness(readFileSync(rp, 'utf8'));
+    if (problems.length) {
+      console.error('✗ 需求尚未收斂，不能凍結／推進：');
+      for (const p of problems) console.error('  - ' + p);
+      if (open.length) { console.error('  未收斂的開放問題：'); for (const q of open.slice(0, 12)) console.error('    · ' + q); }
+      console.error('  繼續蘇格拉底訪談 + grill-me + spec-reviewer，把每一項問到拍板（彈窗）後全清零再凍結。別手改檔繞過閘門。');
+      process.exit(2);
+    }
+    if (argv.includes('--freeze')) {
+      const st = await S.readStateJson(root);
+      await S.writeStateJson(root, { ...st, phase: 'spec-done' });        // read-modify-write，保留 mode/tasks/verify/tdd
+      await S.appendJournal(root, { ev: 'spec.frozen' });
+      console.log('✓ 需求已收斂（### 開放問題 清零＋REQ-/REQ-E2E-/REQ-PERF- 齊）且已凍結：phase="spec-done"。');
+      console.log('  下一步：web 類先確認 UI mockup 已彈窗定版，再進 /flow-plan（自駕會自動接續）。');
+    } else {
+      console.log('✓ 需求已收斂：### 開放問題 清零、REQ-/REQ-E2E-/REQ-PERF- 齊。可產 mockup → 凍結（flow-state spec-ready --freeze）。');
+    }
+    break;
+  }
   default:
-    console.log(`flow-state <resume|status|done|scope|redteam|lesson|decision|guardrail-check|complete-check> [--root <path>]
+    console.log(`flow-state <resume|status|done|scope|redteam|lesson|decision|guardrail-check|complete-check|spec-ready> [--root <path>]
   resume | status        冷啟動：reconstruct 印現況 + 下一步 + 已知死路（換 session/電腦/中斷後接手；平行波看 /workflows）
   done <id> [--commit]   標一個 task 完成：翻 tasks.md [x] + ledger→delivered（自帶 verify 閘門；先標、再 commit）
   scope --wave <ids>     同 repo 平行檔案安全閘門：git 真實變動 vs 各 feature conflictZone，越界 exit 2（整合前跑）
@@ -247,5 +277,6 @@ switch (cmd) {
   decision <id> --choice "<c>" --why "<w>"   記一個自駕自決分歧（T1 放手下 AI 自決的 C 類需求分歧留審計）
   guardrail-check        自駕前置：確認 settings.json 含 stall 斷路器，缺則 exit 2（/flow 寫 mode:auto 前跑）
   complete-check         完成謂詞硬閘門：tasks.md 全 [x] 才准發 COMPLETE，否則 exit 2（/flow-ship 出口跑）
+  spec-ready [--freeze]  需求收斂閘門：requirements.md ### 開放問題 沒清零/缺 REQ-E2E·PERF → exit 2（產 mockup 前＋凍結前跑；--freeze 通過才寫 spec-done）
 決策/討論一律回 Claude（彈窗）；狀態都在專案的 .flow/。`);
 }

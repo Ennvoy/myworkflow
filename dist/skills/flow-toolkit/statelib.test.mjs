@@ -478,3 +478,44 @@ test('reconstruct：帶出 active lessons，delivered task 的 lesson 自動濾�
     assert.equal(v.lessons[0].id, 'F-1');
   });
 });
+
+// ── specReadiness：凍結前 requirements 就緒度（純函式，需求收斂閘門的核心）──
+const READY_MD = [
+  '# 需求', 'REQ-001：當 X 時，系統應 Y。',
+  'REQ-E2E-001：登入 → 首頁 → 操作 → 斷言。',
+  'REQ-PERF-001：dashboard LCP < 2.5s（p95）。',
+  '### 開放問題', '無',
+].join('\n');
+
+test('specReadiness：齊備且 ### 開放問題=無 → 零 problems', () => {
+  const r = S.specReadiness(READY_MD);
+  assert.equal(r.open.length, 0);
+  assert.equal(r.problems.length, 0, JSON.stringify(r.problems));
+});
+
+test('specReadiness：### 開放問題 有未拍板 bullet → 標記未收斂', () => {
+  const md = READY_MD.replace('### 開放問題\n無', '### 開放問題\n- 刪父層時子資源連帶失效或保留？\n- 列表預設排序？');
+  const r = S.specReadiness(md);
+  assert.equal(r.open.length, 2);
+  assert.match(r.problems.join('\n'), /開放問題.*未收斂/);
+});
+
+test('specReadiness：開放問題段在下一個同級標題後結束（不誤吃後段內容）', () => {
+  const md = READY_MD.replace('### 開放問題\n無', '### 開放問題\n無\n\n### 延後決策\n- DEFERRED：付款幣別待商務拍板（暫用 TWD）');
+  const r = S.specReadiness(md);
+  assert.equal(r.open.length, 0, '延後決策段不算開放問題');
+  assert.equal(r.problems.length, 0);
+});
+
+test('specReadiness：缺 REQ-E2E / REQ-PERF 各自報缺', () => {
+  const noE2E = S.specReadiness('REQ-001：x\nREQ-PERF-001：N/A\n### 開放問題\n無');
+  assert.match(noE2E.problems.join('\n'), /REQ-E2E/);
+  const noPerf = S.specReadiness('REQ-001：x\nREQ-E2E-001：journey\n### 開放問題\n無');
+  assert.match(noPerf.problems.join('\n'), /REQ-PERF/);
+});
+
+test('specReadiness：無 ### 開放問題 標題 → open 視為零（不誤擋）', () => {
+  const r = S.specReadiness('REQ-001：x\nREQ-E2E-001：j\nREQ-PERF-001：N/A');
+  assert.equal(r.open.length, 0);
+  assert.equal(r.problems.length, 0);
+});

@@ -160,6 +160,37 @@ export async function readDecision(root, id) { return readJSON(path.join(decisio
 export async function writeStateJson(root, state) { await writeJSON(statePath(root), state); }
 export async function readStateJson(root) { return readJSON(statePath(root), {}); }
 
+// ── 凍結前 requirements 就緒度（純函式可測；只看 requirements.md 內容）──
+// 自駕安全的源頭：spec 沒問乾淨（### 開放問題 沒清零）就凍結，自駕途中 AI 只能猜＝跑歪。
+// 故凍結前 SHALL：① ### 開放問題 段收斂為零（空 /「無」/「N/A」才算零，任一實質列＝未收斂）；
+//   ② 至少各 1 條 REQ-（驗收條件）/ REQ-E2E-（端到端 journey＝驗證來源）/ REQ-PERF-（效能 budget＝ship 硬閘門）。
+// 「延後決策」不放這段（移到獨立段 + flow-state decision 記錄），故 ### 開放問題 任何實質列都算未收斂。
+const SPEC_NONE_RE = /^(無|（無）|\(無\)|none|n\/?a|—|–|-|\.{1,3})$/i;
+export function specReadiness(md) {
+  const text = String(md || '');
+  let inSection = false, level = 0;
+  const open = [];
+  for (const raw of text.split(/\r?\n/)) {
+    const h = raw.match(/^(#{1,6})\s+(.*\S)\s*$/);
+    if (h) {
+      const lv = h[1].length, title = h[2].replace(/\*\*/g, '').trim();
+      if (inSection && lv <= level) inSection = false;                 // 同級或更高標題＝段結束
+      if (/開放問題|open\s*questions/i.test(title)) { inSection = true; level = lv; }
+      continue;
+    }
+    if (!inSection) continue;
+    const body = raw.replace(/\*\*/g, '').replace(/^\s*[-*+]\s*/, '').replace(/^\s*\d+[.)]\s*/, '').trim();
+    if (!body || SPEC_NONE_RE.test(body)) continue;                    // 空行 /「無」/「N/A」＝零
+    open.push(body);
+  }
+  const problems = [];
+  if (open.length) problems.push(`### 開放問題 還有 ${open.length} 項未收斂——凍結前 SHALL 清零（解決成 REQ/EARS，或移到「延後決策」段並 flow-state decision 記錄）`);
+  if (!/\bREQ-/.test(text))       problems.push('查無任何 REQ- 驗收條件（requirements.md 形同空殼）');
+  if (!/\bREQ-E2E-/i.test(text))  problems.push('查無 REQ-E2E-*（缺可 demo 的端到端 journey＝Phase 4/5 沒驗證來源）');
+  if (!/\bREQ-PERF-/i.test(text)) problems.push('查無 REQ-PERF-*（缺效能 budget；無效能敏感路徑也 SHALL 寫一條 REQ-PERF-001：N/A，表有意識略過）');
+  return { open, problems };
+}
+
 // ── tasks.md 同步：把「task 完成」收成一個可被 hook/CLI 共用的原子操作 ──
 // 修根因：原本「翻 tasks.md [x]」「寫 ledger」「TaskUpdate」是三條各自會被漏掉的散文步驟。
 // 這裡把「翻 [x] + ledger→delivered」綁成一次呼叫，flow-state done 與 commit gate 都走它。

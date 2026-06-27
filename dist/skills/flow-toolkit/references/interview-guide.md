@@ -29,6 +29,8 @@
    - 安全、相容、可用性
 6. **驗收條件**：每條需求「怎樣算做完」（逼出可驗的 EARS 句）
 
+**收斂是迴圈、不是一輪**：grill-me + spec-reviewer 反覆問，把 `### 開放問題` 一項項清掉，直到**某一輪問不出新問題**才算收斂。收斂後跑 `flow-state spec-ready`（確定性閘門）——`### 開放問題` 沒清零、或缺 `REQ-E2E-`/`REQ-PERF-` 就 exit 2，把未收斂項列回來繼續問；**綠了才往下產 mockup**。真無法當場拍板的，移到 `### 延後決策` 段並 `flow-state decision` 記錄，**不留懸空項**——懸空項就是自駕途中 AI 拿去亂猜、跑歪的源頭。
+
 ## 四、獨立 spec-reviewer（建議）
 
 整理出初版需求後，對「你整理的需求」呼叫獨立 `spec-reviewer` subagent（另開 context），請它回 5–7 條質疑清單：邊界、衝突、隱含假設、缺失異常路徑。把質疑帶回，用彈窗跟使用者對焦。**這跟 grill-me 互補**：grill-me 是與使用者的連續對話、spec-reviewer 是一次性獨立質疑清單。
@@ -49,4 +51,4 @@
 
 ## 六、凍結
 
-需求 + UI 方向都定 → 寫凍結的 `specs/requirements.md` → 彈窗問「是否進 /flow-plan」→ 使用者拍板才推進。**凍結後不再回頭改**（要改走正式變更，不在 build 中途漂移）。
+`### 開放問題` 清零（`flow-state spec-ready` 綠）+ UI 方向都定 → 彈窗問「是否進 /flow-plan」→ 使用者拍板 → 走凍結正門 `flow-state spec-ready --freeze`（再驗收斂一次才寫 `phase="spec-done"`＋落 journal）。**別手改 state.json 裸寫繞過**——`flow-spec-gate` hook 會擋裸寫轉移。**凍結後不再回頭改**（要改走正式變更，不在 build 中途漂移）。

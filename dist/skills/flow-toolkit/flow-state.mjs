@@ -74,42 +74,31 @@ function printCoverage(audit) {
   if (audit.orphans.length) console.log('  ⚠ 記錄了但 requirements.md 查無（拼錯/已刪？）：' + audit.orphans.join(', '));
 }
 
-// 下一個可推進 task：非 delivered/needs-decision、且 blockedBy 已全 delivered。
-// 順序來源：manifest（若有，帶 conflictZone-aware 排序）否則 reconstruct 合併出的 order（含 state.json 未交付 task）。
-function pickNext(view) {
-  const done = id => (view.tasks[id] || {}).state === 'delivered';
-  const manifestById = Object.fromEntries((view.manifest.tasks || []).map(t => [t.id, t]));
-  const ids = (view.manifest.tasks && view.manifest.tasks.length)
-    ? view.manifest.tasks.map(t => t.id)
-    : (view.order && view.order.length ? view.order : Object.keys(view.tasks));
-  for (const id of ids) {
-    const t = view.tasks[id] || { state: 'pending' };
-    const s = t.state || 'pending';
-    if (s === 'delivered' || s === 'needs-decision') continue;
-    const blockedBy = t.blockedBy || (manifestById[id] || {}).blockedBy || [];
-    if ((s === 'pending' || s === 'blocked') && !blockedBy.every(done)) continue;
-    return { id, state: s };
-  }
-  return null;
-}
+// pickNext 已移到 statelib（resume 與 SessionStart hook 共用，避免兩份邏輯漂移）。
 
 async function resume() {
   const view = await S.reconstruct(root);
-  const tasks = Object.values(view.tasks);
-  const by = s => tasks.filter(t => t.state === s).length;
   const L = [];
   L.push(`\n=== flow resume :: ${view.manifest.project || '(未命名)'}  (phase: ${view.manifest.phase || '?'}) ===`);
-  L.push(`已交付 ${by('delivered')}/${tasks.length} | 開發中 ${by('building')} | 驗收中 ${by('verifying')} | 待開發 ${by('pending') + by('blocked')} | ⚠️ 等你決策 ${by('needs-decision')}`);
-  L.push(`推進模式：${view.mode === 'auto' ? '🤖 自駕（spec 定版後自動推進、只 T1 分歧停；resume 續跑自駕，不每階段問）' : '🙋 每階段停（manual）'}`);
-  const need = tasks.filter(t => t.state === 'needs-decision');
-  if (need.length) { L.push(`\n⚠️ 等你決策（回 Claude 以彈窗拍板）：`); for (const t of need) L.push(`   - ${t.id}：${t.decision || '需要你決策'}`); }
-  if (view.dangling.length) { L.push(`\n↻ 未完成動作（對帳會冪等補做）：`); for (const d of view.dangling) L.push(`   - ${d.id} → ${d.action}`); }
-  if (view.lessons && view.lessons.length) {
-    L.push(`\n⚠️ 已知死路（再生計畫別重走、見 .flow/lessons.ndjson）：`);
-    for (const ls of view.lessons) L.push(`   - ${ls.id}：${ls.failedApproach || '?'} ✗ ${ls.why || ''}`);
+  // 計數/模式/待決策/mid-task checkpoint/dangling/死路/下一步：與 SessionStart hook 同一份摘要邏輯
+  for (const line of S.summarizeView(view)) L.push(line);
+  // 純檔案對帳（ledger=唯一真相）：崩潰在 markTaskDone 跨檔三步中途、或 done 後 commit 前當機會留分歧
+  const tp = path.join(root, 'specs', 'tasks.md');
+  const rec = S.reconcile(existsSync(tp) ? readFileSync(tp, 'utf8') : '', await S.listLedger(root));
+  if (rec.checkedButNotDelivered.length || rec.deliveredButNotChecked.length) {
+    L.push('', '⚠ tasks.md 與 ledger 對不上（多半是上次標完成時當機）——跑 `flow-state done <id>` 冪等重同步：');
+    for (const id of rec.checkedButNotDelivered) L.push(`   - ${id}：tasks.md 已 [x] 但 ledger 未 delivered`);
+    for (const id of rec.deliveredButNotChecked) L.push(`   - ${id}：ledger 已 delivered 但 tasks.md 還 [ ]`);
   }
-  const next = pickNext(view);
-  L.push(`\n下一步：${next ? `推進 ${next.id}（${next.state} → 下一階段）` : (need.length ? '等你決策後才有得做' : '無可推進（全部完成或卡依賴）')}\n`);
+  if (rec.deliveredNoCommit.length) {
+    L.push('', '⚠ 這些 task 已交付但沒記 commit sha（可能 done 後 commit 前當機）——確認 git 有對應 commit，或補 `flow-state done <id> --commit <sha>`：');
+    for (const id of rec.deliveredNoCommit) L.push(`   - ${id}`);
+  }
+  // 開發中 task 可能有 worker 寫了還沒 commit 的半成品 → 提示用 git status 查（不重造 git-tools 的輪子）
+  if (Object.values(view.tasks).some(t => t.state === 'building')) {
+    L.push('', '提示：有開發中 task，未 commit 的半成品跑 `git status` 查（接續別重做已寫好的、別覆蓋）。');
+  }
+  L.push('');
   console.log(L.join('\n'));
   return view;
 }
@@ -140,6 +129,33 @@ switch (cmd) {
     const lg = r.alreadyDelivered ? 'ledger 本已 delivered' : 'ledger→delivered';
     console.log(`✓ ${r.id}：${md}；${lg}${commit ? `；commit=${commit}` : ''}`);
     console.log('  下一步：照常 git commit（commit gate 已可放行此 task）。');
+    break;
+  }
+  case 'mode': {
+    // 設定推進模式，寫進 git-tracked manifest（換機 clone 後自駕不掉回 manual）+ state.json（相容既有讀取）。
+    // 用法：flow-state mode <auto|manual>
+    const m = argv[1];
+    if (m !== 'auto' && m !== 'manual') { console.error('usage: flow-state mode <auto|manual>'); process.exit(1); }
+    const manifest = await S.readManifest(root);
+    await S.writeManifest(root, { ...manifest, mode: m });
+    const st = await S.readStateJson(root);
+    await S.writeStateJson(root, { ...st, mode: m });
+    console.log(`✓ 推進模式設為 ${m}：寫進 .flow/manifest.json（進 git、換機 clone 後保留）+ state.json。`);
+    if (m === 'auto') console.log('  提醒：啟用自駕前 SHALL 先過 flow-state guardrail-check（stall 斷路器在線）。');
+    break;
+  }
+  case 'checkpoint': {
+    // mid-task 檢查點（修「開發中當機就重跑整個 task」）：worker 跑到某 TDD 相/整合階段記一筆。
+    // 冷啟動 reconstruct 取每 task 最新一筆 → flow-state resume/SessionStart 顯示「上次做到第幾步」，接續只補沒做完的。
+    // 用法：flow-state checkpoint <taskId> --phase <red|green|refactor|integrated|自由> [--note "<一句話>"]
+    const id = argv[1];
+    if (!id || id.startsWith('--')) { console.error('usage: flow-state checkpoint <taskId> --phase <red|green|refactor|integrated> [--note "<一句>"]'); process.exit(1); }
+    const phase = flag('--phase');
+    if (!phase) { console.error('需給 --phase（這個 task 現在做到第幾步：red|green|refactor|integrated 或自由字串）'); process.exit(1); }
+    const rid = await resolveIdOrExit(id);
+    await S.recordCheckpoint(root, rid, phase, flag('--note') || '');
+    console.log(`✓ 已記 checkpoint：${rid} → ${phase}${flag('--note') ? `（${flag('--note')}）` : ''}`);
+    console.log('  中斷重啟後 flow-state resume 會帶出最新一筆，接續只補沒做完的相、不重跑整個 task。');
     break;
   }
   case 'scope': {
@@ -375,9 +391,11 @@ switch (cmd) {
     break;
   }
   default:
-    console.log(`flow-state <resume|status|done|scope|redteam|journey-check|verify-e2e|coverage|lesson|decision|guardrail-check|complete-check|spec-ready> [--root <path>]
-  resume | status        冷啟動：reconstruct 印現況 + 下一步 + 已知死路（換 session/電腦/中斷後接手；平行波看 /workflows）
+    console.log(`flow-state <resume|status|done|checkpoint|mode|scope|redteam|journey-check|verify-e2e|coverage|lesson|decision|guardrail-check|complete-check|spec-ready> [--root <path>]
+  resume | status        冷啟動：reconstruct 印現況 + 下一步 + mid-task 進度 + 對帳 + 已知死路（換 session/電腦/中斷後接手；平行波看 /workflows）
   done <id> [--commit]   標一個 task 完成：翻 tasks.md [x] + ledger→delivered（自帶 verify 閘門；先標、再 commit）
+  checkpoint <id> --phase <red|green|refactor|integrated> [--note]   記 mid-task 進度（開發中當機 → resume 帶出「上次做到第幾步」，只補沒做完的）
+  mode <auto|manual>     設推進模式並寫進 git-tracked manifest（換機 clone 後自駕不掉回 manual）
   scope --wave <ids>     同 repo 平行檔案安全閘門：git 真實變動 vs 各 feature conflictZone，越界 exit 2（整合前跑）
   redteam --wave <ids>   紅軍對賬閘門：.flow/redteam/<id>.json 的 high 攻擊須全 covered 且 testFile 實存，否則 exit 2
   journey-check [--dir]  journey 真實性閘門：掃 Playwright 測試，出現 mock/網路攔截 或 單一 test 內 >1 goto → exit 2（web 驗證宣稱綠前跑）

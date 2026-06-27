@@ -10,7 +10,7 @@ description: Flow Phase 3 — 多工交付（混合基座）。取當前波次�
 
 ## Step 0：冷啟動讀現況
 
-跑 flow-toolkit 的 `flow-state.mjs resume`（路徑/shell 依 flow.md 環境慣例——mac/linux `node ~/.claude/skills/flow-toolkit/flow-state.mjs resume`、Windows PS `node "$env:USERPROFILE\.claude\skills\flow-toolkit\flow-state.mjs" resume`）用 statelib **reconstruct** 純從磁碟重建「還剩什麼 + 未完成 dangling」（不靠對話記憶），有 dangling（上次中斷）先冪等補完；補 `specs/tasks.md` 的 `[ ]`/`[x]`。
+跑 flow-toolkit 的 `flow-state.mjs resume`（路徑/shell 依 flow.md 環境慣例——mac/linux `node ~/.claude/skills/flow-toolkit/flow-state.mjs resume`、Windows PS `node "$env:USERPROFILE\.claude\skills\flow-toolkit\flow-state.mjs" resume`）用 statelib **reconstruct** 純從磁碟重建「還剩什麼 + 未完成 dangling」（不靠對話記憶），有 dangling（上次中斷）先冪等補完；補 `specs/tasks.md` 的 `[ ]`/`[x]`。**reconstruct 也帶出每個開發中 task 的 mid-task checkpoint（上次做到第幾步 red/green/refactor）——接續從該相續、別重跑整個 task、別覆蓋已寫的檔。**
 **進度怎麼看**：跑 `flow-state status`（in-chat 文字進度）；平行生成那段看 Workflow 的 `/workflows`（每 worker 即時進度/token/狀態）。
 
 ## Step 1：算當前波次可並行集合
@@ -26,7 +26,7 @@ description: Flow Phase 3 — 多工交付（混合基座）。取當前波次�
 **預設路徑 = 本波可並行集合逐 feature fan-out 平行生成（Step 3）**。要偏離這個預設——把**已算出的並行波降級成序列**、或只**部分平行**（常見理由：features 簡單/相似/複用同一元件、不夠份量、想省 ~15x token）——**SHALL 先 `AskUserQuestion` 彈窗讓使用者拍板**，白話列：可並行集合是哪些、你建議的策略＋理由、trade-off（省 token/一致性 ↔ 速度）。
 - 照預設全 fan-out 平行 → **不必問**，直接進 Step 2/3。
 - **禁止在 thinking/散文裡自行把並行波降級成序列**——那是 `Ask first` 等級的 trade-off（見 flow.md 三層邊界），不是 orchestrator 可單方拍板的事。
-- 拍板後把選定策略＋一句 rationale 寫進 `.flow/state.json`（如 `wave[n].strategy` / `strategyReason`），讓 `/flow-resume` 與審查看得到「這波為何這樣跑」，不靠對話記憶。
+- 拍板後把選定策略＋一句 rationale 寫進 **`.flow/manifest.json`（進 git）或 journal**（如 manifest 的 `waveStrategy` / `strategyReason`），讓 `/flow-resume`、審查、換機 clone 都看得到「這波為何這樣跑」——**別寫進 gitignored 的 `.flow/state.json`**（換機就掉），也不靠對話記憶。
 
 ## Step 2：紅軍先行（單一執行點＝fan-out recipe 的 Stage 1）
 
@@ -39,7 +39,7 @@ description: Flow Phase 3 — 多工交付（混合基座）。取當前波次�
 用 `references/recipes/parallel-build.js` spawn worker，**每 feature 一個**，在同一個工作目錄平行生成。prompt 帶：
 - task 描述 + 對應 REQ + design.md 釘的契約 + 該 feature 的 conflictZone（worker 只准碰這些檔）
 - **紅軍攻擊面 → 先寫失敗安全測試、再用防禦碼轉綠**
-- **TDD 三相**（見 `references/verification-playbook.md` §TDD）：Red 寫自己的測試檔、單跑出真 assertion failure → Green 最小實作 → Refactor
+- **TDD 三相**（見 `references/verification-playbook.md` §TDD）：Red 寫自己的測試檔、單跑出真 assertion failure → Green 最小實作 → Refactor。**每過一相落 checkpoint**：`flow-state checkpoint <id> --phase <red|green|refactor> --note "<一句進度>"`（輕量一行、append-only）——開發中當機/被關終端，重啟靠它接續沒做完的相、不重跑整個 task、不覆蓋已寫的檔
 - **真實資料鏈路鐵則**：涉 API/資料 SHALL 打真後端真 DB、**禁 mock 假綠**、測試資料 seed 進真 DB；真依賴未 ready（上游 5xx/未實作）→ 標 **BLOCKED**，不准 mock fallback
 - **檔案邊界（鐵則）**：worker 只新增/改自己 conflictZone 內的檔；不碰共用檔（全域 router／共享型別／`package.json`／lockfile／DB migration／中央 config，那些走序列 foundation）；只單跑自己的單元測試檔，不跑整包 build／tsc／dev server／`git commit`
 - **涉 UI 的 feature**：orchestrator 先呼叫 `ui-ux-pro-max` 取 component 級建議（structure / ARIA·keyboard·focus / hover·active·disabled / responsive / animation + shadcn 範例），沿用 spec 階段定的 palette/font/style 當 query context，附進 worker prompt；寫 Green 相時 accessibility 清單逐項實作
@@ -48,6 +48,8 @@ description: Flow Phase 3 — 多工交付（混合基座）。取當前波次�
 - 要求**結構化回傳** `{feature, files, selfCheck{unitGreen,realData}, blockers, driveBy}`
 
 fan-out 前 orchestrator 先 write-ahead：對本波每個 id 呼叫 `statelib.transition(root, id, 'pending', 'building')`，讓 `flow-state status` 反映這波在生成中。
+**orchestrator 可控的確定性 checkpoint 節點（不靠 worker 自律）**：fan-out 前對每個 id 落 `flow-state checkpoint <id> --phase dispatched`；worker 回傳後落 `--phase worker-returned`；該 feature 整合完成落 `--phase integrated`。worker 內的 red/green/refactor 是更細的自報（有更好），但**即使 worker 沒自報，這三個 orchestrator 一定經過的節點也保證有粗粒度接續點**——中斷重啟不會退回「整個 task 從零重做」。
+**中斷重啟時**：先跑 `flow-state status` 讀每個開發中 task 的最新 checkpoint，把「上次做到 `<phase>`」塞進該 worker 的 prompt，要它**從該相接續、別重做已完成的相、別覆蓋已寫的檔**——只重 fan-out 沒做完的，不重跑整波（省 ~15x token）。
 
 ## Step 4：序列整合（逐 feature，主流程序列做）
 
@@ -71,6 +73,7 @@ Workflow 回來後，orchestrator 依拓樸序**一個一個**收尾每個 featu
   1. TaskUpdate completed（`flow-verify-gate` hook 會在 `verify` 空/`none` 時擋下——**別沒真跑就填 `verify=ok`**）。
   2. **跑 `flow-state done <id>`**（一個指令做完原本三件會被漏的事：翻 `tasks.md` 的 `[x]` + 寫 ledger `delivered` + 帶 commit）：mac/linux `node ~/.claude/skills/flow-toolkit/flow-state.mjs done <id>`、Windows PS `node "$env:USERPROFILE\.claude\skills\flow-toolkit\flow-state.mjs" done <id>`。`<id>` 用 canonical task id（tasks.md/manifest 那個，例 `F-1186-W0-5`）。**done 自帶確定性閘門**：`.flow/state.json` 的 `verify`/`tdd` 空/`none` → exit 2 拒標（先真跑 `/flow-verify` 寫入綠燈）；**交付成功即把全域 verify/tdd 歸零**——下一個 task 必須有自己的新綠燈，借不到上一個的。
   3. **per-task commit+push 走 `git-tools` skill**，**commit scope SHALL 帶 canonical task id**（例 `feat(F-1186-W0-5): ...`，別用 `v1.x/W0-5` 這種對不上 manifest 的裝飾 id）：smart commit 後即 `git push`（trunk 已有 upstream → 直接推；**push 失敗只警告、不中斷 build**）。
+  4. **commit 成功後補 `flow-state done <id> --commit <sha>`**（冪等記 commit sha 進 ledger）：讓 `/flow-resume` 對帳能分辨「已交付且已 commit」vs「done 後 commit 前當機」。省這步 → resume 會把該 task 列為「已交付但沒記 commit」提醒你確認。
 - **`flow-commit-gate` hook（PreToolUse/Bash）會擋**：commit scope 點名某 task 但它還沒 `done` → exit 2，先跑 `flow-state done` 再 commit。**別手改 ledger/tasks.md 繞過閘門**。
 - commit 成功前不領下個 task；commit 失敗（hook/衝突）→ 整個 build 暫停告知。
 

@@ -2,7 +2,7 @@
 // 設計：write-ahead journal（先記再做）+ 冷啟動 reconstruct（只讀磁碟即重建現場）。
 // append-only journal（用 id|action 當 key）讓 N 個並行 worker 各自的 dangling 都留得住——
 // 修掉「單檔 state.json 多 worker 互蓋」硬傷。state.json 保留為當前 task 衍生指標（相容既有 hook）。
-import { mkdir, readFile, writeFile, appendFile, readdir } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, appendFile, readdir, rename, unlink } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
@@ -27,10 +27,21 @@ async function readJSON(p, fallback) {
   if (!existsSync(p)) return fallback;
   try { return JSON.parse(await readFile(p, 'utf8')); } catch { return fallback; }
 }
-async function writeJSON(p, obj) {
+// 原子寫任意內容：先寫唯一暫存檔 → rename 覆蓋正式檔。當機中途只會壞在 tmp，正式檔永遠是「上一個完整版本」，
+// 不再出現半寫的空檔/截斷。同卷 rename 在 POSIX 與 Windows（Node 走 MoveFileEx replace-existing）皆原子。
+// tmp 名帶 pid+時戳避免並行/重啟同名碰撞；rename 失敗即清掉 tmp、不留孤兒。state.json/ledger/manifest/tasks.md 都走這支。
+async function writeFileAtomic(p, content) {
   await mkdir(path.dirname(p), { recursive: true });
-  await writeFile(p, JSON.stringify(obj, null, 2), 'utf8');   // 無 BOM，供任何 reader 解析
+  const tmp = `${p}.${process.pid}.${Date.now().toString(36)}.tmp`;
+  try {
+    await writeFile(tmp, content, 'utf8');                        // 無 BOM
+    await rename(tmp, p);
+  } catch (e) {
+    try { await unlink(tmp); } catch { /* tmp 不存在/已清，忽略 */ }
+    throw e;
+  }
 }
+async function writeJSON(p, obj) { await writeFileAtomic(p, JSON.stringify(obj, null, 2)); }
 
 export async function init(root, manifest = {}) {
   await mkdir(ledgerDir(root), { recursive: true });
@@ -165,6 +176,13 @@ export async function transition(root, id, from, to, patch = {}) {
 export async function actionStart(root, id, action) { await appendJournal(root, { ev: 'action.start', id, action }); }
 export async function actionDone(root, id, action, result) { await appendJournal(root, { ev: 'action.done', id, action, result }); }
 
+// mid-task 檢查點（修「開發中當機就重跑整個 task」）：worker 跑到某 TDD 相 / 整合階段時記一筆。
+// append-only、輕量（一行 journal）、崩潰安全。冷啟動 reconstruct 取每 task「最新一筆」→ 重啟只接著沒做完的相、
+// 不重跑整個 task、也不覆蓋已寫的半成品。phase 建議 red|green|refactor|integrated，非 TDD 流程可填自由字串。
+export async function recordCheckpoint(root, id, phase, note) {
+  await appendJournal(root, { ev: 'checkpoint', id, phase: String(phase || ''), note: String(note || '') });
+}
+
 export async function recordDecision(root, id, decision) {
   await writeJSON(path.join(decisionsDir(root), safeId(id) + '.json'), { id, ...decision, at: decision.at || nowISO() });
   await appendJournal(root, { ev: 'decision', id, choice: decision.choice, by: decision.by });
@@ -272,18 +290,31 @@ export async function markTaskDone(root, rawId, patch = {}) {
       e.code = 'VERIFY_GATE';
       throw e;
     }
+    // 堵 stale 綠燈白嫖（崩潰版）：綠燈若屬於「別的 task」（前一 task 交付後當機、verifyTaskId 沒歸零殘留），
+    // 不准這個 task 借來過閘門。寫入/比對都用 canonical id，嚴格 !==（不用 idMatches——其尾段容錯會把
+    // W0-5 誤配 F-1186-W0-5 反而放行白嫖）。向後相容：舊專案/沒寫 verifyTaskId（空/none）→ 不擋，退回原行為。
+    const vt = String(st.verifyTaskId || '').trim();
+    if (vt && !isNoneVal(vt) && vt !== id) {
+      const e = new Error([
+        `Flow done gate：「${id}」想用的驗證綠燈其實屬於「${vt}」、不是這個 task。`,
+        '  多半是上一個 task 交付後當機、綠燈沒歸零殘留——別讓這個 task 白嫖它。',
+        `  先為「${id}」自己跑 /flow-verify 真跑綠（會覆蓋成本 task 的綠燈），再 done。`,
+      ].join('\n'));
+      e.code = 'VERIFY_GATE';
+      throw e;
+    }
   }
   let flip = { found: false, changed: false };
   const tp = tasksMdPath(root);
   if (existsSync(tp)) {
     const md = await readFile(tp, 'utf8');
     flip = flipCheckbox(md, id);
-    if (flip.changed) await writeFile(tp, flip.text, 'utf8');   // UTF-8 無 BOM
+    if (flip.changed) await writeFileAtomic(tp, flip.text);   // 原子寫，UTF-8 無 BOM（堵半寫壞 tasks.md）
   }
   if (from !== 'delivered' || patch.commit) await transition(root, id, from, 'delivered', patch);
   if (from !== 'delivered') {
     const st = await readStateJson(root);
-    await writeStateJson(root, { ...st, verify: 'none', tdd: 'none' });  // 交付即歸零，堵 stale 綠燈白嫖
+    await writeStateJson(root, { ...st, verify: 'none', tdd: 'none', verifyTaskId: 'none' });  // 交付即歸零（含 verifyTaskId），堵 stale 綠燈白嫖
   }
   return { id, fromState: from, alreadyDelivered: from === 'delivered', tasksMd: flip };
 }
@@ -433,11 +464,104 @@ export async function reconstruct(root) {
 
   const journal = await readJournal(root);
   const open = new Map();   // action.start 沒對應 action.done；key=id|action → 並行各自獨立、不互蓋
+  const checkpoints = {};   // 每 task 的最新 checkpoint（時序後者覆蓋前者）→ mid-task 接續「上次做到第幾步」
   for (const e of journal) {
     if (e.ev === 'action.start') open.set(e.id + '|' + e.action, { id: e.id, action: e.action });
     else if (e.ev === 'action.done') open.delete(e.id + '|' + e.action);
+    else if (e.ev === 'checkpoint' && e.id) checkpoints[e.id] = { phase: e.phase || '', note: e.note || '', at: e.at || e.t || '' };
   }
+  // 半寫的最後一行 journal 會被 readJournal 丟掉 → 退回前一個 checkpoint（寧可接續較早的相、不可跳過沒做完的）。
+  for (const id of Object.keys(checkpoints)) { if (tasks[id]) tasks[id].checkpoint = checkpoints[id]; }
   const lessons = (await readLessons(root)).filter(L => !L.stale && (tasks[L.id] || {}).state !== 'delivered');
-  const mode = (stateJson && stateJson.mode) || 'manual';   // 推進模式由檔案帶出（resume 不靠記憶判斷自駕/manual）
+  const mode = (manifest && manifest.mode) || (stateJson && stateJson.mode) || 'manual';   // 優先 git-tracked manifest（換機 clone 後自駕不掉回 manual）；相容舊的 state.json.mode
   return { manifest, tasks, order, dangling: [...open.values()], journalLength: journal.length, lessons, mode };
+}
+
+// 下一個可推進 task：非 delivered/needs-decision、且 blockedBy 已全 delivered（純函式；resume 與 hook 共用）。
+// 順序來源：manifest（若有，帶 conflictZone-aware 排序）否則 reconstruct 合併出的 order（含 state.json 未交付 task）。
+export function pickNext(view) {
+  const done = id => (view.tasks[id] || {}).state === 'delivered';
+  const manifestById = Object.fromEntries(((view.manifest || {}).tasks || []).map(t => [t.id, t]));
+  const ids = ((view.manifest || {}).tasks && view.manifest.tasks.length)
+    ? view.manifest.tasks.map(t => t.id)
+    : (view.order && view.order.length ? view.order : Object.keys(view.tasks || {}));
+  for (const id of ids) {
+    const t = (view.tasks || {})[id] || { state: 'pending' };
+    const s = t.state || 'pending';
+    if (s === 'delivered' || s === 'needs-decision') continue;
+    const blockedBy = t.blockedBy || (manifestById[id] || {}).blockedBy || [];
+    if ((s === 'pending' || s === 'blocked') && !blockedBy.every(done)) continue;
+    return { id, state: s };
+  }
+  return null;
+}
+
+// ── 純檔案對帳（resume 諮詢用，只提示不擋）：tasks.md 的 [x] vs ledger 的 delivered ──
+// ledger = 唯一真相（gate 寫入、偽造不了）；tasks.md [x] 為衍生。崩潰在 markTaskDone 跨檔三步中途會留分歧，
+// 偵測出來提示使用者跑 `flow-state done <id>`（冪等）重同步即可修復。canonical id 精確比對。
+export function reconcile(tasksMd, ledgerList) {
+  const checked = [], unchecked = [];
+  for (const line of String(tasksMd || '').split(/\r?\n/)) {
+    const m = line.match(LINE_RE);
+    if (!m) continue;
+    const id = lineId(m[4]);
+    if (!id) continue;
+    (m[2] === ' ' ? unchecked : checked).push(id);
+  }
+  const deliveredIds = (ledgerList || []).filter(l => l.state === 'delivered').map(l => l.id);
+  const deliveredSet = new Set(deliveredIds);
+  const uncheckedSet = new Set(unchecked);
+  return {
+    checkedButNotDelivered: checked.filter(id => !deliveredSet.has(id)),     // 翻了 [x] 但 ledger 沒 delivered（flip 成功、transition 掉了）
+    deliveredButNotChecked: deliveredIds.filter(id => uncheckedSet.has(id)), // ledger delivered 但 tasks.md 還 [ ]（transition 成功、flip 掉了）
+    deliveredNoCommit: (ledgerList || []).filter(l => l.state === 'delivered' && !l.commit).map(l => l.id), // 已交付但 ledger 沒記 commit sha（可能 done 後 commit 前當機）
+  };
+}
+
+// 把 reconstruct 的 view 變成人讀摘要行（resume 與 SessionStart hook 共用，單一事實來源）。
+// 純函式（不碰 git/檔案）；git/對帳由呼叫端（resume）另補。回傳 string[]，呼叫端各自加標題。
+export function summarizeView(view) {
+  const tasks = Object.values((view && view.tasks) || {});
+  const by = s => tasks.filter(t => t.state === s).length;
+  const L = [];
+  L.push(`已交付 ${by('delivered')}/${tasks.length} | 開發中 ${by('building')} | 驗收中 ${by('verifying')} | 待開發 ${by('pending') + by('blocked')} | ⚠️ 等你決策 ${by('needs-decision')}`);
+  L.push(`推進模式：${view.mode === 'auto' ? '🤖 自駕（spec 定版後自動推進、只 T1 分歧停；resume 續跑自駕，不每階段問）' : '🙋 每階段停（manual）'}`);
+  const need = tasks.filter(t => t.state === 'needs-decision');
+  if (need.length) { L.push('', '⚠️ 等你決策（回 Claude 以彈窗拍板）：'); for (const t of need) L.push(`   - ${t.id}：${t.decision || '需要你決策'}`); }
+  // mid-task 進度：開發中 task 上次做到第幾步（崩潰重啟只補沒做完的相，不重跑整個 task）
+  const building = tasks.filter(t => t.state === 'building' && t.checkpoint && t.checkpoint.phase);
+  if (building.length) {
+    L.push('', '⏳ 上次做到第幾步（接續只補沒做完的相、別重做整個 task、別覆蓋半成品）：');
+    for (const t of building) L.push(`   - ${t.id}：${t.checkpoint.phase}${t.checkpoint.note ? `（${t.checkpoint.note}）` : ''}`);
+  }
+  if ((view.dangling || []).length) { L.push('', '↻ 未完成動作（對帳會冪等補做）：'); for (const d of view.dangling) L.push(`   - ${d.id} → ${d.action}`); }
+  if ((view.lessons || []).length) { L.push('', '⚠️ 已知死路（再生計畫別重走、見 .flow/lessons.ndjson）：'); for (const ls of view.lessons) L.push(`   - ${ls.id}：${ls.failedApproach || '?'} ✗ ${ls.why || ''}`); }
+  const next = pickNext(view);
+  L.push('', `下一步：${next ? `推進 ${next.id}（${next.state} → 下一階段）` : (need.length ? '等你決策後才有得做' : '無可推進（全部完成或卡依賴）')}`);
+  return L;
+}
+
+// 開場精簡提醒（SessionStart hook 用）：只在「真的還有事要接」時回一行；全部出貨完 → hasWork=false（hook 靜默）。
+// 純函式。「有事」= 還有可推進 task ∨ 有等你決策 ∨ task 全交付但還沒 ship（phase≠shipped）。完整進度由 /flow-resume 的 summarizeView 印。
+export function briefStatus(view) {
+  const tasks = Object.values((view && view.tasks) || {});
+  const c = { delivered: 0, building: 0, pending: 0, needsDecision: 0 };
+  for (const t of tasks) {
+    if (t.state === 'delivered') c.delivered++;
+    else if (t.state === 'building') c.building++;
+    else if (t.state === 'needs-decision') c.needsDecision++;
+    else c.pending++;                          // pending/blocked/verifying 都算「還沒交付」
+  }
+  const phase = (view && view.manifest && view.manifest.phase) || '?';
+  const allDelivered = tasks.length > 0 && c.delivered === tasks.length;
+  const danglingN = (view && view.dangling && view.dangling.length) || 0;
+  const hasWork = !!pickNext(view) || c.needsDecision > 0 || (allDelivered && phase !== 'shipped') || danglingN > 0;
+  if (!hasWork) return { hasWork: false, line: '' };
+  const bits = [];
+  if (c.building) bits.push(`開發中 ${c.building}`);
+  if (c.pending) bits.push(`待開發 ${c.pending}`);
+  if (c.needsDecision) bits.push(`⚠️ ${c.needsDecision} 個等你決策`);
+  if (danglingN) bits.push(`↻ ${danglingN} 個未完成動作`);
+  if (allDelivered && phase !== 'shipped') bits.push('task 全交付、待驗證/出貨');
+  return { hasWork: true, line: `⚡ 有未完成的 Flow（phase=${phase}${bits.length ? '；' + bits.join('、') : ''}）→ 打 /flow-resume 看完整進度並接續。` };
 }

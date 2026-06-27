@@ -63,7 +63,7 @@ Web 產出物宣稱綠**之前 SHALL 跑** `flow-state journey-check`（mac/linu
 ## PreCompletion 退出閘門
 
 退出前對照原始 spec 跑一次驗證 checklist，**不准在 checklist 未全綠時宣稱 done**。綠 →
-- node 呼叫 `statelib.transition(root, id, 'verifying', 'delivered')` + `writeStateJson` 寫 `verify="ok:<證據ref>"`、`tdd="green"`（落 `.flow/` ledger/journal + 給 hook 讀）；
+- node 呼叫 `statelib.transition(root, id, 'building', 'verifying')` + `writeStateJson` 寫 `verify="ok:<證據ref>"`、`tdd="green"`、`verifyTaskId="<這個 task 的 canonical id>"`（落 `.flow/` ledger/journal + 給 hook 讀）。**不要在 verify 階段直接 transition 到 `delivered`**——`delivered` 是 `flow-state done`（markTaskDone）的**唯一正門**，由它在交付時翻 tasks.md `[x]`、寫 ledger，並**一定清掉綠燈 latch**（verify/tdd/verifyTaskId 歸零）。verify 搶先標 `delivered` 會讓 done 的歸零被跳過（`from===delivered`）、綠燈殘留 → 下一個 task 白嫖（連舊專案也防不住）。**`verifyTaskId` 必寫、用本 task canonical id**——done 閘門靠它確認綠燈屬於這個 task（嚴格比對；舊專案沒寫則退回原全域檢查、不誤擋）；
 - **每條真跑綠的 `REQ-E2E-*` journey SHALL 記一筆**：`flow-state verify-e2e <REQ-E2E-id> --status pass --evidence "<trace 路徑/測試名/API+DB 讀回摘要>"`（無法自動化的標 `--status n/a` 並附原因）。這是 ship 出口 `complete-check`/`coverage` **逐條對賬 requirements.md 的機讀來源**——沒記＝該 journey 視為未驗，ship 會擋。
 
 不綠 → 進修復迴圈。

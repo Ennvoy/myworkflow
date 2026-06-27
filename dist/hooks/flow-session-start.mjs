@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 // Flow SessionStart hook.
-// 把檔案耐久狀態（.flow/state.json）注入新 session → 純讀檔接手，不靠記憶腦補。
-// 非 flow 專案一律 no-op。進度看 in-chat `flow-state status`；平行波看 /workflows。
+// 智慧精簡開場：只在「真的還有事要接」（開發中／待 verify·ship／等你決策／上次當機留的對帳分歧）時印一行提醒；
+// 全部出貨完 → 靜默不打擾。完整進度（計數/checkpoint/對帳/下一步）一律只有打 /flow-resume 才印。
+// 純讀檔、不靠記憶；非 flow 專案一律 no-op；reconstruct/import 失敗退回 phase 粗判一行（絕不 brick session）。
 
 import { readFileSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 function stripBom(s) {
   return s && s.charCodeAt(0) === 0xfeff ? s.slice(1) : s;
@@ -14,7 +15,7 @@ function stripBom(s) {
 let raw = '';
 process.stdin.setEncoding('utf8');
 process.stdin.on('data', (c) => (raw += c));
-process.stdin.on('end', () => {
+process.stdin.on('end', async () => {
   let input = {};
   try {
     input = JSON.parse(stripBom(raw).trim() || '{}');
@@ -23,15 +24,17 @@ process.stdin.on('end', () => {
   }
 
   const cwd = input.cwd ?? process.cwd();
-  const statePath = join(cwd, '.flow', 'state.json');
-  if (!existsSync(statePath)) process.exit(0); // not a Flow project
+  const flowDir = join(cwd, '.flow');
+  // 判 Flow 專案：manifest.json（進 git、fresh clone 也在）或 state.json（gitignored、同機才有）任一存在。
+  // 過去只認 state.json → 換電腦 clone 下來（state.json 不進 git）SessionStart 直接 no-op、接不上現況。
+  if (!existsSync(join(flowDir, 'manifest.json')) && !existsSync(join(flowDir, 'state.json'))) process.exit(0);
 
-  let state;
+  // state 只供「reconstruct 失敗時」的退回粗判；主路徑用 reconstruct（讀 manifest/ledger/journal，不依賴 state.json）。
+  let state = {};
   try {
-    state = JSON.parse(stripBom(readFileSync(statePath, 'utf8')));
-  } catch {
-    process.exit(0);
-  }
+    const sp = join(flowDir, 'state.json');
+    if (existsSync(sp)) state = JSON.parse(stripBom(readFileSync(sp, 'utf8')));
+  } catch { state = {}; }
 
   // 非阻擋：安裝來源漂移提醒（已裝版本 ≠ 來源 dist VERSION → 多半是改了 dist 沒重裝）。全程 fail-silent，永不影響 session。
   let driftLine = '';
@@ -50,27 +53,39 @@ process.stdin.on('end', () => {
     }
   } catch { /* fail-silent，漂移提醒非關鍵、永不影響 session */ }
 
-  const lines = [
-    '# Flow 進度（檔案耐久狀態，讀自 .flow/state.json）',
-    `- phase：${state.phase ?? '?'}`,
-    state.task
-      ? `- 當前 task：${state.task}（tdd=${state.tdd || 'none'} / verify=${state.verify || 'none'} / commit=${state.commit || '-'}）`
-      : '',
-    '- 狀態以 specs/ + .flow/ + git 為準：純讀檔接手，不靠記憶腦補。進度跑 `flow-state status`；平行波看 /workflows。',
-    '- task 完成走 `flow-state done <id>`（翻 tasks.md [x] + ledger），再 commit；commit gate 會擋未標的。',
-    '- specs 檔過大時 flow-size-check hook 會提醒跑 /flow-compact 歸檔已交付細節。',
-    '- 接續：/flow（自動偵測 phase）或 /flow-resume（補上次中斷的 dangling）。',
-    driftLine,
-  ]
-    .filter(Boolean)
-    .join('\n');
+  // 智慧精簡：用 statelib briefStatus 判斷「有沒有事要接」；只在有事時印一行（含對帳分歧）。全完成 → 靜默。
+  // 完整進度（含 mid-task checkpoint）留給 /flow-resume 的 summarizeView。任何錯都退回 phase 粗判一行，絕不 brick。
+  let body = '';
+  try {
+    const libUrl = pathToFileURL(
+      join(dirname(fileURLToPath(import.meta.url)), '..', 'skills', 'flow-toolkit', 'statelib.mjs')
+    ).href;                                            // Windows 絕對路徑 dynamic import 須走 file:// URL
+    const S = await import(libUrl);
+    const view = await S.reconstruct(cwd);
+    const parts = [];
+    const brief = S.briefStatus(view);
+    if (brief.hasWork) parts.push(brief.line);
+    // 對帳分歧（上次標完成時當機留的 tasks.md↔ledger 不一致）也提醒一行
+    try {
+      const tp = join(cwd, 'specs', 'tasks.md');
+      if (existsSync(tp)) {
+        const rec = S.reconcile(readFileSync(tp, 'utf8'), await S.listLedger(cwd));
+        const n = rec.checkedButNotDelivered.length + rec.deliveredButNotChecked.length;
+        if (n) parts.push(`⚠ tasks.md 與 ledger 有 ${n} 處對不上（上次標完成時當機？）→ 打 /flow-resume 看詳情、\`flow-state done <id>\` 冪等重同步。`);
+      }
+    } catch { /* 對帳非關鍵，失敗略過 */ }
+    body = parts.join('\n');
+  } catch {
+    // 退回：reconstruct/import 失敗時，用 state.json.phase 粗判——未出貨才提一行（寧可多提醒，不 brick）
+    body = (state.phase && state.phase !== 'shipped')
+      ? `⚡ 有未完成的 Flow（phase=${state.phase}）→ 打 /flow-resume 看完整進度並接續。`
+      : '';
+  }
 
+  const additionalContext = [body, driftLine].filter(Boolean).join('\n');
+  if (!additionalContext) process.exit(0);   // 全部完成出貨且無漂移 → 真靜默、不打擾
   const out = {
-    hookSpecificOutput: {
-      hookEventName: 'SessionStart',
-      additionalContext: lines,
-    },
+    hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext },
   };
-  process.stdout.write(JSON.stringify(out));
-  process.exit(0);
+  process.stdout.write(JSON.stringify(out), () => process.exit(0));
 });

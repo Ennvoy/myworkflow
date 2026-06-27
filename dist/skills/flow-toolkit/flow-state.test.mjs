@@ -313,3 +313,62 @@ test('journey-check：找不到 journey 測試 → exit 0（非 web 專案不誤
     assert.match(r.out, /未找到/);
   });
 });
+
+// ── checkpoint 子命令 + resume 的 mid-task 進度／對帳輸出（B 崩潰接續）──
+
+test('checkpoint：記一筆後 resume 帶出「上次做到第幾步」', async () => {
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [{ id: 'F-1' }] });
+    await S.transition(root, 'F-1', 'pending', 'building');
+    const c = run(['checkpoint', 'F-1', '--phase', 'green', '--note', '轉綠60%'], root);
+    assert.equal(c.code, 0, c.err);
+    const r = run(['resume'], root);
+    assert.equal(r.code, 0, r.err);
+    assert.match(r.out, /上次做到第幾步/);
+    assert.match(r.out, /F-1：green/);
+  });
+});
+
+test('checkpoint：缺 --phase → exit 1', async () => {
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [{ id: 'F-1' }] });
+    assert.equal(run(['checkpoint', 'F-1'], root).code, 1);
+  });
+});
+
+test('resume：tasks.md 與 ledger 對不上 → 印對帳提示（ledger 唯一真相）', async () => {
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [{ id: 'F-1' }] });
+    await mkdir(path.join(root, 'specs'), { recursive: true });
+    await writeFile(path.join(root, 'specs', 'tasks.md'), '- [x] **F-1 · a**\n', 'utf8');  // [x] 但 ledger 無 delivered
+    const r = run(['resume'], root);
+    assert.equal(r.code, 0, r.err);
+    assert.match(r.out, /對不上|重同步/);
+    assert.match(r.out, /F-1/);
+  });
+});
+
+test('mode：寫進 manifest + state.json，reconstruct 讀得到；非法值 exit 1', async () => {
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [] });
+    const r = run(['mode', 'auto'], root);
+    assert.equal(r.code, 0, r.err);
+    assert.equal((await S.readManifest(root)).mode, 'auto', 'manifest 有 mode（進 git）');
+    assert.equal((await S.readStateJson(root)).mode, 'auto', 'state.json 同步（相容）');
+    assert.equal((await S.reconstruct(root)).mode, 'auto');
+    assert.equal(run(['mode', 'bad'], root).code, 1, '非法值擋下');
+  });
+});
+
+test('resume：ledger delivered 但無 commit → 提示「已交付但沒記 commit」', async () => {
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [{ id: 'F-1' }] });
+    await S.writeLedger(root, 'F-1', { state: 'delivered' });   // 無 commit（done 後 commit 前當機）
+    await mkdir(path.join(root, 'specs'), { recursive: true });
+    await writeFile(path.join(root, 'specs', 'tasks.md'), '- [x] **F-1 · a**\n', 'utf8');
+    const r = run(['resume'], root);
+    assert.equal(r.code, 0, r.err);
+    assert.match(r.out, /沒記 commit|沒記 commit sha/);
+    assert.match(r.out, /F-1/);
+  });
+});

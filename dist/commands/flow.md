@@ -24,7 +24,7 @@ description: Flow 一鍵總控 — 偵測起始 phase，選自駕（spec 定版�
 - **自駕到出貨**（`mode:"auto"`）：spec 仍互動定版，**凍結後 plan→build→verify→ship 自動接續、階段交界不暫停**，只在 **T1 必停集合**同步彈窗（見 `references/autonomous-mode.md`）。完成謂詞達標即 COMPLETE。
 - **每階段停**（`mode:"manual"`，舊預設）：每個階段之間都暫停等你拍板。
 
-拍板後把 `mode` 寫進 `.flow/state.json`（讓 `/flow-resume` 知道用哪種模式續跑）。
+拍板後跑 `flow-state mode <auto|manual>` 寫入推進模式——它寫進 **`.flow/manifest.json`（進 git，換機 clone 後自駕不掉回 manual）** ＋ state.json（相容既有讀取），讓 `/flow-resume` 知道用哪種模式續跑。
 
 **自駕護欄前置檢查（SHALL，確定性閘門）**：寫 `mode:"auto"` 前 **SHALL 跑 `flow-state guardrail-check`**（mac/linux `node ~/.claude/skills/flow-toolkit/flow-state.mjs guardrail-check`、Windows PS 對應路徑）。它驗 `settings.json` 含 `flow-stall-monitor`（斷路器在線）——**exit 2 即護欄缺失：提醒使用者重跑 `install`、本次退回「每階段停」，不假裝自駕**（無花費上限＋無斷路器＝可能整夜燒錢，Ask-first 等級風險）。
 

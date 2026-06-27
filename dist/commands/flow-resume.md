@@ -4,7 +4,7 @@ description: Flow 換手/接手 — 純從檔案狀態（.flow/state.json + spec
 
 # /flow-resume — 從檔案狀態接手
 
-**核心**：Flow 的狀態全在**檔案**（`.flow/`、`specs/`、git），不在對話 context（harness 鐵則：狀態外部化、agent 可拋棄可恢復）。所以換 session / 換電腦 / 中斷後，純讀檔就能無痛接手，不靠上一輪記憶。
+**核心**：Flow 的狀態全在**檔案**（`.flow/`、`specs/`、git），不在對話 context（harness 鐵則：狀態外部化、agent 可拋棄可恢復）。所以換 session / 換電腦 / 中斷後，純讀檔就能無痛接手，不靠上一輪記憶。**換 session（重開終端／當機／clear）時 `flow-session-start` hook 已自動把這份完整現況（含 mid-task「做到第幾步」）注入開場——不必每次記得手動跑 `/flow-resume`；本指令用於你想主動重看全貌、或要接續開發時。**
 
 ## Step 1：純讀檔重建現況（statelib reconstruct）
 
@@ -17,7 +17,7 @@ node ~/.claude/skills/flow-toolkit/flow-state.mjs resume
 # Windows PowerShell（先設 console UTF-8）
 [Console]::OutputEncoding=[Text.Encoding]::UTF8; node "$env:USERPROFILE\.claude\skills\flow-toolkit\flow-state.mjs" resume
 ```
-輸出含：已交付/開發中/驗收中/待開發/⚠️等你決策 計數、待決策清單、**↻ 未完成動作（dangling：journal 有 `actionStart` 但無 `actionDone`，並行多 worker 各自獨立不互蓋）**、**⚠️ 已知死路（lessons：再生計畫別重走的失敗 approach）**、下一步。
+輸出含：已交付/開發中/驗收中/待開發/⚠️等你決策 計數、推進模式、待決策清單、**⏳ mid-task 進度（checkpoint：開發中 task 上次做到第幾步 red/green/refactor，接續只補沒做完的相、別重跑整個 task）**、**↻ 未完成動作（dangling：journal 有 `actionStart` 但無 `actionDone`，並行多 worker 各自獨立不互蓋）**、**⚠️ 已知死路（lessons：再生計畫別重走的失敗 approach）**、**⚠ 對帳（tasks.md↔ledger 分歧、已交付但沒記 commit sha；ledger 為唯一真相 → 跑 `flow-state done <id>` / `done <id> --commit <sha>` 冪等重同步）**、下一步。
 補充來源：`specs/`（讀 `[ ]`/`[x]`）、`git`（branch、最後 commit）。
 **換電腦也接得上**：`.flow/` 的 manifest/ledger/journal 進 git，clone 下來 reconstruct 一樣重建（細粒度進度不掉到 task 級）。進度跑 `flow-state status`；平行波看 `/workflows`。
 

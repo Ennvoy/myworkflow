@@ -2,7 +2,7 @@
 // 重點：append-only journal 讓「並行多 worker 的 dangling」都留得住（修單檔 state.json 互蓋硬傷）。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, readFile, writeFile, mkdir } from 'node:fs/promises';
+import { mkdtemp, rm, readFile, writeFile, mkdir, readdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -623,4 +623,192 @@ test('auditJourneyTest：深層 goto / 無互動 → 只進 warnings（不擋）
   assert.equal(a.problems.length, 0, '軟訊號不進 problems（loose 防誤殺）');
   assert.ok(a.warnings.some(w => /深層/.test(w)), '深層 goto 進 warnings');
   assert.ok(a.warnings.some(w => /互動/.test(w)), '無點擊互動進 warnings');
+});
+
+// ── B 崩潰容錯：原子寫 / mid-task checkpoint / 對帳 reconcile / verifyTaskId 白嫖防線 / summarizeView / pickNext ──
+
+test('writeJSON（經 writeStateJson）：原子寫入內容完整、無 BOM、無殘留 .tmp', async () => {
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [] });
+    await S.writeStateJson(root, { a: 1, 中: '文', verify: 'ok' });
+    const st = await S.readStateJson(root);
+    assert.equal(st.a, 1);
+    assert.equal(st['中'], '文', '中文內容完整（UTF-8）');
+    const raw = await readFile(path.join(root, '.flow', 'state.json'), 'utf8');
+    assert.equal(raw.charCodeAt(0), '{'.charCodeAt(0), '無 BOM');
+    const files = await readdir(path.join(root, '.flow'));
+    assert.ok(!files.some(f => f.endsWith('.tmp')), 'rename 後不留 tmp 孤兒');
+  });
+});
+
+test('recordCheckpoint + reconstruct：帶出每 task 最新 checkpoint（修開發中當機重跑整個 task）', async () => {
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [{ id: 'F-1' }, { id: 'F-2' }] });
+    await S.recordCheckpoint(root, 'F-1', 'red', '測試已寫、紅');
+    await S.recordCheckpoint(root, 'F-1', 'green', '轉綠 60%');   // 後一筆覆蓋
+    await S.recordCheckpoint(root, 'F-2', 'red', 'x');
+    const v = await S.reconstruct(root);
+    assert.equal(v.tasks['F-1'].checkpoint.phase, 'green', '取最新一筆');
+    assert.equal(v.tasks['F-1'].checkpoint.note, '轉綠 60%');
+    assert.ok(v.tasks['F-1'].checkpoint.at, 'checkpoint 有時戳');
+    assert.equal(v.tasks['F-2'].checkpoint.phase, 'red');
+    assert.equal(v.dangling.length, 0, 'checkpoint 事件不被誤判成 dangling');
+  });
+});
+
+test('reconcile：tasks.md [x] vs ledger delivered 雙向分歧偵測', () => {
+  const md = [
+    '- [x] **F-1 · a**',   // [x] 但 ledger building → checkedButNotDelivered（flip 成功、transition 掉了）
+    '- [ ] **F-2 · b**',   // [ ] 但 ledger delivered → deliveredButNotChecked（transition 成功、flip 掉了）
+    '- [x] **F-3 · c**',   // [x] 且 delivered → 一致
+  ].join('\n');
+  const ledger = [{ id: 'F-2', state: 'delivered' }, { id: 'F-3', state: 'delivered' }, { id: 'F-1', state: 'building' }];
+  const r = S.reconcile(md, ledger);
+  assert.deepEqual(r.checkedButNotDelivered, ['F-1']);
+  assert.deepEqual(r.deliveredButNotChecked, ['F-2']);
+});
+
+test('reconcile：全一致 → 兩邊皆空', () => {
+  const r = S.reconcile('- [x] **F-1**\n', [{ id: 'F-1', state: 'delivered' }]);
+  assert.equal(r.checkedButNotDelivered.length, 0);
+  assert.equal(r.deliveredButNotChecked.length, 0);
+});
+
+test('markTaskDone：verifyTaskId 屬於別的 task → 擋白嫖（崩潰殘留的 stale 綠燈），交付後清 verifyTaskId', async () => {
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [{ id: 'F-1' }, { id: 'F-2' }] });
+    // 模擬 F-1 交付後當機：綠燈與 verifyTaskId=F-1 都殘留（沒歸零）
+    await S.writeStateJson(root, { verify: 'ok:e2e', tdd: 'green', verifyTaskId: 'F-1' });
+    // F-2 沒驗證就想 done：verify 非 none 過第一關，但綠燈屬於 F-1 → 擋
+    await assert.rejects(() => S.markTaskDone(root, 'F-2'), (e) => e.code === 'VERIFY_GATE');
+    assert.notEqual((await S.readLedger(root, 'F-2')).state, 'delivered');
+    // F-1 自己 done 正常（綠燈就是它的），交付後 verifyTaskId 歸零
+    await S.markTaskDone(root, 'F-1');
+    assert.equal((await S.readStateJson(root)).verifyTaskId, 'none', '交付即清 verifyTaskId');
+  });
+});
+
+test('markTaskDone：向後相容——舊 state.json 無 verifyTaskId → 不誤擋（退回原全域檢查）', async () => {
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [{ id: 'F-1' }] });
+    await S.writeStateJson(root, { verify: 'ok:e2e', tdd: 'green' });   // 無 verifyTaskId 欄
+    await S.markTaskDone(root, 'F-1');
+    assert.equal((await S.readLedger(root, 'F-1')).state, 'delivered', '舊專案不被誤擋');
+  });
+});
+
+test('markTaskDone：verifyTaskId 用嚴格 !== 而非 idMatches——尾段相同的別 task 不誤放行', async () => {
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [{ id: 'F-1186-W0-5' }, { id: 'W0-5' }] });
+    // 綠燈屬於 F-1186-W0-5；task 'W0-5' 想白嫖。idMatches(F-1186-W0-5, W0-5)=true 會誤放行，嚴格 !== 才擋住。
+    await S.writeStateJson(root, { verify: 'ok:e2e', tdd: 'green', verifyTaskId: 'F-1186-W0-5' });
+    await assert.rejects(() => S.markTaskDone(root, 'W0-5'), (e) => e.code === 'VERIFY_GATE');
+    assert.notEqual((await S.readLedger(root, 'W0-5')).state, 'delivered');
+  });
+});
+
+test('summarizeView：含計數/mode/mid-task checkpoint/dangling/下一步', () => {
+  const view = {
+    manifest: { tasks: [{ id: 'F-1' }, { id: 'F-2' }] },
+    tasks: {
+      'F-1': { id: 'F-1', state: 'building', checkpoint: { phase: 'green', note: '60%' } },
+      'F-2': { id: 'F-2', state: 'pending', blockedBy: [] },
+    },
+    dangling: [{ id: 'F-1', action: 'building' }],
+    lessons: [], mode: 'auto', order: ['F-1', 'F-2'],
+  };
+  const out = S.summarizeView(view).join('\n');
+  assert.match(out, /已交付 0\/2/);
+  assert.match(out, /自駕/);
+  assert.match(out, /上次做到第幾步/);
+  assert.match(out, /F-1：green（60%）/);
+  assert.match(out, /F-1 → building/, 'dangling 列出');
+  assert.match(out, /下一步/);
+});
+
+test('pickNext：跳過 delivered、解開 blockedBy 已交付的 task', () => {
+  const view = {
+    manifest: { tasks: [{ id: 'F-1' }, { id: 'F-2', blockedBy: ['F-1'] }, { id: 'F-3' }] },
+    tasks: {
+      'F-1': { id: 'F-1', state: 'delivered' },
+      'F-2': { id: 'F-2', state: 'pending', blockedBy: ['F-1'] },
+      'F-3': { id: 'F-3', state: 'pending', blockedBy: [] },
+    },
+    order: ['F-1', 'F-2', 'F-3'],
+  };
+  assert.equal(S.pickNext(view).id, 'F-2', 'F-1 delivered 跳過、F-2 依賴已解 → 回 F-2');
+});
+
+test('briefStatus：全部 delivered + phase=shipped → hasWork=false（SessionStart 開場靜默）', () => {
+  const view = {
+    manifest: { phase: 'shipped', tasks: [{ id: 'F-1' }, { id: 'F-2' }] },
+    tasks: { 'F-1': { id: 'F-1', state: 'delivered' }, 'F-2': { id: 'F-2', state: 'delivered' } },
+    order: ['F-1', 'F-2'],
+  };
+  assert.equal(S.briefStatus(view).hasWork, false, '全部出貨完 → 不打擾');
+});
+
+test('briefStatus：task 全 delivered 但 phase≠shipped → 提醒「待驗證/出貨」', () => {
+  const view = {
+    manifest: { phase: 'building', tasks: [{ id: 'F-1' }, { id: 'F-2' }] },
+    tasks: { 'F-1': { id: 'F-1', state: 'delivered' }, 'F-2': { id: 'F-2', state: 'delivered' } },
+    order: ['F-1', 'F-2'],
+  };
+  const b = S.briefStatus(view);
+  assert.equal(b.hasWork, true, 'task 做完但沒 ship → 仍要提醒、不讓使用者以為完成');
+  assert.match(b.line, /待驗證\/出貨/);
+});
+
+test('briefStatus：開發中 + 等你決策 → 提醒一行', () => {
+  const view = {
+    manifest: { phase: 'building', tasks: [{ id: 'F-1' }, { id: 'F-2' }] },
+    tasks: { 'F-1': { id: 'F-1', state: 'building' }, 'F-2': { id: 'F-2', state: 'needs-decision' } },
+    order: ['F-1', 'F-2'],
+  };
+  const b = S.briefStatus(view);
+  assert.equal(b.hasWork, true);
+  assert.match(b.line, /開發中 1/);
+  assert.match(b.line, /等你決策/);
+});
+
+// ── Codex 審查後的恢復增強：白嫖根治／deliveredNoCommit／dangling 提醒／mode 進 manifest ──
+
+test('markTaskDone：from=verifying（verify 不搶標 delivered 的新流程）→ done 仍歸零、堵下個 task 白嫖（連舊專案無 verifyTaskId）', async () => {
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [{ id: 'F-1' }, { id: 'F-2' }] });
+    await S.writeLedger(root, 'F-1', { state: 'verifying' });           // verify 只到 verifying、不搶標 delivered
+    await S.writeStateJson(root, { verify: 'ok:e2e', tdd: 'green' });   // 舊專案：無 verifyTaskId
+    await S.markTaskDone(root, 'F-1');                                  // done 是唯一 delivered 入口
+    assert.equal((await S.readLedger(root, 'F-1')).state, 'delivered');
+    assert.equal((await S.readStateJson(root)).verify, 'none', 'from=verifying 仍歸零（done 唯一正門→一定清綠燈）');
+    await assert.rejects(() => S.markTaskDone(root, 'F-2'), (e) => e.code === 'VERIFY_GATE', '下個 task 借不到、連舊專案也防');
+  });
+});
+
+test('reconcile：delivered 但 ledger 無 commit → deliveredNoCommit（done 後 commit 前當機）', () => {
+  const r = S.reconcile('- [x] **F-1**\n- [x] **F-2**\n', [
+    { id: 'F-1', state: 'delivered', commit: 'abc123' },
+    { id: 'F-2', state: 'delivered' },                                  // 無 commit
+  ]);
+  assert.deepEqual(r.deliveredNoCommit, ['F-2']);
+});
+
+test('briefStatus：全 delivered+shipped 但有 dangling 動作 → 仍 hasWork、列出未完成動作', () => {
+  const view = {
+    manifest: { phase: 'shipped', tasks: [{ id: 'F-1' }] },
+    tasks: { 'F-1': { id: 'F-1', state: 'delivered' } },
+    dangling: [{ id: 'F-1', action: 'deploy' }],
+    order: ['F-1'],
+  };
+  const b = S.briefStatus(view);
+  assert.equal(b.hasWork, true, 'dangling 不該被靜默漏掉');
+  assert.match(b.line, /未完成動作/);
+});
+
+test('reconstruct：mode 優先讀 git-tracked manifest（換機 clone 後自駕不掉回 manual）', async () => {
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [] });
+    await S.writeManifest(root, { ...(await S.readManifest(root)), mode: 'auto' });   // manifest 有 mode、state.json 無
+    assert.equal((await S.reconstruct(root)).mode, 'auto', '從 manifest 帶出 auto');
+  });
 });

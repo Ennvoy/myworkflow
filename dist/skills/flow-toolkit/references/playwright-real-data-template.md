@@ -168,6 +168,7 @@ const WHITELIST = [/favicon\.ico/, /OTS parsing error/];  // 每條都附註解�
 - whitelist 超過 5 條 = red flag（噪音這麼多代表 code 本身有問題）
 
 ## 自查
+> 宣稱綠前跑 `flow-state journey-check` 確定性把關：出現 mock/網路攔截 或 單一 test 內 >1 goto → exit 2（深層 goto/零互動只提醒）。
 - [ ] **從入口走完整 journey**（唯一 goto＝真實起點、其後全真實點擊導航到目標；禁直接 goto 目標頁）
 - [ ] seed 走**真 create API**進真 DB（不是 mock、不是繞 API 直接 INSERT）
 - [ ] UI 真的顯示從真 DB 撈回的資料（看不到就是鏈路沒接通）

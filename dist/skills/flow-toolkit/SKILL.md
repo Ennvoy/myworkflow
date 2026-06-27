@@ -36,7 +36,7 @@ description: Flow 工作流的參考檔倉庫與提示者。當使用者談到�
 
 ## 工具腳本（直接 `node` 跑，不進 context）
 
-- `flow-state.mjs` — 狀態 CLI：`resume`/`status`（冷啟動 reconstruct 印現況 + 下一步）/`done <id>`（**標一個 task 完成**：翻 tasks.md `[x]` + ledger→delivered，先標再 commit；被 `flow-commit-gate` 擋下時就跑它。**自帶 done 閘門**：state.json `verify`/`tdd` 空/`none` → exit 2、交付即歸零綠燈）/`scope --wave <ids>`（檔案越界閘門）/`redteam --wave <ids>`（紅軍對賬閘門：high 攻擊未全 covered 或 testFile 不實存 → exit 2）。
+- `flow-state.mjs` — 狀態 CLI：`resume`/`status`（冷啟動 reconstruct 印現況 + 下一步）/`done <id>`（**標一個 task 完成**：翻 tasks.md `[x]` + ledger→delivered，先標再 commit；被 `flow-commit-gate` 擋下時就跑它。**自帶 done 閘門**：state.json `verify`/`tdd` 空/`none` → exit 2、交付即歸零綠燈）/`scope --wave <ids>`（檔案越界閘門）/`redteam --wave <ids>`（紅軍對賬閘門：high 攻擊未全 covered 或 testFile 不實存 → exit 2）/`journey-check [--dir]`（journey 真實性閘門：Playwright 測試出現 mock/網路攔截 或 單一 test 內 >1 goto → exit 2）/`verify-e2e <id> --status <pass\|fail\|n/a> --evidence`（記一條 REQ-E2E 驗證結果，供對賬）/`coverage`、`complete-check`（REQ-E2E 覆蓋對賬：requirements.md 的 REQ-E2E-* vs `.flow/verify` 記錄，缺/未過 exit 2）。
 - `clean-verify-artifacts.mjs` — **commit 前清驗證垃圾**的確定性節點（`/flow-build` Step 5、`/flow-ship` Step 6、`/flow-verify` 全綠後用；判斷函數同時被 `flow-commit-gate` 閘門一 import＝單一事實來源）：白名單整刪驗證產物（含 **Playwright MCP 的 `.playwright-mcp/`：console-*.log／page-*.yml a11y snapshot／截圖**）+ 一次性 debug 殘留、補 `.gitignore`，不碰 source 測試檔／specs／.flow ledger／baseline。Tier A 絕對垃圾無條件清、Tier B（散落截圖／`*.webm` 錄影）僅 git untracked 才清。`--apply` 才真刪、`--gitignore` 補忽略規則（細節見 `references/verification-playbook.md` §七）。
 
 ## 三條跨階段主軸（憲法摘要，細節見各 reference）

@@ -519,3 +519,108 @@ test('specReadiness：無 ### 開放問題 標題 → open 視為零（不誤擋
   assert.equal(r.open.length, 0);
   assert.equal(r.problems.length, 0);
 });
+
+// ── REQ-E2E 覆蓋對賬（extractReqE2E / coverageAudit）：完成謂詞的機讀核心 ──
+
+test('extractReqE2E：抽出去重、保序、大小寫正規化', () => {
+  const md = [
+    'REQ-E2E-001：登入 journey。', '一些散文 REQ-E2E-002 內嵌。',
+    'REQ-E2E-001 又出現一次（去重）。', '小寫 req-e2e-003 也算。',
+    'REQ-PERF-001 不是 E2E、REQ-005 也不是。',
+  ].join('\n');
+  assert.deepEqual(S.extractReqE2E(md), ['REQ-E2E-001', 'REQ-E2E-002', 'REQ-E2E-003']);
+  assert.deepEqual(S.extractReqE2E(''), []);
+});
+
+test('coverageAudit：缺記錄→missing、fail→failed、pass/n-a→covered、全覆蓋→ok', () => {
+  const reqIds = ['REQ-E2E-001', 'REQ-E2E-002', 'REQ-E2E-003'];
+  const recs = [
+    { id: 'REQ-E2E-001', status: 'pass', evidence: 'trace1' },
+    { id: 'REQ-E2E-002', status: 'fail' },
+    // REQ-E2E-003 無記錄
+  ];
+  const a = S.coverageAudit(reqIds, recs);
+  assert.equal(a.ok, false);
+  assert.deepEqual(a.covered, ['REQ-E2E-001']);
+  assert.deepEqual(a.missing, ['REQ-E2E-003']);
+  assert.deepEqual(a.failed.map(f => f.id), ['REQ-E2E-002']);
+  // 補齊：002 轉 pass、003 標 n/a → 全覆蓋
+  const a2 = S.coverageAudit(reqIds, [
+    { id: 'REQ-E2E-001', status: 'pass', evidence: 't' },
+    { id: 'REQ-E2E-002', status: 'pass', evidence: 't' },
+    { id: 'req-e2e-003', status: 'n/a', evidence: '無法自動化' },   // 大小寫不敏感比對
+  ]);
+  assert.equal(a2.ok, true, JSON.stringify(a2));
+  assert.equal(a2.covered.length, 3);
+});
+
+test('coverageAudit：記錄了但 spec 查無 → orphan，提示但不擋 ok', () => {
+  const a = S.coverageAudit(['REQ-E2E-001'], [
+    { id: 'REQ-E2E-001', status: 'pass', evidence: 't' },
+    { id: 'REQ-E2E-099', status: 'pass', evidence: 't' },   // spec 沒有這條
+  ]);
+  assert.equal(a.ok, true, 'orphan 不影響 ok');
+  assert.deepEqual(a.orphans, ['REQ-E2E-099']);
+});
+
+// ── Playwright journey 真實性審計（auditJourneyTest）：導航版「禁 mock 假綠」 ──
+
+test('auditJourneyTest：非 journey 檔（無 playwright/goto）→ isJourney=false、零問題', () => {
+  const a = S.auditJourneyTest("import { test, expect } from 'vitest'\ntest('unit', () => { vi.fn().mockReturnValue(1) })");
+  assert.equal(a.isJourney, false);
+  assert.equal(a.problems.length, 0);
+});
+
+test('auditJourneyTest：合法範本（單一入口 goto + 真點擊 + 真 API）→ 零 hard 問題', () => {
+  const good = [
+    "import { test, expect, request } from '@playwright/test'",
+    "test('journey', async ({ page }) => {",
+    "  await page.goto('/login')",
+    "  await page.getByLabel(/email/i).fill('a@b.c')",
+    "  await page.getByRole('button', { name: /登入/i }).click()",
+    "  const r = await api.get('/items'); expect(r.status()).toBe(200)",
+    "})",
+  ].join('\n');
+  const a = S.auditJourneyTest(good);
+  assert.equal(a.isJourney, true);
+  assert.equal(a.problems.length, 0, JSON.stringify(a.problems));
+});
+
+test('auditJourneyTest：page.route / MSW / mockResolvedValue 任一 → hard 問題（禁 mock）', () => {
+  const route = S.auditJourneyTest("import {test} from '@playwright/test'\ntest('x', async ({page}) => { await page.route('**/api/**', r => r.fulfill({body:'{}'})); await page.goto('/') })");
+  assert.ok(route.problems.some(p => /route|mock|攔截/.test(p)), JSON.stringify(route.problems));
+  const msw = S.auditJourneyTest("import {test} from '@playwright/test'\nimport { setupServer } from 'msw/node'\ntest('x', async ({page}) => { await page.goto('/') })");
+  assert.ok(msw.problems.length >= 1, 'MSW 被擋');
+  const vimock = S.auditJourneyTest("import {test} from '@playwright/test'\ntest('x', async ({page}) => { await page.goto('/'); fetch.mockResolvedValue({}) })");
+  assert.ok(vimock.problems.some(p => /mock/.test(p)));
+});
+
+test('auditJourneyTest：單一 test 內 >1 goto → hard 問題（第五鐵則）', () => {
+  const multi = [
+    "import {test} from '@playwright/test'",
+    "test('shortcut', async ({page}) => {",
+    "  await page.goto('/login')",
+    "  await page.goto('/admin/users/123')",   // 第二個 goto＝抄捷徑
+    "})",
+  ].join('\n');
+  const a = S.auditJourneyTest(multi);
+  assert.ok(a.problems.some(p => /goto/.test(p) && /第五鐵則/.test(p)), JSON.stringify(a.problems));
+});
+
+test('auditJourneyTest：多個 test 各一 goto（合法）→ 不誤判', () => {
+  const ok = [
+    "import {test} from '@playwright/test'",
+    "test('a', async ({page}) => { await page.goto('/login'); await page.getByRole('button').click() })",
+    "test('b', async ({page}) => { await page.goto('/signup'); await page.getByRole('link').click() })",
+  ].join('\n');
+  const a = S.auditJourneyTest(ok);
+  assert.equal(a.problems.length, 0, '各 test 一個 goto 不算違規');
+});
+
+test('auditJourneyTest：深層 goto / 無互動 → 只進 warnings（不擋）', () => {
+  const deep = "import {test} from '@playwright/test'\ntest('x', async ({page}) => { await page.goto('/admin/users/5'); await expect(page).toHaveTitle(/x/) })";
+  const a = S.auditJourneyTest(deep);
+  assert.equal(a.problems.length, 0, '軟訊號不進 problems（loose 防誤殺）');
+  assert.ok(a.warnings.some(w => /深層/.test(w)), '深層 goto 進 warnings');
+  assert.ok(a.warnings.some(w => /互動/.test(w)), '無點擊互動進 warnings');
+});

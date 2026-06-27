@@ -3,7 +3,7 @@
 // 全域裝一次（~/.claude/skills/flow-toolkit），對「當前專案」生效（讀 cwd 或 --root 的 .flow/）。
 // 決策/討論一律回 Claude（彈窗）；狀態都在各專案的 .flow/。進度看這支的文字輸出；平行波看 /workflows。
 import path from 'node:path';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import * as S from './statelib.mjs';
 
@@ -44,6 +44,34 @@ function gitChangedFiles(r) {
     files.push(p.replace(/^"(.*)"$/, '$1'));         // 去掉 git 對特殊字元加的引號
   }
   return files;
+}
+
+// journey-check 用：遞迴撈測試檔（*.spec/.test/.e2e），跳過 node_modules 等重目錄與 dot 目錄、限深防失控。
+const SKIP_WALK = new Set(['node_modules', 'dist', 'build', 'out', '.next', 'coverage', 'test-results', '__pycache__', 'venv', '.venv', 'vendor', 'target']);
+const TEST_FILE_RE = /\.(?:spec|test|e2e)\.[mc]?[jt]sx?$/i;
+function walkTestFiles(base, acc = [], depth = 0) {
+  if (depth > 8) return acc;
+  let ents;
+  try { ents = readdirSync(base, { withFileTypes: true }); } catch { return acc; }
+  for (const e of ents) {
+    if (e.isDirectory()) { if (!SKIP_WALK.has(e.name) && !e.name.startsWith('.')) walkTestFiles(path.join(base, e.name), acc, depth + 1); }
+    else if (TEST_FILE_RE.test(e.name)) acc.push(path.join(base, e.name));
+  }
+  return acc;
+}
+
+// coverage 用：讀 requirements.md 的 REQ-E2E-* 清單 + .flow/verify 記錄，對賬。requirements.md 缺則 skipped。
+async function coverageReport(r) {
+  const rp = path.join(r, 'specs', 'requirements.md');
+  if (!existsSync(rp)) return { skipped: true };
+  const reqIds = S.extractReqE2E(readFileSync(rp, 'utf8'));
+  return { skipped: false, audit: S.coverageAudit(reqIds, await S.listVerifyRecords(r)) };
+}
+function printCoverage(audit) {
+  console.log(`\nREQ-E2E 覆蓋：${audit.covered.length}/${audit.total} 已驗綠（pass/n-a）`);
+  if (audit.missing.length) { console.error('  ✗ 缺驗證記錄（requirements.md 有、.flow/verify 無）：'); for (const id of audit.missing) console.error('    · ' + id); }
+  if (audit.failed.length) { console.error('  ✗ 記錄為未通過：'); for (const f of audit.failed) console.error(`    · ${f.id}（status=${f.status}）`); }
+  if (audit.orphans.length) console.log('  ⚠ 記錄了但 requirements.md 查無（拼錯/已刪？）：' + audit.orphans.join(', '));
 }
 
 // 下一個可推進 task：非 delivered/needs-decision、且 blockedBy 已全 delivered。
@@ -225,8 +253,8 @@ switch (cmd) {
     break;
   }
   case 'complete-check': {
-    // 完成謂詞硬閘門（ship 出口）：tasks.md 全 [x]（無未完成 [ ]）才准發 COMPLETE。
-    // /flow-ship Step 5 SHALL 跑；自駕下尤其要（防模型自報全中提早收工）。REQ-E2E/PERF 由 per-task done 閘門逐項守。
+    // 完成謂詞硬閘門（ship 出口）：① tasks.md 全 [x]（無未完成 [ ]）② 所有 REQ-E2E-* 都有 pass/n-a 驗證記錄。
+    // /flow-ship Step 5 SHALL 跑；自駕下尤其要（防模型自報全中提早收工）。
     const tp = path.join(root, 'specs', 'tasks.md');
     if (!existsSync(tp)) { console.error('✗ 查無 specs/tasks.md——無法判定完成謂詞，不准發 COMPLETE。'); process.exit(2); }
     const md = readFileSync(tp, 'utf8');
@@ -234,7 +262,86 @@ switch (cmd) {
     const xstar = (md.match(/\bX-[A-Za-z]\w*/g) || []).length;
     if (open > 0) { console.error(`✗ 完成謂詞未達：tasks.md 還有 ${open} 個未完成 [ ]。自駕不准在此發 COMPLETE，回 build 補完。`); process.exit(2); }
     console.log(`✓ tasks.md 全數 [x]${xstar ? `（注意：尚見 ${xstar} 處 X-* cross-cutting 標記，ship 前確認已清）` : ''}。`);
-    console.log('  仍須確認所有 REQ-E2E-*/REQ-PERF-* 經 /flow-verify 真綠（per-task done 閘門已逐項守 verify/tdd）。');
+    // REQ-E2E 覆蓋對賬（把原本的散文提示升級成確定性節點）。requirements.md 缺則提醒不擋（不破壞既有最小用法）。
+    const cov = await coverageReport(root);
+    if (cov.skipped) { console.error('⚠ 查無 specs/requirements.md——略過 REQ-E2E 覆蓋對賬（ship 階段不該缺，請確認）。'); break; }
+    printCoverage(cov.audit);
+    if (!cov.audit.ok) {
+      console.error('✗ 完成謂詞未達：上列 REQ-E2E-* 未全部驗綠，不准發 COMPLETE。');
+      console.error('  每條 REQ-E2E journey 經 /flow-verify 真跑綠後，用 flow-state verify-e2e <id> --status pass --evidence "<ref>" 記錄；無法自動化的標 --status n/a 並附原因。');
+      process.exit(2);
+    }
+    console.log(`✓ 所有 ${cov.audit.total} 條 REQ-E2E-* 都有 pass/n-a 驗證記錄。仍須人工確認 REQ-PERF-* 達 budget。`);
+    break;
+  }
+  case 'coverage': {
+    // REQ-E2E 覆蓋對賬（可單獨跑、診斷用；complete-check 內含同一檢查）。
+    // 用法：flow-state coverage —— 比對 requirements.md 的 REQ-E2E-* vs .flow/verify/*.json 記錄。
+    const cov = await coverageReport(root);
+    if (cov.skipped) { console.error('✗ 查無 specs/requirements.md——無從對賬 REQ-E2E 覆蓋。'); process.exit(2); }
+    printCoverage(cov.audit);
+    if (!cov.audit.ok) {
+      console.error('✗ REQ-E2E 覆蓋未達：缺驗證記錄或有 fail。用 flow-state verify-e2e <id> --status pass --evidence "<ref>" 記真綠。');
+      process.exit(2);
+    }
+    console.log(`✓ 所有 ${cov.audit.total} 條 REQ-E2E-* 都有 pass/n-a 驗證記錄。`);
+    break;
+  }
+  case 'verify-e2e': {
+    // Evaluator 在某條 REQ-E2E journey 真跑綠後記一筆（coverage 對賬的機讀來源）。
+    // 用法：flow-state verify-e2e <REQ-E2E-id> --status <pass|fail|n/a> --evidence "<trace/test ref 或 n/a 原因>"
+    const id = argv[1];
+    if (!id || id.startsWith('--')) { console.error('usage: flow-state verify-e2e <REQ-E2E-id> --status <pass|fail|n/a> --evidence "<ref>"'); process.exit(1); }
+    if (!/^REQ-E2E-/i.test(id)) console.error(`⚠ 「${id}」不像 REQ-E2E-* id（仍記錄；coverage 以 requirements.md 的 REQ-E2E-* 為準）`);
+    const status = (flag('--status') || 'pass').toLowerCase();
+    if (!/^(pass|fail|n\/?a)$/.test(status)) { console.error('--status 須為 pass / fail / n/a'); process.exit(1); }
+    const norm = /^n\/?a$/.test(status) ? 'n/a' : status;
+    const evidence = flag('--evidence') || '';
+    if ((norm === 'pass' || norm === 'n/a') && !evidence) {
+      console.error(norm === 'pass'
+        ? 'pass 須附 --evidence（真綠證據 ref：trace 路徑 / 測試名 / API+DB 讀回摘要）——堵空綠。'
+        : 'n/a 須附 --evidence 說明為何此 journey 無法自動化驗證。');
+      process.exit(1);
+    }
+    try { await S.writeVerifyRecord(root, id.toUpperCase(), { status: norm, evidence, by: 'evaluator' }); }
+    catch (e) { if (e && e.code === 'UNSAFE_ID') { console.error('✗ ' + e.message); process.exit(1); } throw e; }
+    console.log(`✓ 已記 REQ-E2E 驗證：${id.toUpperCase()} = ${norm}${evidence ? `（${evidence}）` : ''}`);
+    console.log('  ship 出口 flow-state complete-check / coverage 會逐條對賬 requirements.md 的 REQ-E2E-*。');
+    break;
+  }
+  case 'journey-check': {
+    // journey 真實性閘門（確定性，web 驗證宣稱綠前 SHALL 跑）：掃 Playwright journey 測試檔，
+    // 出現網路攔截/假後端 或 單一 test 內 >1 goto → exit 2。守導航版「禁 mock 假綠」。
+    // 用法：flow-state journey-check [--dir <測試根目錄，預設掃整個 repo>]
+    const givenDir = flag('--dir');
+    const base = givenDir ? path.resolve(root, givenDir) : root;
+    const journeyFiles = [], problemsAll = [], warningsAll = [];
+    for (const f of walkTestFiles(base)) {
+      let content = '';
+      try { content = readFileSync(f, 'utf8'); } catch { continue; }
+      const a = S.auditJourneyTest(content);
+      if (!a.isJourney) continue;
+      const rel = path.relative(root, f).replace(/\\/g, '/');
+      journeyFiles.push(rel);
+      for (const p of a.problems) problemsAll.push(`${rel}: ${p}`);
+      for (const w of a.warnings) warningsAll.push(`${rel}: ${w}`);
+    }
+    if (!journeyFiles.length) {
+      console.log('⚠ 未找到 Playwright journey 測試檔（*.spec/.test/.e2e 內含 @playwright/test 或 page.goto）。');
+      console.log('  若本專案有 web 前端，代表還沒有「從入口真實點擊」的端到端驗證——請補 playwright-real-data-template 的 journey 測試。');
+      console.log('  （非 web 專案無此要求，可忽略。）');
+      break;
+    }
+    console.log(`掃描到 ${journeyFiles.length} 個 journey 測試檔：`);
+    for (const f of journeyFiles) console.log(`  · ${f}`);
+    if (warningsAll.length) { console.log('\n⚠ 提醒（不擋，但請人工確認非抄捷徑）：'); for (const w of warningsAll) console.log('  ' + w); }
+    if (problemsAll.length) {
+      console.error('\n✗ journey 真實性未過（導航版「禁 mock 假綠」）：');
+      for (const p of problemsAll) console.error('  ' + p);
+      console.error('  修正：拆掉 mock/網路攔截改走真 API/真 DB；每個 test 只留一個入口 goto、其後用 getByRole().click() 真實點擊串接。別繞過本閘門。');
+      process.exit(2);
+    }
+    console.log('\n✓ journey 真實性通過：無 mock/網路攔截、每個 test 單一入口 goto。');
     break;
   }
   case 'spec-ready': {
@@ -268,15 +375,18 @@ switch (cmd) {
     break;
   }
   default:
-    console.log(`flow-state <resume|status|done|scope|redteam|lesson|decision|guardrail-check|complete-check|spec-ready> [--root <path>]
+    console.log(`flow-state <resume|status|done|scope|redteam|journey-check|verify-e2e|coverage|lesson|decision|guardrail-check|complete-check|spec-ready> [--root <path>]
   resume | status        冷啟動：reconstruct 印現況 + 下一步 + 已知死路（換 session/電腦/中斷後接手；平行波看 /workflows）
   done <id> [--commit]   標一個 task 完成：翻 tasks.md [x] + ledger→delivered（自帶 verify 閘門；先標、再 commit）
   scope --wave <ids>     同 repo 平行檔案安全閘門：git 真實變動 vs 各 feature conflictZone，越界 exit 2（整合前跑）
   redteam --wave <ids>   紅軍對賬閘門：.flow/redteam/<id>.json 的 high 攻擊須全 covered 且 testFile 實存，否則 exit 2
+  journey-check [--dir]  journey 真實性閘門：掃 Playwright 測試，出現 mock/網路攔截 或 單一 test 內 >1 goto → exit 2（web 驗證宣稱綠前跑）
+  verify-e2e <id> --status <pass|fail|n/a> --evidence "<ref>"   記一條 REQ-E2E journey 驗證結果（Evaluator 真綠後落檔，供 coverage 對賬）
+  coverage               REQ-E2E 覆蓋對賬：requirements.md 的 REQ-E2E-* vs .flow/verify 記錄，缺/未過 exit 2
   lesson <id> --approach "<a>" --why "<w>"   記一條失敗記憶（防再生撞同一面牆；標 BLOCKED/stall 升級時記）
   decision <id> --choice "<c>" --why "<w>"   記一個自駕自決分歧（T1 放手下 AI 自決的 C 類需求分歧留審計）
   guardrail-check        自駕前置：確認 settings.json 含 stall 斷路器，缺則 exit 2（/flow 寫 mode:auto 前跑）
-  complete-check         完成謂詞硬閘門：tasks.md 全 [x] 才准發 COMPLETE，否則 exit 2（/flow-ship 出口跑）
+  complete-check         完成謂詞硬閘門：tasks.md 全 [x] ＋ 所有 REQ-E2E-* 有 pass/n-a 記錄 才准發 COMPLETE，否則 exit 2（/flow-ship 出口跑）
   spec-ready [--freeze]  需求收斂閘門：requirements.md ### 開放問題 沒清零/缺 REQ-E2E·PERF → exit 2（產 mockup 前＋凍結前跑；--freeze 通過才寫 spec-done）
 決策/討論一律回 Claude（彈窗）；狀態都在專案的 .flow/。`);
 }

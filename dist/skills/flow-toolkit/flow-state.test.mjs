@@ -213,3 +213,103 @@ test('spec-ready --freeze：未收斂 → exit 2 且不寫 phase', async () => {
     assert.notEqual((await S.readStateJson(root)).phase, 'spec-done', '沒過閘門不准凍結');
   });
 });
+
+// ── verify-e2e 記錄 + coverage 對賬（REQ-E2E 覆蓋的確定性節點）──
+
+test('verify-e2e：pass 缺 --evidence → exit 1（堵空綠）；附 evidence → 落檔', async () => {
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [] });
+    assert.equal(run(['verify-e2e', 'REQ-E2E-001', '--status', 'pass'], root).code, 1, 'pass 須附證據');
+    const r = run(['verify-e2e', 'REQ-E2E-001', '--status', 'pass', '--evidence', 'trace.zip'], root);
+    assert.equal(r.code, 0, r.err);
+    const recs = await S.listVerifyRecords(root);
+    assert.equal(recs.length, 1);
+    assert.equal(recs[0].id, 'REQ-E2E-001');
+    assert.equal(recs[0].status, 'pass');
+  });
+});
+
+test('coverage：spec 有 REQ-E2E 但無記錄 → exit 2 列 missing；補齊 pass → exit 0', async () => {
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [] });
+    await writeReq(root, READY_REQ);   // 含 REQ-E2E-001
+    const miss = run(['coverage'], root);
+    assert.equal(miss.code, 2);
+    assert.match(miss.err, /REQ-E2E-001/);
+    run(['verify-e2e', 'REQ-E2E-001', '--status', 'pass', '--evidence', 'e2e green'], root);
+    const ok = run(['coverage'], root);
+    assert.equal(ok.code, 0, ok.err);
+  });
+});
+
+test('coverage：查無 requirements.md → exit 2', async () => {
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [] });
+    assert.equal(run(['coverage'], root).code, 2);
+  });
+});
+
+test('complete-check：tasks 全 [x] 但 REQ-E2E 無驗證記錄 → exit 2（升級後逐條對賬）', async () => {
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [] });
+    await mkdir(path.join(root, 'specs'), { recursive: true });
+    await writeFile(path.join(root, 'specs', 'tasks.md'), '- [x] **F-1**\n', 'utf8');
+    await writeReq(root, READY_REQ);   // REQ-E2E-001 無記錄
+    const r = run(['complete-check'], root);
+    assert.equal(r.code, 2, 'REQ-E2E 未覆蓋 → 不准 COMPLETE');
+    assert.match(r.err, /REQ-E2E-001/);
+    // 記了 pass → 放行
+    run(['verify-e2e', 'REQ-E2E-001', '--status', 'pass', '--evidence', 'green'], root);
+    assert.equal(run(['complete-check'], root).code, 0, '補齊覆蓋後放行');
+  });
+});
+
+// ── journey-check：journey 真實性閘門（導航版禁 mock 假綠）──
+
+async function writeSpec(root, rel, content) {
+  const abs = path.join(root, rel);
+  await mkdir(path.dirname(abs), { recursive: true });
+  await writeFile(abs, content, 'utf8');
+}
+
+test('journey-check：測試含 page.route 假後端 → exit 2', async () => {
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [] });
+    await writeSpec(root, 'tests/e2e/bad.spec.ts',
+      "import {test} from '@playwright/test'\ntest('x', async ({page}) => { await page.route('**/api/**', r=>r.fulfill({body:'{}'})); await page.goto('/') })");
+    const r = run(['journey-check'], root);
+    assert.equal(r.code, 2);
+    assert.match(r.err, /route|mock|攔截/);
+  });
+});
+
+test('journey-check：單一 test 內 >1 goto → exit 2', async () => {
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [] });
+    await writeSpec(root, 'tests/e2e/jump.spec.ts',
+      "import {test} from '@playwright/test'\ntest('x', async ({page}) => { await page.goto('/login'); await page.goto('/admin/x/1') })");
+    const r = run(['journey-check'], root);
+    assert.equal(r.code, 2);
+    assert.match(r.err, /goto/);
+  });
+});
+
+test('journey-check：合法 journey 測試 → exit 0', async () => {
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [] });
+    await writeSpec(root, 'tests/e2e/good.spec.ts',
+      "import {test, expect} from '@playwright/test'\ntest('x', async ({page}) => { await page.goto('/login'); await page.getByRole('button',{name:/登入/}).click(); await expect(page).toHaveURL(/home/) })");
+    const r = run(['journey-check'], root);
+    assert.equal(r.code, 0, r.err);
+    assert.match(r.out, /通過/);
+  });
+});
+
+test('journey-check：找不到 journey 測試 → exit 0（非 web 專案不誤擋）', async () => {
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [] });
+    const r = run(['journey-check'], root);
+    assert.equal(r.code, 0);
+    assert.match(r.out, /未找到/);
+  });
+});

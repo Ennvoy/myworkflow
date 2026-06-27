@@ -56,9 +56,17 @@ Web 驗證（完整範本 `references/playwright-real-data-template.md`）：
 
 bind/listen port 的產出物驗證前 SHALL 清 port：偵測 PID → 是本專案舊 server 才終止（Windows `Stop-Process -Id <pid> -Force`、mac/linux `kill -9 <pid>`，或 `lsof -ti:<port> | xargs kill`）、外來/不明 process 暫停問使用者 → 確認載入本次 build。
 
+## journey 真實性閘門（web 宣稱綠前 SHALL 跑，確定性節點）
+
+Web 產出物宣稱綠**之前 SHALL 跑** `flow-state journey-check`（mac/linux `node ~/.claude/skills/flow-toolkit/flow-state.mjs journey-check`、Windows PS 對應路徑）——它確定性掃 Playwright 測試檔，**出現網路攔截/假後端（`page.route`/MSW/`nock`/`cy.intercept`/`mockResolvedValue`）或單一 test 內 >1 `goto` 即 exit 2**，把鐵則二（禁 mock）＋鐵則五（單一入口 goto、其後真實點擊）從散文釘成機器擋。純文字掃描、模型偽造不了 git 真實檔內容。深層 goto／零互動只提醒不擋（loose 防誤殺，仍須 Evaluator 人工確認非抄捷徑）。
+
 ## PreCompletion 退出閘門
 
-退出前對照原始 spec 跑一次驗證 checklist，**不准在 checklist 未全綠時宣稱 done**。綠 → node 呼叫 `statelib.transition(root, id, 'verifying', 'delivered')` + `writeStateJson` 寫 `verify="ok:<證據ref>"`、`tdd="green"`（落 `.flow/` ledger/journal + 給 hook 讀）；不綠 → 進修復迴圈。
+退出前對照原始 spec 跑一次驗證 checklist，**不准在 checklist 未全綠時宣稱 done**。綠 →
+- node 呼叫 `statelib.transition(root, id, 'verifying', 'delivered')` + `writeStateJson` 寫 `verify="ok:<證據ref>"`、`tdd="green"`（落 `.flow/` ledger/journal + 給 hook 讀）；
+- **每條真跑綠的 `REQ-E2E-*` journey SHALL 記一筆**：`flow-state verify-e2e <REQ-E2E-id> --status pass --evidence "<trace 路徑/測試名/API+DB 讀回摘要>"`（無法自動化的標 `--status n/a` 並附原因）。這是 ship 出口 `complete-check`/`coverage` **逐條對賬 requirements.md 的機讀來源**——沒記＝該 journey 視為未驗，ship 會擋。
+
+不綠 → 進修復迴圈。
 
 ## 全綠後：驗證垃圾清理（失敗一律保留 artifact 供 debug）
 
@@ -85,6 +93,8 @@ bind/listen port 的產出物驗證前 SHALL 清 port：偵測 PID → 是本專
 - [ ] Evaluator 是獨立 context、對抗人設、只看檔案
 - [ ] 真實資料鏈路：seed 進真 DB、UI→真 API→真 DB 讀回，無 mock 假綠
 - [ ] Web 三鐵則齊（production build + headed + listener 零 error）
+- [ ] `flow-state journey-check` 綠（無 mock/網路攔截、每 test 單一入口 goto）
 - [ ] 效能每維度達 budget（p50+p95），無「太慢但算過」
 - [ ] state.json verify/tdd 由真跑結果寫入，非手填
+- [ ] 每條真綠的 `REQ-E2E-*` 已 `flow-state verify-e2e` 記錄（供 ship 對賬）
 - [ ] 全綠才清垃圾、失敗保留 artifact

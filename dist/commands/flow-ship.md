@@ -17,6 +17,8 @@ description: Flow Phase 5 — 出貨收束。跨 feature 整合 e2e + 完整效�
 - **auth / role 橫切矩陣**（不同角色看到/做得到不同的事，驗 scope 正確）
 - 真實資料鏈路（真後端真 DB、禁 mock），headed 序列跑（headed 無法多開）
 
+宣稱整合 e2e 綠前 SHALL 跑 `flow-state journey-check`（掃 mock/網路攔截＋單一入口 goto，exit 2 擋假綠）。每條跨 feature `REQ-E2E-*` 真綠後同樣 `flow-state verify-e2e <id> --status pass --evidence "<ref>"` 記錄，供 Step 5 對賬。
+
 ## Step 3：完整效能 budget（僅 REQ-PERF-*）
 
 對所有 `REQ-PERF-*` 跑完整效能驗收（`references/perf-budget.md`）：load + render + API 延遲，p50 + p95，**任一維度不達標 = FAIL**（硬閘門不准平均）。讀取/渲染太慢一律不放行。
@@ -27,9 +29,9 @@ description: Flow Phase 5 — 出貨收束。跨 feature 整合 e2e + 完整效�
 
 ## Step 5：完成謂詞（收束的終點，確定性閘門守）
 
-**發 COMPLETE 前 SHALL 跑 `flow-state complete-check`**（mac/linux `node ~/.claude/skills/flow-toolkit/flow-state.mjs complete-check`、Windows PS 對應路徑）——它確定性掃 `specs/tasks.md` **任一未完成 `[ ]` 即 exit 2 拒發 COMPLETE**（自駕無人盯著時尤其要，防模型自報全中提早收工）。
+**發 COMPLETE 前 SHALL 跑 `flow-state complete-check`**（mac/linux `node ~/.claude/skills/flow-toolkit/flow-state.mjs complete-check`、Windows PS 對應路徑）——它確定性守**兩件事**：① 掃 `specs/tasks.md` 任一未完成 `[ ]` 即 exit 2；② **逐條對賬 `requirements.md` 的 `REQ-E2E-*` vs `.flow/verify/` 記錄，任一缺 pass/n-a 記錄即 exit 2**（升級自舊版的散文提示——把「所有 REQ-E2E 真綠了」釘成機讀節點）。自駕無人盯著時尤其要，防模型自報全中提早收工。
 
-通過後再人工核對謂詞全集：**所有 `tasks.md` F-*/P-* `[x]`（complete-check 已守）∧ 所有 `REQ-E2E-*` 綠（per-task done 閘門逐項守 verify）∧ 所有 `REQ-PERF-*` 達 budget ∧ X-* 清空**。全中 → 寫 state.json `phase="shipped"`、發 `<promise>COMPLETE</promise>`，**停止迭代**（滿足謂詞就收，不再打磨）。任一未中 → 回對應階段，**不准出通過報告**。
+通過後再人工核對謂詞全集：**所有 `tasks.md` F-*/P-* `[x]`（complete-check 守）∧ 所有 `REQ-E2E-*` 有 pass/n-a 驗證記錄（complete-check 逐條對賬）∧ 所有 `REQ-PERF-*` 達 budget ∧ X-* 清空**。全中 → 寫 state.json `phase="shipped"`、發 `<promise>COMPLETE</promise>`，**停止迭代**（滿足謂詞就收，不再打磨）。任一未中 → 回對應階段，**不准出通過報告**。
 
 ## Step 6：全系統垃圾兜底 + 出貨準備
 

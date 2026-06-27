@@ -59,6 +59,21 @@ export async function listLedger(root) {
   return out;
 }
 
+// ── 逐 REQ-E2E 驗證記錄（.flow/verify/<id>.json）：coverage 對賬的機讀來源 ──
+// Evaluator 在某條 REQ-E2E journey 真跑綠後落一筆（flow-state verify-e2e）；ship 出口逐條對賬
+// requirements.md 的 REQ-E2E-*。把「所有 REQ-E2E 真綠了」從散文提示升級成確定性節點。
+const verifyDir = root => path.join(dir(root), 'verify');
+export async function writeVerifyRecord(root, id, rec) {
+  await writeJSON(path.join(verifyDir(root), safeId(id) + '.json'), { id, ...rec, at: rec.at || nowISO() });
+}
+export async function listVerifyRecords(root) {
+  const d = verifyDir(root);
+  if (!existsSync(d)) return [];
+  const out = [];
+  for (const f of await readdir(d)) if (f.endsWith('.json')) out.push(await readJSON(path.join(d, f), {}));
+  return out;
+}
+
 export async function appendJournal(root, event) {
   await mkdir(dir(root), { recursive: true });
   await appendFile(journalPath(root), JSON.stringify({ t: nowISO(), ...event }) + '\n', 'utf8');
@@ -308,6 +323,79 @@ export function checkScope(changedFiles, zonesByFeature, opts = {}) {
     else attributed.push({ file: f, feature: hits[0] });
   }
   return { attributed, overlaps, violations, ok: violations.length === 0 };
+}
+
+// ── REQ-E2E 覆蓋對賬（純函式可測；完成謂詞的機讀核心）──
+// 把「所有 REQ-E2E-* 都真綠了」從 complete-check 的散文提示，升級成「spec 清單 vs .flow/verify 記錄」逐條對賬。
+// covered 狀態：pass（真綠）或 n/a（此 journey 無法自動化、附原因）；缺記錄或 fail → 未覆蓋。
+export function extractReqE2E(md) {
+  const out = [], seen = new Set();
+  for (const m of String(md || '').matchAll(/\bREQ-E2E-[A-Za-z0-9._-]+/gi)) {
+    const id = m[0].toUpperCase();
+    if (!seen.has(id)) { seen.add(id); out.push(id); }
+  }
+  return out;
+}
+const isCoveredStatus = s => /^(pass|ok|n\/?a)$/i.test(String(s || '').trim());
+export function coverageAudit(reqIds, records) {
+  const byId = new Map();
+  for (const r of (records || [])) { const id = String(r.id || '').toUpperCase(); if (id) byId.set(id, r); }
+  const covered = [], missing = [], failed = [];
+  for (const id of (reqIds || [])) {
+    const r = byId.get(id.toUpperCase());
+    if (!r) missing.push(id);
+    else if (isCoveredStatus(r.status)) covered.push(id);
+    else failed.push({ id, status: String(r.status || '?'), evidence: r.evidence || '' });
+  }
+  const reqSet = new Set((reqIds || []).map(x => x.toUpperCase()));
+  const orphans = [...byId.keys()].filter(id => !reqSet.has(id));   // 記錄了但 spec 查無（拼錯/已刪）→ 提示不擋
+  return { total: (reqIds || []).length, covered, missing, failed, orphans, ok: missing.length === 0 && failed.length === 0 };
+}
+
+// ── Playwright journey 真實性審計（純函式可測；導航版「禁 mock 假綠」的確定性節點）──
+// 守 playwright-real-data-template 第四鐵則（禁 mock/網路攔截）＋第五鐵則（單一入口 goto、其後真實點擊）。
+// 故意「笨但確定」——純文字掃描而非語義判斷：便宜、模型偽造不了 git 真實檔內容、不誤把單元測試的合法 mock 當違規
+// （只審帶 @playwright/test 或 page.goto 的 journey 檔）。hard 擋兩條近零誤殺的鐵則；軟訊號只提醒不擋（loose 防誤殺）。
+const JOURNEY_SIGNAL = /@playwright\/test|page\.goto\s*\(/;
+const MOCK_PATTERNS = [
+  [/\b(?:page|context)\.route\s*\(/, 'page/context.route( 攔截網路回假 response'],
+  [/\bfrom\s*['"]msw(?:\/[\w-]+)*['"]|require\(\s*['"]msw(?:\/[\w-]+)*['"]\s*\)/, 'MSW 假伺服器'],
+  [/\bsetupServer\s*\(/, 'setupServer( 假伺服器'],
+  [/\bcy\.intercept\s*\(/, 'cy.intercept( 攔截'],
+  [/\bnock\s*\(/, 'nock( 攔截 HTTP'],
+  [/\bfetchMock\b/, 'fetchMock 假 fetch'],
+  [/\.mockResolvedValue\s*\(|\.mockImplementation\s*\(|\.mockReturnValue\s*\(/, 'mock 假回傳值'],
+];
+const INTERACTION_RE = /\.click\s*\(|\.fill\s*\(|\.press\s*\(|\.check\s*\(|\.selectOption\s*\(|\.type\s*\(|\.tap\s*\(|getByRole\s*\(/;
+// 把檔內容切成各 test/it 區塊（近似，無 AST）：用於「單一 test 內 goto 計數」。
+function journeyTestBlocks(c) {
+  const re = /\b(?:test|it)\s*(?:\.\w+)?\s*\(/g;
+  const idx = []; let m;
+  while ((m = re.exec(c))) idx.push(m.index);
+  if (!idx.length) return [c];
+  const blocks = [];
+  if (idx[0] > 0) blocks.push(c.slice(0, idx[0]));                         // import/前導不含 test 的部分
+  for (let i = 0; i < idx.length; i++) blocks.push(c.slice(idx[i], i + 1 < idx.length ? idx[i + 1] : c.length));
+  return blocks;
+}
+const gotoTargets = block => [...String(block).matchAll(/\.goto\s*\(\s*[`'"]([^`'"]*)[`'"]/g)].map(m => m[1]);
+export function auditJourneyTest(content) {
+  const c = String(content || '');
+  if (!JOURNEY_SIGNAL.test(c)) return { isJourney: false, problems: [], warnings: [] };
+  const problems = [], warnings = [];
+  for (const [re, label] of MOCK_PATTERNS) if (re.test(c)) problems.push(`出現${label}——E2E 真實鏈路禁 mock/攔截假後端（第四鐵則）`);
+  let totalGoto = 0;
+  for (const b of journeyTestBlocks(c)) {
+    const gts = gotoTargets(b);
+    totalGoto += gts.length;
+    if (gts.length > 1) problems.push(`單一 test 內有 ${gts.length} 個 goto（${gts.join(', ')}）——應只有一個入口 goto、其後用真實點擊串接（第五鐵則）`);
+    for (const t of gts) {
+      const segs = t.replace(/^https?:\/\/[^/]+/, '').split(/[?#]/)[0].split('/').filter(Boolean);
+      if (segs.length >= 2) warnings.push(`goto('${t}') 指向深層路徑——確認是真實入口，而非 deep-link 跳關（第五鐵則）`);
+    }
+  }
+  if (totalGoto > 0 && !INTERACTION_RE.test(c)) warnings.push('有 goto 但全檔無任何點擊/填表互動——確認真模擬了使用者操作，而非 goto+斷言抄捷徑');
+  return { isJourney: true, problems, warnings };
 }
 
 // state.json.tasks 的 status 詞彙 → reconstruct 的 state 詞彙。

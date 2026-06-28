@@ -40,7 +40,7 @@
 - **B1 stall 斷路器（硬前提）**：兩段式——`flow-stall-monitor`（PostToolUse）偵測同一 runner 失敗連 ≥N 輪、注入**軟**升級提醒；`flow-auto-gate`（PreToolUse，僅 `mode:auto`）在連 ≥N+3 輪時**硬擋 exit 2** 下一次同 runner 重跑。
   - **誠實定位**：偵測是確定性的（優先讀 runner 真實 exit code、無則 best-effort 掃失敗標記；分桶 key 用命令、journal 跨 session 模型偽造不了）。**涵蓋面**＝主 session 的 test/build/typecheck/lint runner 命令；**worker 內 TDD 單跑迴圈**靠 `parallel-build.js`「BLOCKED 單發即返＋收斂端不 re-spawn」硬出口守；**純編輯、完全不跑任何命令的迴圈**不在 B1 涵蓋內（靠模型自律＋修復迴圈 check-in）。
   - **無花費上限的取捨**：B1 把最常見的「反覆跑失敗 runner」整夜燒錢擋住，但非萬無一失。**仍強烈建議自駕搭一個外部 token/時間上限**當最終保險（使用者已選不設花費上限，故此為提醒、非阻擋）。
-- **B2 context 自動收束（建議在線、非阻擋）**：`flow-size-check` 讀 transcript 真實視窗用量 >~60% 提醒收束。缺則品質風險、非燒錢級。
+- **B2 SDD 檔案膨脹提醒（建議在線、非阻擋）**：`flow-size-check` 偵測 `specs/` 檔 >50KB 提醒 `/flow-compact` 收束。缺則文件腐化風險、非燒錢級。
 - **B3 失敗記憶（建議在線、非阻擋）**：`flow-state lesson` + reconstruct 帶出「已知死路」，防再生撞同一面牆。
 
 ## resume 行為

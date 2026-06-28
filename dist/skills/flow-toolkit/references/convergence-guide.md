@@ -7,9 +7,8 @@
 ## 一、working set 精簡（防腐化）
 
 - **working set 壓在視窗 ~40–50% 以下**保持精簡（利用率越高 attention 越稀釋，n² 效應）。
-- **`/flow-compact` 由兩個獨立判據觸發**（`flow-size-check` hook，SessionStart + 送訊息時，各自節流、非阻擋）：
-  - **① SDD 檔膨脹**：`specs/` 任一 `.md` >50KB（`statSync` 量檔，抓「文件越寫越長」）。
-  - **② 對話 context 腐化**：讀 hook 的 `transcript_path`（JSONL）取最後一則 assistant `usage`，算真實視窗 input 用量（`input + cache_read + cache_creation`）>~120k（約 60%）——抓「specs 小但對話長」這種 size 判據看不到的腐化，**無人盯著的自駕長流程尤其需要**。50KB 是保守參考下限、非硬閾值；context 腐化以視窗百分比為準。
+- **`/flow-compact` 由 `flow-size-check` hook 觸發**（SessionStart + 送訊息時，節流、非阻擋）：
+  - **SDD 檔膨脹**：`specs/` 任一 `.md` >50KB（`statSync` 量檔，抓「文件越寫越長」）。50KB 是保守參考下限、非硬閾值。
 - **薄 root + on-demand**：always-on 只放憲法目錄，specs / reference 用到才載。
 - **subagent context firewall**：吵雜/大 context 工作丟獨立 subagent，只收回 1–2k 蒸餾結果。
 - **just-in-time 讀取**：傳檔案路徑/handle，不把整個檔內容塞進 prompt；用 Grep/Glob/Read 隨用隨查。

@@ -45,7 +45,7 @@ description: Flow 一鍵總控 — 偵測起始 phase，選自駕（spec 定版�
 
 ## Step 2：SDD 檔案收束
 
-`flow-size-check` hook 兩判據（specs 任一檔 >50KB **或** 對話 context 用量 >~120k）自動提醒 → 主動建議或直接幫使用者跑 `/flow-compact` 把已交付細節歸檔（**自駕模式無人盯著，碰到提醒就主動收束**）。各階段把狀態寫進 `specs/` + `.flow/state.json`，**中斷後 `/flow-resume` 可無痛接手**（`mode:"auto"` 續跑自駕）。
+`flow-size-check` hook 偵測 specs 任一檔 >50KB 自動提醒 → 主動建議或直接幫使用者跑 `/flow-compact` 把已交付細節歸檔（**自駕模式無人盯著，碰到提醒就主動收束**）。各階段把狀態寫進 `specs/` + `.flow/state.json`，**中斷後 `/flow-resume` 可無痛接手**（`mode:"auto"` 續跑自駕）。
 
 ## 紀律
 - **manual**：不自己往下衝，每階段等使用者拍板。

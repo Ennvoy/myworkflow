@@ -61,6 +61,8 @@ process.stdin.on('end', async () => {
       join(dirname(fileURLToPath(import.meta.url)), '..', 'skills', 'flow-toolkit', 'statelib.mjs')
     ).href;                                            // Windows 絕對路徑 dynamic import 須走 file:// URL
     const S = await import(libUrl);
+    // 自動補 .flow/.gitignore（既有專案初次升級也生效）：瞬時檔忽略、耐久證據照常 track。冪等、只在缺/異動時寫、fail-silent。
+    try { await S.ensureFlowGitignore(cwd); } catch { /* 政策檔非關鍵、永不影響 session */ }
     const view = await S.reconstruct(cwd);
     const parts = [];
     const brief = S.briefStatus(view);

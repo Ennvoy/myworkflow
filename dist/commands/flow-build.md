@@ -84,7 +84,7 @@ Workflow 回來後，orchestrator 依拓樸序**一個一個**收尾每個 featu
 ## Step 7：可恢復（狀態進 git，跨電腦也接得上）
 
 狀態在 `.flow/` + git（殺不死）；中斷後 `/flow-resume` 重新 fan-out 未完成的，不重做已 delivered 的。
-**git-track 鐵則**：`.flow/manifest.json` + `.flow/ledger/` + `.flow/journal.ndjson` + `.flow/redteam/` SHALL 進 git（換電腦 clone 即 reconstruct 重建細粒度進度；ship 審查讀得到紅軍清單）；`.flow/state.json`、`.flow/*.log` 進 `.gitignore`（可衍生 / 一次性，勿污染 repo）。
+**git-track（現已自動、非靠散文）**：`.flow/.gitignore` 由 flow-toolkit 於 `init` 與 SessionStart 自動落檔，忽略 `state.json`／`state.json.mode`／`monitor.port`／`*.log`／`*-reminded` 等瞬時衍生檔；`manifest.json`＋`ledger/`＋`redteam/`＋`verify/`＋`decisions/`＋`journal.ndjson`＋`lessons.ndjson` 照常進 git（換機 clone 即 reconstruct 重建細粒度進度；ship 審查讀得到紅軍清單）。且 `flow-state done` 交付時自動 `git add` 這些耐久證據＋`specs/tasks.md`，**per-task commit 不再落隊**（症狀根治，非靠模型記得 stage）。
 
 ## 完成判準（self-check）
 - [ ] foundation 先序列、features 才同 repo 平行（conflictZone 算準）

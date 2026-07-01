@@ -20,6 +20,47 @@ test('init 建立 .flow/ 結構', async () => {
     assert.ok(existsSync(path.join(root, '.flow', 'journal.ndjson')));
     assert.ok(existsSync(path.join(root, '.flow', 'ledger')));
     assert.ok(existsSync(path.join(root, '.flow', 'decisions')));
+    assert.ok(existsSync(path.join(root, '.flow', '.gitignore')));   // 版控政策檔隨 init 落地
+  });
+});
+
+test('ensureFlowGitignore：忽略瞬時檔、耐久證據照常 track', async () => {
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [] });
+    const gi = await readFile(path.join(root, '.flow', '.gitignore'), 'utf8');
+    // 瞬時/衍生檔在忽略清單
+    for (const p of ['state.json', 'state.json.mode', 'monitor.port', '*.log', '*-reminded']) assert.ok(gi.includes(p), `應忽略 ${p}`);
+    // 耐久證據不在忽略清單（照常 track）——逐字元行比對，避免被 *-reminded / *.log 之類 glob 誤判
+    const lines = gi.split('\n').map(l => l.trim());
+    for (const p of ['manifest.json', 'journal.ndjson', 'lessons.ndjson', 'ledger/', 'redteam/', 'verify/', 'decisions/']) assert.ok(!lines.includes(p), `不該忽略耐久檔 ${p}`);
+  });
+});
+
+test('ensureFlowGitignore：冪等（第二次不動檔）', async () => {
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [] });
+    const before = await readFile(path.join(root, '.flow', '.gitignore'), 'utf8');
+    const changed = await S.ensureFlowGitignore(root);   // init 已寫過一次 → 這次應無變化
+    const after = await readFile(path.join(root, '.flow', '.gitignore'), 'utf8');
+    assert.equal(changed, false);
+    assert.equal(after, before);
+  });
+});
+
+test('ensureFlowGitignore：保留使用者自訂行、只換 managed block', async () => {
+  await withRoot(async (root) => {
+    await mkdir(path.join(root, '.flow'), { recursive: true });
+    await writeFile(path.join(root, '.flow', '.gitignore'), 'my-scratch.tmp\n# 使用者自訂\n', 'utf8');
+    const changed = await S.ensureFlowGitignore(root);
+    assert.equal(changed, true);
+    const gi = await readFile(path.join(root, '.flow', '.gitignore'), 'utf8');
+    assert.ok(gi.includes('my-scratch.tmp'), '應保留使用者原有行');
+    assert.ok(gi.includes('# 使用者自訂'), '應保留使用者註解');
+    assert.ok(gi.includes('state.json'), '應補上 managed block');
+    // 再跑一次仍冪等（不重複塞 block）
+    await S.ensureFlowGitignore(root);
+    const gi2 = await readFile(path.join(root, '.flow', '.gitignore'), 'utf8');
+    assert.equal((gi2.match(/# >>> flow-state/g) || []).length, 1, 'managed block 只該有一份');
   });
 });
 

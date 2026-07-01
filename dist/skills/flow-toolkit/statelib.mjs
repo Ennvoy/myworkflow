@@ -43,9 +43,39 @@ async function writeFileAtomic(p, content) {
 }
 async function writeJSON(p, obj) { await writeFileAtomic(p, JSON.stringify(obj, null, 2)); }
 
+// ── .flow/.gitignore（nested、managed block）──
+// 把「耐久證據進 git、瞬時/衍生檔忽略」從散文鐵則釘成確定性檔，放在 .flow/ 內＝self-contained、隨目錄走、
+// 不必動專案根 .gitignore（那支由 clean-verify-artifacts 管另一塊）。清單為相對 .flow/ 的瞬時檔：
+//   state.json（當前 task 衍生指標、每動一次重寫）/ state.json.mode / monitor.port / *.log / *-reminded（ctx/size 提醒旗標）。
+// 耐久證據（manifest.json / ledger/ / redteam/ / verify/ / decisions/ / journal.ndjson / lessons.ndjson / 本 .gitignore）
+// 不在清單 → 照常 track（換機 clone 即 reconstruct、ship 審查讀紅軍清單）。冪等 managed block：只換自己區塊、保留使用者自訂行。
+const FLOW_GITIGNORE_BLOCK = [
+  '# >>> flow-state (managed by flow-toolkit) >>>',
+  '# Flow runtime/衍生狀態——可從 manifest/ledger/journal 重建，勿入版控（耐久證據不在此清單、照常 track）。',
+  'state.json',
+  'state.json.mode',
+  'monitor.port',
+  '*.log',
+  '*-reminded',
+  '# <<< flow-state <<<',
+].join('\n');
+
+export async function ensureFlowGitignore(root) {
+  const gi = path.join(dir(root), '.gitignore');
+  const cur = existsSync(gi) ? await readFile(gi, 'utf8') : '';
+  const re = /# >>> flow-state \(managed by flow-toolkit\) >>>[\s\S]*?# <<< flow-state <<<\n?/;
+  const next = re.test(cur)
+    ? cur.replace(re, FLOW_GITIGNORE_BLOCK + '\n')
+    : (cur && !cur.endsWith('\n') ? cur + '\n' : cur) + FLOW_GITIGNORE_BLOCK + '\n';
+  if (next === cur) return false;
+  await writeFileAtomic(gi, next);
+  return true;
+}
+
 export async function init(root, manifest = {}) {
   await mkdir(ledgerDir(root), { recursive: true });
   await mkdir(decisionsDir(root), { recursive: true });
+  await ensureFlowGitignore(root);               // 版控政策釘成檔（取代散文鐵則）：瞬時檔忽略、耐久證據照常 track
   const m = { ...manifest, createdAt: manifest.createdAt || nowISO(), updatedAt: nowISO() };
   await writeJSON(manifestPath(root), m);
   if (!existsSync(journalPath(root))) await writeFile(journalPath(root), '', 'utf8');

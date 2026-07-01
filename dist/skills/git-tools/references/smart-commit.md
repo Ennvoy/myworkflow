@@ -30,6 +30,7 @@ git diff --cached
 - 同一元件的 JSX + CSS Module + 測試 → 歸同一組
 - 極小改動（< 5 行）→ 合併到最相關的鄰近組
 - 新增檔案用 `feat`，修改用 `fix`/`refactor`/`style`，刪除用 `chore`
+- **Flow 專案**：`specs/*.md` 與 `.flow/` 的耐久證據（`manifest.json`/`ledger/`/`redteam/`/`verify/`/`decisions/`/`journal.ndjson`/`lessons.ndjson`；瞬時檔 `state.json` 等已由 `.flow/.gitignore` 忽略）視為最高優先一組隨對應交付提交。`flow-state done` 通常已自動 stage，smart-commit 時**確認它們在 staging、別漏**（否則 `.flow/` 耐久檔會落隊、commit 後仍髒）。
 
 ## 步驟 3：產出 Commit 計畫
 

@@ -125,10 +125,21 @@ switch (cmd) {
     }
     if (!((await S.readManifest(root)).tasks || []).some(t => t.id === r.id))
       console.error(`⚠ manifest 查無「${r.id}」——已以原樣建 ledger（id 打錯？canonical id 見 .flow/manifest.json）`);
+    // 自動 stage 耐久證據 + tasks.md，讓緊接著的 per-task commit 一定帶上它們——耐久檔不再落隊（症狀根治）。
+    // 先確保 .flow/.gitignore 就位（舊專案初次跑到這裡也補上），瞬時檔（state.json 等）才不會被 -A 吃進 staging。
+    // 全程 fail-open：非 git repo / git 不可用一律略過，交付本身絕不受影響。
+    let staged = false;
+    try {
+      await S.ensureFlowGitignore(root);
+      execSync('git add -A -- .flow', { cwd: root, stdio: 'ignore' });
+      const tp = path.join(root, 'specs', 'tasks.md');
+      if (existsSync(tp)) execSync('git add -- "specs/tasks.md"', { cwd: root, stdio: 'ignore' });
+      staged = true;
+    } catch { /* 非 git / git 失敗 → 略過，交付不受影響（下次 commit 前 smart-commit 會再收） */ }
     const md = r.tasksMd.changed ? 'tasks.md [x] 已翻' : (r.tasksMd.found ? 'tasks.md 本已 [x]' : '⚠ tasks.md 無對應行（id 對不上？）');
     const lg = r.alreadyDelivered ? 'ledger 本已 delivered' : 'ledger→delivered';
     console.log(`✓ ${r.id}：${md}；${lg}${commit ? `；commit=${commit}` : ''}`);
-    console.log('  下一步：照常 git commit（commit gate 已可放行此 task）。');
+    console.log(`  下一步：照常 git commit（commit gate 已可放行此 task）${staged ? '；已自動 stage .flow 耐久證據＋tasks.md、不會落隊' : ''}。`);
     break;
   }
   case 'mode': {

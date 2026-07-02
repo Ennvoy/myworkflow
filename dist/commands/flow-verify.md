@@ -10,12 +10,11 @@ description: Flow Phase 4 — 獨立驗證。另開 context 的 Evaluator 用 Pl
 
 ## 鐵則一：Evaluator 必須結構性獨立（反自評樂觀）
 
-模型評自己的工作是「病態樂觀者」，幾乎一律給自己高分。所以驗證**不能由寫 code 的同一個 agent 自證**，SHALL 另開獨立 Evaluator：
-- **全新 context + 全新 system prompt**（每輪重啟，看不到 builder 的 chain-of-thought）
-- **只透過檔案溝通**：Evaluator 讀「coding 前就釘好的契約」（REQ-E2E-* / REQ-PERF-* / design.md 接縫）+ 跑出的 artifact，回一份結構化 PASS/FAIL 報告，不跟 builder 對話
-- **對抗人設**：prompt 明寫「你的工作是**找失敗**，不是核准」+ few-shot 嚴格評分範例（開箱模型當 QA 太寬鬆）
+模型評自己的工作是「病態樂觀者」，幾乎一律給自己高分。所以驗證**不能由寫 code 的同一個 agent 自證**，SHALL 另開獨立 Evaluator——**人設已釘成 `evaluator` agent 定義檔（dist/agents/evaluator.md），SHALL 用該 subagent 呼叫、禁在主迴圈即席轉述人設**（散文轉述＝每 run 嚴格度浮動）：
+- **全新 context + 固定對抗 system prompt**（每輪重啟，看不到 builder 的 chain-of-thought；定義檔內含 few-shot 嚴格評分範例——開箱模型當 QA 太寬鬆）
+- **只透過檔案溝通**：Evaluator 讀「coding 前就釘好的契約」（REQ-E2E-* / REQ-PERF-* / design.md 接縫）+ 跑出的 artifact，回一份結構化 PASS/FAIL 報告並**逐條 `flow-state verify-e2e` 落機讀證據**，不跟 builder 對話
 
-可用 `references/recipes/parallel-verify.js`（Workflow 腳本）對多個維度/feature 平行起獨立 Evaluator。
+可用 `references/recipes/parallel-verify.js`（Workflow 腳本，已綁 `agentType: 'evaluator'`）對多個維度/feature 平行起獨立 Evaluator。
 
 **decorrelation 兩級**：上面是「跨 context」級（全新 context＋對抗人設，已是業界硬規格）。對**沒有 runner 可錨定的 inferential 維度**（security / 耦合度這類純 LLM 語義判斷）可再上一級「**跨 model 家族**」評估，進一步去 self-preference bias（模型偏愛自己風格的產出）。但**有真 runner 的維度（功能 / 真實鏈路 / 效能）以 runner 為唯一真、不換 model**——外接一個讀不懂執行軌跡的 model 反而更差（CMU 反例）。故跨 model 只套在 inferential 軟維度，computational 維度照跑 runner。
 

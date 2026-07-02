@@ -65,7 +65,9 @@ const results = await parallel(
     '用真實點擊導航抵達目標頁再操作；**若 test 直接 goto 目標頁/deep-link 跳過導航 → journey-from-entry 維度 FAIL**，evidence 記下實際點擊軌跡（步驟序列）。\n' +
     '真依賴未 ready → BLOCKED（不是 PASS、不是用 mock 假裝）。\n' +
     '逐維度回報 pass + 客觀 evidence，整體 verdict = 任一維度 FAIL 則 FAIL。',
-    { label: `verify:${t.id}`, phase: 'Verify', schema: VERDICT_SCHEMA, ...(EVAL_MODEL ? { model: EVAL_MODEL } : {}), ...(EVAL_EFFORT ? { effort: EVAL_EFFORT } : {}) }
+    // agentType: 'evaluator' ＝人設綁 dist/agents/evaluator.md 定義檔（與 install 同單元，必同在）；
+    // inline 鐵則保留當第二層冗餘（關鍵能力多層冗餘原則），兩處同源自 flow-verify 四鐵則。
+    { label: `verify:${t.id}`, phase: 'Verify', schema: VERDICT_SCHEMA, agentType: 'evaluator', ...(EVAL_MODEL ? { model: EVAL_MODEL } : {}), ...(EVAL_EFFORT ? { effort: EVAL_EFFORT } : {}) }
   ))
 )
 

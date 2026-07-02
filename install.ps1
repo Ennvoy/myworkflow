@@ -86,7 +86,7 @@ $prov = @{ version = $flowVersion; source = $ScriptDir; installedAt = $stamp } |
 Ok "已寫 .flow-version.json（v$flowVersion，來源 $ScriptDir）"
 $cmdCount = (Get-ChildItem (Join-Path $ClaudeHome 'commands') -Filter 'flow*.md').Count
 $agentCount = (Get-ChildItem (Join-Path $ClaudeHome 'agents') -Filter '*.md' -ErrorAction SilentlyContinue).Count
-Ok "commands（$cmdCount 個 flow*.md）/ skills/flow-toolkit / skills/git-tools（commit+push+PR）/ skills/design-system-base（150 套品牌基底）/ rules/flow.md / hooks / agents（$agentCount 個：red-team/code-reviewer/spec-reviewer）已就位"
+Ok "commands（$cmdCount 個 flow*.md）/ skills/flow-toolkit / skills/git-tools（commit+push+PR）/ skills/design-system-base（150 套品牌基底）/ rules/flow.md / hooks / agents（$agentCount 個：red-team/code-reviewer/spec-reviewer/evaluator）已就位"
 
 # 4) merge hook 接線進 settings.json
 & node (Join-Path $Dist 'install\merge-settings.mjs') $settingsPath (Join-Path $Dist 'hooks\settings.flow.json') $ClaudeHome

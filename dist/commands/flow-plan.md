@@ -10,7 +10,7 @@ description: Flow Phase 2 — 設計。讀凍結的 requirements 產出 architec
 
 ## Step 1：讀凍結 specs，建立全景
 
-完整讀 `specs/requirements.md`（+ web 類讀 `specs/ui-mockups/`）。**不要**把整個既有 codebase 預先塞進 context——用 Grep/Glob/Read 隨用隨查（just-in-time，省 context 防腐化）。
+完整讀 `specs/requirements.md`（+ web 類讀 `specs/ui-mockups/` 互動原型：走查台 index.html＋各頁結構）。**不要**把整個既有 codebase 預先塞進 context——用 Grep/Glob/Read 隨用隨查（just-in-time，省 context 防腐化）。
 
 **先取已知死路**（防再生撞同一面牆）：跑 `flow-state resume` 看 `.flow/lessons.ndjson` 的「⚠️ 已知死路」。**計畫可丟棄、但失敗教訓不該丟**——再生時別重選上次失敗過的 approach（`reconstruct` 已自動帶出、delivered task 的死路會自動失效）。
 
@@ -26,7 +26,7 @@ requirements 含 LLM / 雲端 / 支付 / 行動 / 前端框架關鍵字 → **We
 
 ## Step 2.5：UI 對焦結論（**僅 web 類**）
 
-若 `specs/ui-mockups/` 存在，design.md SHALL 含一節「UI 對焦結論」：畫面清單、元件分解、互動流程、設計 token（color/font/spacing）、**選用的品牌設計系統基底 slug（若有，build 沿用其 `tokens.css`）**。**後續技術方案以此為錨點反推 API / DB schema**（UI 先行，不是 schema 先行）。
+若 `specs/ui-mockups/` 存在，design.md SHALL 含一節「UI 對焦結論」：畫面清單、元件分解、互動流程、設計 token（color/font/spacing）、**選用的品牌設計系統基底 slug（若有，build 沿用其 `tokens.css`）**。**後續技術方案以此為錨點反推 API / DB schema**（UI 先行，不是 schema 先行）。互動原型是定版合約：**build 沿用原型的 markup/tokens/版面，把 `app.js` 假資料層換成真 API**（原型 CRUD 動過的資料形狀直接餵 schema 設計）；但原型檔不直接搬進 src/ 當完成——照走 TDD＋真實資料鏈路驗證。
 
 ## Step 3：`specs/design.md`（技術決策 + 接縫契約）
 

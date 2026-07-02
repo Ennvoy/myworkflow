@@ -604,6 +604,32 @@ test('coverageAudit：記錄了但 spec 查無 → orphan，提示但不擋 ok',
   assert.deepEqual(a.orphans, ['REQ-E2E-099']);
 });
 
+// ── 互動原型走查對賬（mockupAudit）：mockup-check 閘門的純核心 ──
+
+test('mockupAudit：走查台列齊每條 REQ-E2E → missingReq 空；缺卡 → 點名', () => {
+  const req = 'REQ-E2E-001：登入 journey。\nREQ-E2E-002：下單 journey。';
+  const full = '<h2>REQ-E2E-001</h2><a href="login.html">走</a><h2>req-e2e-002</h2><a href="order.html">走</a>';
+  assert.deepEqual(S.mockupAudit(req, full).missingReq, [], '大小寫不敏感、全列即空');
+  const partial = S.mockupAudit(req, '<h2>REQ-E2E-001</h2><a href="login.html">走</a>');
+  assert.deepEqual(partial.missingReq, ['REQ-E2E-002'], '缺卡要點名');
+});
+
+test('mockupAudit：hrefs 只收本地 .html（去重、去 #?、去反斜線），外部/絕對/錨點不收', () => {
+  const html = [
+    '<a href="pages/list.html?tab=1">a</a>', '<a href="pages\\detail.html#top">b</a>',
+    '<a href="pages/list.html">重複</a>', '<a href="https://x.y/z.html">外部</a>',
+    '<a href="//cdn.z/a.html">協定相對</a>', '<a href="/abs.html">絕對路徑</a>',
+    '<a href="#sec">錨點</a>', '<a href="mailto:a@b.c">信</a>', '<a href="app.js">非 html</a>',
+  ].join('\n');
+  assert.deepEqual(S.mockupAudit('', html).hrefs, ['pages/list.html', 'pages/detail.html']);
+});
+
+test('mockupAudit：requirements 無 REQ-E2E → reqIds 空、不誤報缺卡', () => {
+  const a = S.mockupAudit('REQ-001：非 E2E。', '<a href="p.html">x</a>');
+  assert.deepEqual(a.reqIds, []);
+  assert.deepEqual(a.missingReq, []);
+});
+
 // ── Playwright journey 真實性審計（auditJourneyTest）：導航版「禁 mock 假綠」 ──
 
 test('auditJourneyTest：非 journey 檔（無 playwright/goto）→ isJourney=false、零問題', () => {

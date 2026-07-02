@@ -214,6 +214,72 @@ test('spec-ready --freeze：未收斂 → exit 2 且不寫 phase', async () => {
   });
 });
 
+// ── mockup-check：互動原型走查閘門（覆蓋骨架機檢，堵「片面原型就請使用者定版」）──
+
+async function writeMockups(root, indexHtml, pages = {}) {
+  const dir = path.join(root, 'specs', 'ui-mockups');
+  await mkdir(dir, { recursive: true });
+  if (indexHtml !== null) await writeFile(path.join(dir, 'index.html'), indexHtml, 'utf8');
+  for (const [name, html] of Object.entries(pages)) await writeFile(path.join(dir, name), html, 'utf8');
+}
+
+test('mockup-check：查無 index.html → exit 2', async () => {
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [] });
+    await writeReq(root, READY_REQ);
+    await writeMockups(root, null, { 'login.html': '<html>x</html>' });
+    const r = run(['mockup-check'], root);
+    assert.equal(r.code, 2);
+    assert.match(r.err, /index\.html/);
+  });
+});
+
+test('mockup-check：走查台缺 REQ-E2E 卡 → exit 2 並點名', async () => {
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [] });
+    await writeReq(root, READY_REQ + '\nREQ-E2E-002：下單 journey。');
+    await writeMockups(root, '<h2>REQ-E2E-001</h2><a href="login.html">走</a>', { 'login.html': '<html>x</html>' });
+    const r = run(['mockup-check'], root);
+    assert.equal(r.code, 2);
+    assert.match(r.err, /REQ-E2E-002/);
+  });
+});
+
+test('mockup-check：走查台連結 404 → exit 2；補檔即綠', async () => {
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [] });
+    await writeReq(root, READY_REQ);
+    await writeMockups(root, '<h2>REQ-E2E-001</h2><a href="pages/login.html">走</a>');
+    const r = run(['mockup-check'], root);
+    assert.equal(r.code, 2);
+    assert.match(r.err, /404/);
+    await mkdir(path.join(root, 'specs', 'ui-mockups', 'pages'), { recursive: true });
+    await writeFile(path.join(root, 'specs', 'ui-mockups', 'pages', 'login.html'), '<html>x</html>', 'utf8');
+    const r2 = run(['mockup-check'], root);
+    assert.equal(r2.code, 0, r2.err);
+    assert.match(r2.out, /通過/);
+  });
+});
+
+test('spec-ready --freeze：ui-mockups 存在但走查台缺卡 → exit 2 不凍結；目錄不存在 → 照常凍結', async () => {
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [] });
+    await writeReq(root, READY_REQ + '\nREQ-E2E-002：下單 journey。');
+    await writeMockups(root, '<h2>REQ-E2E-001</h2>');   // 缺 002 的走查卡
+    const r = run(['spec-ready', '--freeze'], root);
+    assert.equal(r.code, 2);
+    assert.match(r.err, /REQ-E2E-002/);
+    assert.notEqual((await S.readStateJson(root)).phase, 'spec-done', '走查台不完整不准凍結');
+  });
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [] });
+    await writeReq(root, READY_REQ);
+    const r = run(['spec-ready', '--freeze'], root);   // 無 ui-mockups/（非 web / 已記豁免）
+    assert.equal(r.code, 0, r.err);
+    assert.equal((await S.readStateJson(root)).phase, 'spec-done');
+  });
+});
+
 // ── verify-e2e 記錄 + coverage 對賬（REQ-E2E 覆蓋的確定性節點）──
 
 test('verify-e2e：pass 缺 --evidence → exit 1（堵空綠）；附 evidence → 落檔', async () => {

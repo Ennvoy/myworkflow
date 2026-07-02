@@ -10,7 +10,7 @@
 
 ## 使用者故事
 
-- **作為開發者**，我想要把「一句話的模糊需求」透過一次一題的蘇格拉底訪談 + grill-me 深挖收斂成凍結規格、並用 HTML mockup 把 UI 定版，**以便**方向錯在最便宜的時點（幾頁靜態畫面）就擋掉，而不是 deliver 到一半才整輪報廢。
+- **作為開發者**，我想要把「一句話的模糊需求」透過一次一題的蘇格拉底訪談 + grill-me 深挖收斂成凍結規格、並用**可互動、像成品的原型**把 UI 定版（照走查台把每條 journey 真點一遍，不是看靜態圖靠想像），**以便**方向錯在最便宜的時點就擋掉，而不是 deliver 到一半才整輪報廢。
 - **作為開發者**，我想要每個 task 從 UI 一路做到 DB、紅軍先行、TDD、打**真後端真 DB** 驗到綠才算完成，**以便**「e2e 全綠、進去卻全是假資料」這種假完成從結構上不可能發生。
 - **作為開發者**，我想要進度狀態寫進檔案 + git、中斷後純讀檔就能接手，**以便**關機 / 換 session / 換電腦都能無痛接續——agent 可拋棄、狀態殺不死。
 - **作為開發者**，我想要用一個指令隨時看現況（哪些 feature 卡在哪、誰在等我決策），**以便**不用一直問「現在做到哪」。
@@ -46,7 +46,7 @@ git clone https://github.com/Ennvoy/myworkflow.git flow && cd flow && chmod +x i
 
 | 指令 | 階段 | 做什麼 |
 |---|---|---|
-| `/flow-spec` | 訪談定版 | 蘇格拉底一次一題彈窗 + grill-me 深挖 + 獨立 spec-reviewer，**收斂迴圈問到 `### 開放問題` 清零**（`flow-state spec-ready` 閘門守）→ 凍結 `requirements.md`(EARS) → ui-ux-pro-max 產 HTML mockup、開瀏覽器、彈窗定 UI |
+| `/flow-spec` | 訪談定版 | 蘇格拉底一次一題彈窗 + grill-me 深挖 + 獨立 spec-reviewer，**收斂迴圈問到 `### 開放問題` 清零**（`flow-state spec-ready` 閘門守）→ 凍結 `requirements.md`(EARS) → 產**零依賴互動原型**（全 journey 可點走查、假資料 CRUD、狀態切換；`mockup-check` 閘門守覆蓋）、開瀏覽器、彈窗定 UI |
 | `/flow-plan` | 設計 | 架構 + **接縫契約釘一處**（編譯期擋發散）+ 垂直切片 + 依賴分波 |
 | `/flow-build` | 多工交付 | 波次內 Workflow 腳本 fan-out 同 repo 平行生成 worker，紅軍 → TDD → 序列整合（驗證/commit 一個個）→ per-task commit+push（走 git-tools skill） |
 | `/flow-verify` | 獨立驗證 | 另開 context 的**對抗性 Evaluator** 用 Playwright headed 真點擊、打真 API、查真 DB；效能硬閘門 |
@@ -60,7 +60,7 @@ git clone https://github.com/Ennvoy/myworkflow.git flow && cd flow && chmod +x i
 
 ## 功能特點
 
-- **需求訪談（收斂到零開放問題才凍結）**：蘇格拉底一次一題彈窗（每題附推薦答案）+ grill-me 連續深挖 + **獨立 context** 的 spec-reviewer 外部視角，**收斂迴圈把 `### 開放問題` 問到清零**，由 `flow-state spec-ready` 確定性閘門守（沒清零擋住產 mockup / 凍結）+ `flow-spec-gate` hook 擋裸寫繞過——**這是自駕不跑歪的源頭**（spec 沒問乾淨＝自駕途中只能猜）；web 類用 HTML mockup 把 UI 方向釘死在最早能看見實體的時點。
+- **需求訪談（收斂到零開放問題才凍結）**：蘇格拉底一次一題彈窗（每題附推薦答案）+ grill-me 連續深挖 + **獨立 context** 的 spec-reviewer 外部視角，**收斂迴圈把 `### 開放問題` 問到清零**，由 `flow-state spec-ready` 確定性閘門守（沒清零擋住產原型 / 凍結）+ `flow-spec-gate` hook 擋裸寫繞過——**這是自駕不跑歪的源頭**（spec 沒問乾淨＝自駕途中只能猜）；web 類用**零依賴互動原型**把 UI 方向釘死在最早能「親手點過」實體的時點——全 REQ-E2E journey 可點走查、假資料 CRUD 有真實感、可切空/錯誤/權限不足狀態，覆蓋骨架由 `flow-state mockup-check` 閘門機檢（走查台缺卡 / 連結 404 → exit 2）。
 - **多工並行（Workflow 模式）**：波次內 fan-out 同 repo 平行生成 worker（只寫各自不重疊的檔）、序列整合、階段間人工閘門；foundation 先序列、features 才並行（靠 `conflictZone` 算準）；成本路由（Opus 編排 / 審查、Sonnet 平行苦工）。
 - **真實資料鏈路驗證（禁 mock 假綠）**：對抗性 Evaluator + Playwright headed + 假資料經**真 create API seed 進真 DB 再讀回**；真依賴未 ready 標 BLOCKED，不准 mock fallback 假裝綠。
 - **效能硬閘門**：load / render / API 延遲 budget，**p50 + p95**，任一維度不達標 = FAIL，高平均不能買回失敗維度。

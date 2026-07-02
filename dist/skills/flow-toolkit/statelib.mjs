@@ -413,6 +413,25 @@ export function coverageAudit(reqIds, records) {
   return { total: (reqIds || []).length, covered, missing, failed, orphans, ok: missing.length === 0 && failed.length === 0 };
 }
 
+// ── 互動原型走查對賬（純函式可測；mockup-check 閘門核心）──
+// 「mockup 片面、要靠想像」的病根是覆蓋缺漏：機檢 index.html 走查台是否列出每條 REQ-E2E journey，
+// 並抽出走查台連到的本地 .html 頁（呼叫端驗實存；連結 404 ＝ 假走查）。故意「笨但確定」——
+// 純文字掃描：原型好不好看仍由使用者開瀏覽器點過後彈窗定版，這裡只守「覆蓋骨架完整」的機讀底線。
+export function mockupAudit(requirementsMd, indexHtml) {
+  const reqIds = extractReqE2E(requirementsMd);
+  const upper = String(indexHtml || '').toUpperCase();
+  const missingReq = reqIds.filter(id => !upper.includes(id));      // extractReqE2E 已 canonical 大寫
+  const hrefs = [], seen = new Set();
+  for (const m of String(indexHtml || '').matchAll(/href\s*=\s*["']([^"']+)["']/gi)) {
+    const raw = m[1].trim();
+    if (/^(https?:|\/\/|\/|mailto:|tel:|#|javascript:|data:)/i.test(raw)) continue;   // 外部/絕對/錨點不驗
+    const local = raw.split(/[#?]/)[0].replace(/\\/g, '/');
+    if (!/\.html?$/i.test(local) || seen.has(local)) continue;
+    seen.add(local); hrefs.push(local);
+  }
+  return { reqIds, missingReq, hrefs };
+}
+
 // ── Playwright journey 真實性審計（純函式可測；導航版「禁 mock 假綠」的確定性節點）──
 // 守 playwright-real-data-template 第四鐵則（禁 mock/網路攔截）＋第五鐵則（單一入口 goto、其後真實點擊）。
 // 故意「笨但確定」——純文字掃描而非語義判斷：便宜、模型偽造不了 git 真實檔內容、不誤把單元測試的合法 mock 當違規

@@ -74,6 +74,20 @@ function printCoverage(audit) {
   if (audit.orphans.length) console.log('  ⚠ 記錄了但 requirements.md 查無（拼錯/已刪？）：' + audit.orphans.join(', '));
 }
 
+// mockup-check / spec-ready --freeze 共用：互動原型走查台的覆蓋骨架機檢（statelib.mockupAudit 是純核心）。
+function mockupProblems(r, dirRel) {
+  const dir = path.join(r, dirRel);
+  const idx = path.join(dir, 'index.html');
+  const disp = String(dirRel).replace(/\\/g, '/');
+  if (!existsSync(idx)) return { problems: [`查無 ${disp}/index.html（journey 走查台）——互動原型 SHALL 有走查台：每條 REQ-E2E 一張卡（id＋步驟＋入口連結）`] };
+  const rp = path.join(r, 'specs', 'requirements.md');
+  const audit = S.mockupAudit(existsSync(rp) ? readFileSync(rp, 'utf8') : '', readFileSync(idx, 'utf8'));
+  const problems = [];
+  for (const id of audit.missingReq) problems.push(`${id} 不在走查台 index.html——每條 REQ-E2E SHALL 列卡（id＋步驟＋入口連結），缺卡＝該 journey 沒原型可走`);
+  for (const h of audit.hrefs) if (!existsSync(path.resolve(dir, h))) problems.push(`走查台連結 404：${h}（index.html 連到但檔案不存在＝假走查）`);
+  return { problems, audit };
+}
+
 // pickNext 已移到 statelib（resume 與 SessionStart hook 共用，避免兩份邏輯漂移）。
 
 async function resume() {
@@ -375,7 +389,7 @@ switch (cmd) {
     // 需求訪談收斂閘門（凍結的「正門」）：掃 specs/requirements.md。
     // ### 開放問題 沒清零、或缺 REQ-/REQ-E2E-/REQ-PERF- → exit 2。直接餵自駕安全：
     // spec 沒問乾淨就凍結＝自駕途中 AI 只能猜＝跑歪；這裡擋住「沒收斂就往下」。
-    // 用法：flow-state spec-ready            僅檢查（訪談收斂後、產 mockup 前跑；綠了才往下）
+    // 用法：flow-state spec-ready            僅檢查（訪談收斂後、產互動原型前跑；綠了才往下）
     //       flow-state spec-ready --freeze   檢查通過才寫 phase="spec-done"（凍結唯一正門，取代裸寫 state.json）
     const rp = path.join(root, 'specs', 'requirements.md');
     if (!existsSync(rp)) {
@@ -391,18 +405,47 @@ switch (cmd) {
       process.exit(2);
     }
     if (argv.includes('--freeze')) {
+      // 凍結順序：spec-ready（收斂檢查）→ 產互動原型 → --freeze。故有 specs/ui-mockups/（web 走了原型路）
+      // 就一併驗走查台覆蓋骨架；目錄不存在＝非 web / 使用者豁免（已 flow-state decision 記錄）→ 不擋。
+      const mockDirRel = path.join('specs', 'ui-mockups');
+      if (existsSync(path.join(root, mockDirRel))) {
+        const { problems: mp } = mockupProblems(root, mockDirRel);
+        if (mp.length) {
+          console.error('✗ 互動原型走查台未過（specs/ui-mockups/ 存在即驗）：');
+          for (const p of mp) console.error('  - ' + p);
+          console.error('  修正：補齊走查台缺卡/斷鏈（flow-state mockup-check 可單獨重驗），或整目錄不做原型時刪除並 flow-state decision 記豁免。');
+          process.exit(2);
+        }
+      }
       const st = await S.readStateJson(root);
       await S.writeStateJson(root, { ...st, phase: 'spec-done' });        // read-modify-write，保留 mode/tasks/verify/tdd
       await S.appendJournal(root, { ev: 'spec.frozen' });
       console.log('✓ 需求已收斂（### 開放問題 清零＋REQ-/REQ-E2E-/REQ-PERF- 齊）且已凍結：phase="spec-done"。');
-      console.log('  下一步：web 類先確認 UI mockup 已彈窗定版，再進 /flow-plan（自駕會自動接續）。');
+      console.log('  下一步：web 類先確認互動原型已彈窗定版，再進 /flow-plan（自駕會自動接續）。');
     } else {
-      console.log('✓ 需求已收斂：### 開放問題 清零、REQ-/REQ-E2E-/REQ-PERF- 齊。可產 mockup → 凍結（flow-state spec-ready --freeze）。');
+      console.log('✓ 需求已收斂：### 開放問題 清零、REQ-/REQ-E2E-/REQ-PERF- 齊。可產互動原型 → 凍結（flow-state spec-ready --freeze）。');
     }
     break;
   }
+  case 'mockup-check': {
+    // 互動原型走查閘門：specs/ui-mockups/index.html（journey 走查台）SHALL 列出每條 REQ-E2E 的卡
+    // 且連到的本地頁面實存——防「只產兩頁就宣稱 UI 定版」的偷工。覆蓋骨架機檢；原型好不好看
+    // 仍由使用者開瀏覽器照走查台點過每條 journey 後彈窗定版（本閘門擋不了醜、只擋缺）。
+    // 用法：flow-state mockup-check [--dir specs/ui-mockups]（產完原型、開瀏覽器定版前跑；--freeze 會再驗一次）
+    const dirRel = flag('--dir', path.join('specs', 'ui-mockups'));
+    const { problems, audit } = mockupProblems(root, dirRel);
+    if (problems.length) {
+      console.error('✗ 互動原型走查台未過：');
+      for (const p of problems) console.error('  - ' + p);
+      console.error('  補齊每條 REQ-E2E 的走查卡＋修斷鏈後重跑。別只產關鍵頁就請使用者定版——片面原型＝使用者要靠想像＝方向風險。');
+      process.exit(2);
+    }
+    console.log(`✓ 互動原型走查台通過：${audit.reqIds.length} 條 REQ-E2E 全數列卡、${audit.hrefs.length} 個本地連結實存。`);
+    console.log('  下一步：開瀏覽器把走查台每條 journey 真點一遍，再用彈窗跟使用者定版 UI。');
+    break;
+  }
   default:
-    console.log(`flow-state <resume|status|done|checkpoint|mode|scope|redteam|journey-check|verify-e2e|coverage|lesson|decision|guardrail-check|complete-check|spec-ready> [--root <path>]
+    console.log(`flow-state <resume|status|done|checkpoint|mode|scope|redteam|journey-check|verify-e2e|coverage|lesson|decision|guardrail-check|complete-check|spec-ready|mockup-check> [--root <path>]
   resume | status        冷啟動：reconstruct 印現況 + 下一步 + mid-task 進度 + 對帳 + 已知死路（換 session/電腦/中斷後接手；平行波看 /workflows）
   done <id> [--commit]   標一個 task 完成：翻 tasks.md [x] + ledger→delivered（自帶 verify 閘門；先標、再 commit）
   checkpoint <id> --phase <red|green|refactor|integrated> [--note]   記 mid-task 進度（開發中當機 → resume 帶出「上次做到第幾步」，只補沒做完的）
@@ -416,6 +459,7 @@ switch (cmd) {
   decision <id> --choice "<c>" --why "<w>"   記一個自駕自決分歧（T1 放手下 AI 自決的 C 類需求分歧留審計）
   guardrail-check        自駕前置：確認 settings.json 含 stall 斷路器，缺則 exit 2（/flow 寫 mode:auto 前跑）
   complete-check         完成謂詞硬閘門：tasks.md 全 [x] ＋ 所有 REQ-E2E-* 有 pass/n-a 記錄 才准發 COMPLETE，否則 exit 2（/flow-ship 出口跑）
-  spec-ready [--freeze]  需求收斂閘門：requirements.md ### 開放問題 沒清零/缺 REQ-E2E·PERF → exit 2（產 mockup 前＋凍結前跑；--freeze 通過才寫 spec-done）
+  spec-ready [--freeze]  需求收斂閘門：requirements.md ### 開放問題 沒清零/缺 REQ-E2E·PERF → exit 2（產原型前＋凍結前跑；--freeze 通過才寫 spec-done，且 specs/ui-mockups/ 存在時一併驗走查台）
+  mockup-check [--dir]   互動原型走查閘門：specs/ui-mockups/index.html 缺 REQ-E2E 走查卡 或 本地連結 404 → exit 2（產完原型、開瀏覽器請使用者定版前跑）
 決策/討論一律回 Claude（彈窗）；狀態都在專案的 .flow/。`);
 }

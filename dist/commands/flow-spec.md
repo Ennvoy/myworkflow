@@ -1,18 +1,18 @@
 ---
-description: Flow Phase 1 — 訪談定版。蘇格拉底式一次一題彈窗澄清需求 → 凍結 requirements.md(EARS) → ui-ux-pro-max 產 HTML mockup 對齊 UI 方向 → 定版
+description: Flow Phase 1 — 訪談定版。蘇格拉底式一次一題彈窗澄清需求 → 凍結 requirements.md(EARS) → 產零依賴互動原型（全 journey 可點走查）對齊 UI 方向 → 定版
 ---
 
 # /flow-spec — Phase 1：需求訪談 + UI 定版
 
-**目標**：把模糊的一句話需求，透過對話收斂成凍結的 `specs/requirements.md`，並（web 類）用實體 HTML mockup 把 UI 方向釘死。**這是整套流程最關鍵的閘門**——方向錯在這裡擋掉，比 deliver 到一半才發現便宜 10 倍。
+**目標**：把模糊的一句話需求，透過對話收斂成凍結的 `specs/requirements.md`，並（web 類）用**可互動、像成品的原型**把 UI 方向釘死——使用者照走查台把每條 journey 真點一遍、感受開發完的樣子，不是看幾頁靜態圖靠想像。**這是整套流程最關鍵的閘門**——方向錯在這裡擋掉，比 deliver 到一半才發現便宜 10 倍。
 
 > 對話優先（conversation-first）：別急著做東西。先把需求談清楚、寫成檔、凍結，之後每個迴圈都重讀這份凍結的 spec。
 
 ## Step 1：任務類型判定（決定後續切片與 UI 流程）
 
 讀使用者那句需求，判定類型並記到 `.flow/state.json` 的 `projectType`：
-- `web-saas` / `web-app` / `mobile`：走**垂直切片**（§ tasks），**且** Step 5 要做 UI mockup。
-- `cli` / `api` / `data-pipeline` / `library` / `framework` / `desktop-gui`：走**水平拆解**（功能模組），**跳過** Step 5 UI mockup（`desktop-gui` 的原生視窗用 HTML/Tailwind mockup 不具代表性，故同列跳過）。
+- `web-saas` / `web-app` / `mobile`：走**垂直切片**（§ tasks），**且** Step 5 要做互動原型。
+- `cli` / `api` / `data-pipeline` / `library` / `framework` / `desktop-gui`：走**水平拆解**（功能模組），**跳過** Step 5 互動原型（`desktop-gui` 的原生視窗用 HTML/Tailwind 原型不具代表性，故同列跳過）。
 - 含「使用者/角色/權限/後台/admin」字樣 → Step 3 自動注入動態 RBAC 需求（禁 hardcode 角色；初始只 seed 一個 super admin）。
 
 ## Step 2：蘇格拉底訪談（一次一題彈窗，這是鐵則）
@@ -46,7 +46,7 @@ description: Flow Phase 1 — 訪談定版。蘇格拉底式一次一題彈窗�
 
 requirements 含 auth / 權限 / payment / 個資 / 合規 / audit 關鍵字 → 建議跑獨立模型對抗審查（若裝了 Codex companion）。不命中靜默跳過。
 
-## Step 4.5：需求收斂閘門（鐵則，產 mockup 前先過）
+## Step 4.5：需求收斂閘門（鐵則，產互動原型前先過）
 
 訪談是**收斂迴圈**，不是問一輪就算：grill-me + spec-reviewer 反覆問，把每個決策分支問到拍板、`### 開放問題` 一項項清掉，直到**某一輪問不出新問題**才算收斂。收斂後 SHALL 跑確定性閘門：
 
@@ -54,19 +54,22 @@ requirements 含 auth / 權限 / payment / 個資 / 合規 / audit 關鍵字 →
 flow-state spec-ready
 ```
 
-它機檢 `specs/requirements.md`：`### 開放問題` 沒清零、或缺 `REQ-`/`REQ-E2E-`/`REQ-PERF-` 任一 → **exit 2**，把未收斂項列回來繼續問。**綠了才往下做 Step 5 mockup**。這直接堵自駕跑歪——**spec 沒問乾淨就凍結，自駕途中 AI 只能猜（C 類分歧），猜歪了沒人擋**。真無法當場拍板的，移到 `### 延後決策` 段並 `flow-state decision` 記錄（附 AI 建議預設），**不留懸空項在 `### 開放問題`**。
+它機檢 `specs/requirements.md`：`### 開放問題` 沒清零、或缺 `REQ-`/`REQ-E2E-`/`REQ-PERF-` 任一 → **exit 2**，把未收斂項列回來繼續問。**綠了才往下做 Step 5 互動原型**。這直接堵自駕跑歪——**spec 沒問乾淨就凍結，自駕途中 AI 只能猜（C 類分歧），猜歪了沒人擋**。真無法當場拍板的，移到 `### 延後決策` 段並 `flow-state decision` 記錄（附 AI 建議預設），**不留懸空項在 `### 開放問題`**。
 
 > 為什麼這裡要硬閘門：訪談「問完了沒」本是模型自評的散文判斷，會被滑過。把「開放問題清零」做成 exit 2 的 `spec-ready`，模型才真的乖乖問到底（憲法確定性閘門原則）。
 
-## Step 5：UI 方向對齊（**僅 web 類**，鐵則）
+## Step 5：UI 方向對齊——互動原型（**僅 web 類**，鐵則）
+
+mockup ≠ 幾頁靜態圖靠想像。產的是**零依賴互動原型**：可點導航走完每條 journey、表單可填有驗證回饋、假資料 CRUD 有真實感、可切空/錯誤/權限不足狀態——使用者「感受到開發完的樣子」再定版。詳細規格見 `references/prototype-guide.md`。
 
 0. **選品牌設計系統基底（先做，lazy 載入）**：讀 `references/design-systems/index.md`（150 套大廠設計語言的分類索引，僅清單、約幾 KB），用 `AskUserQuestion` 讓使用者選一套當基底——依 `projectType`/需求推薦 3–4 個置首（工具/SaaS 類推 `shadcn`/`linear-app`/`vercel`、金流推 `stripe`、AI 產品推 `claude`/`openai`），**選項含「不用基底，純 ui-ux-pro-max」**。選定後**只讀選中那套**的 `references/design-systems/<slug>/DESIGN.md`（9 段規範）+ `tokens.css`（CSS 變數），**不全載**（context 零負擔）。設計系統為美學靈感、**非官方品牌資產**（見 `design-systems/NOTICE.md`）。
 1. 呼叫 `ui-ux-pro-max:ui-ux-pro-max` skill 取設計建議（style / palette / font pairing / product-type 規範）——**有選基底時：以基底 `DESIGN.md`/`tokens.css` 的色彩·排版·間距為準，ui-ux-pro-max 補強元件級互動/狀態/a11y 與 shadcn 範例**。未裝 → 提示使用者跑安裝檔的 ui-ux-pro-max 安裝指令（見 README），不提供 fallback。
-2. 依 `REQ-E2E-*` / 主功能列 **3–5 個關鍵畫面**，產靜態 HTML mockup 到 `specs/ui-mockups/`（Tailwind CDN + 設計 token；**有基底時把該套 `tokens.css` 的 `:root` 變數 inline 進 mockup `<style>`、verbatim 不臆造**；含一頁 `index.html` 總覽）。**含中文寫檔一律 UTF-8**（PowerShell 加 `-Encoding utf8`）。
-3. **主動開瀏覽器**把總覽頁送到使用者眼前（mac `open <url>` / Windows `Start-Process <url>` / Linux `xdg-open <url>`；0 摩擦，避免被滑過）。
-4. `AskUserQuestion` 收方向：方向 OK / 某幾頁要改 / 整個方向錯。**一次對焦完即凍結**，後續 plan/build 以此為錨點反推 API/DB。**凍結時記錄選用的品牌基底 slug**（寫進 requirements 或 `.flow/state.json`，plan/build 沿用其 tokens）。
+2. 依 `prototype-guide.md` 產互動原型到 `specs/ui-mockups/`：**全旅程覆蓋**（所有 `REQ-E2E-*` 途經畫面每頁都做、頁頁互連可點到終點）＋共用假資料層 `app.js`（localStorage、CRUD 有後果、可重置）＋每頁狀態切換器（空/載入/錯誤/權限不足）＋`index.html` **journey 走查台**（每條 REQ-E2E 一張卡：id＋步驟＋入口連結）。Tailwind CDN、零依賴、`file://` 直接開；**有基底時把該套 `tokens.css` 的 `:root` 變數 verbatim inline、不臆造**。**含中文寫檔一律 UTF-8**（PowerShell 加 `-Encoding utf8`）。
+3. **SHALL 跑 `flow-state mockup-check`（確定性閘門）**：走查台缺任一 REQ-E2E 卡、或本地連結 404 → exit 2 補齊再來——堵「只產兩頁就請使用者定版」的偷工（`spec-ready --freeze` 會再驗一次）。
+4. **主動開瀏覽器**把走查台送到使用者眼前（mac `open <url>` / Windows `Start-Process <url>` / Linux `xdg-open <url>`；0 摩擦，避免被滑過）。
+5. `AskUserQuestion` 收方向：「照走查台把 journey 點完了嗎？方向 OK / 某幾頁要改 / 整個方向錯」。**改到使用者點頭才凍結**，後續 plan/build 以原型為錨點反推 API/DB（build 沿用其 markup/tokens、把假資料層換真 API）。**凍結時記錄選用的品牌基底 slug**（寫進 requirements 或 `.flow/state.json`，plan/build 沿用其 tokens）。
 
-> 例外：`cli`/`api`/純後端跳過整個 Step 5；使用者明說「跳過 mockup」可豁免，但 SHALL 用 `flow-state decision` 記成一筆「UI 方向延後／自負風險」的決策（**不是寫進 `### 開放問題`**——那會被 spec-ready 閘門擋住凍結），並警告「整體方向風險押到 build 才暴露」。
+> 例外：`cli`/`api`/純後端跳過整個 Step 5；使用者明說「跳過 mockup」可豁免，但 SHALL 用 `flow-state decision` 記成一筆「UI 方向延後／自負風險」的決策（**不是寫進 `### 開放問題`**——那會被 spec-ready 閘門擋住凍結），並警告「整體方向風險押到 build 才暴露」。豁免時 `specs/ui-mockups/` 不建目錄（`--freeze` 以目錄存在與否判定要不要驗走查台）。
 
 ## Step 6：凍結閘門
 
@@ -76,12 +79,12 @@ flow-state spec-ready
 flow-state spec-ready --freeze
 ```
 
-它先再驗一次收斂（開放問題清零＋REQ 齊），通過才寫 `.flow/state.json`：`phase="spec-done"`＋落 journal `spec.frozen`。**別手改 state.json 裸寫 `phase=spec-done` 繞過**——`flow-spec-gate` hook 會 exit 2 擋裸寫轉移（自駕下模型竄改不了）。
+它先再驗一次收斂（開放問題清零＋REQ 齊；`specs/ui-mockups/` 存在時一併驗走查台覆蓋），通過才寫 `.flow/state.json`：`phase="spec-done"`＋落 journal `spec.frozen`。**別手改 state.json 裸寫 `phase=spec-done` 繞過**——`flow-spec-gate` hook 會 exit 2 擋裸寫轉移（自駕下模型竄改不了）。
 
 ## 完成判準（self-check）
 - [ ] 訪談全程用彈窗、一次一題、有推薦答案
 - [ ] **grill-me 深挖閘門已彈窗問過**（深挖／直接凍結二選一）——漏問即不合格
 - [ ] `specs/requirements.md` 存在，含 REQ-XXX + REQ-E2E-* + REQ-PERF-*
-- [ ] **`### 開放問題` 已收斂為零、`flow-state spec-ready` 綠**（產 mockup 前）——這是防自駕跑歪的源頭閘門
-- [ ] web 類：`specs/ui-mockups/` 有 3–5 頁 + 已開瀏覽器 + 已彈窗定版
+- [ ] **`### 開放問題` 已收斂為零、`flow-state spec-ready` 綠**（產互動原型前）——這是防自駕跑歪的源頭閘門
+- [ ] web 類：互動原型全旅程覆蓋＋`flow-state mockup-check` 綠 + 已開瀏覽器讓使用者照走查台點過 + 已彈窗定版
 - [ ] 凍結走 `flow-state spec-ready --freeze`（非裸寫 state.json）、使用者已拍板

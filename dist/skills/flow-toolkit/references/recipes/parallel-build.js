@@ -33,6 +33,7 @@ const ATTACK_SCHEMA = {
     feature: { type: 'string' },
     attacks: {
       type: 'array',
+      minItems: 3,          // 釘死 prompt 的「列 3–5 個」下限：紅軍回 1-2 個攻擊＝schema 驗證失敗（引擎強制、非自律）
       items: {
         type: 'object', additionalProperties: false,
         properties: {
@@ -99,7 +100,8 @@ const results = await pipeline(
     `契約：import ${args.contractPath} 的共享 type/schema，兩端同一份。需求：${args.reqPath} 對應 ${f.req}。\n` +
     `紅軍攻擊面（含 id，逐項對賬）：\n${JSON.stringify(attack && attack.attacks, null, 2)}\n` +
     `  每個攻擊 SHALL 先寫失敗安全測試、再用防禦碼轉綠，並回報 attackCoverage（attackId→testFile）；\n` +
-    `  真的不適用才標 skipped+reason——**high severity 不准 skipped**（orchestrator 會驗 testFile 存在、不覆蓋會被擋整合）。\n` +
+    `  真的不適用才標 skipped+reason——**high severity 不准 skipped**（orchestrator 會驗 testFile 存在、不覆蓋會被擋整合）；\n` +
+    `  命中高危面（auth/注入/權限/金流…）的攻擊**即使非 high 也不准無痕 skipped**（須使用者拍板 redteam-waiver decision，否則整合閘門 exit 2）。\n` +
     `TDD：Red 先寫你自己的測試檔、單跑出真 assertion failure → Green 最小實作轉綠 → Refactor。\n` +
     `真實資料鏈路：涉 API/資料 SHALL 打真後端真 DB、禁 mock 假綠；真依賴未 ready（上游 5xx/未實作）→ 標 BLOCKED，不准 mock fallback。\n` +
     `**硬出口**：撞 hard block（上游 5xx / 未實作 / rate-limited / 型別契約缺）→ 立即在 blockers 回報並**停止本 worker**，禁反覆重試或自行降級 mock（悶燒會吃掉整波 ~15x token）。\n` +

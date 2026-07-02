@@ -18,7 +18,7 @@ compaction **先壓縮/歸檔最新的尾巴與已完成段落**，保住開頭�
 ## 做什麼
 
 1. **已 delivered 的 task 詳情**：`tasks.md` 已 `[x]` 段的冗長子步驟 → 收成一行摘要，詳情移 `specs/archive/tasks-<date>.md`。
-2. **過長 design/requirements**：已凍結、已實作的章節 → 摘要留主檔，全文移 `specs/archive/`。**接縫契約、未完成 REQ、open questions 一律留主檔**（還在用，不歸檔）。
+2. **過長 design/requirements**：已凍結、已實作的章節 → 摘要留主檔，全文移 `specs/archive/`。**接縫契約、未完成 REQ、open questions 一律留主檔**（還在用，不歸檔）；**requirements.md 主檔摘要 SHALL 保留全部 `REQ-E2E-*` id 行**——收束成零 REQ-E2E 的殼會被 `complete-check` exit 2 擋（完成謂詞不能被歸檔關閉）。
 3. **state journal**：`.flow/` 的已完成 action 紀錄 → 歸檔，保留當前 phase 與未完成 dangling。
 4. **驗證 artifact**：成功的測試報告可清（失敗的保留）。
 

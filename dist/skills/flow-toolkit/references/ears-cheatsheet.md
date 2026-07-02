@@ -14,10 +14,21 @@ EARS = Easy Approach to Requirements Syntax。把需求寫成「觸發 → 系�
 
 ## 特殊前綴（Flow 專用）
 
-- **`REQ-E2E-*`**：可 demo 的端到端 user journey，**Phase 4/5 驗證的來源**。
-  例：`REQ-E2E-001：訪客可完成「註冊 → 收驗證信 → 登入 → 看到空 dashboard」全程`
+- **`REQ-E2E-*`**：可 demo 的端到端 user journey，**Phase 4/5 驗證的來源**。`flow-state spec-ready` 機檢結構，二擇一：
+  - **單行箭頭鏈（≥3 段，簡單 journey）**：`REQ-E2E-001：訪客可完成「註冊 → 收驗證信 → 登入 → 看到空 dashboard」全程`
+  - **欄位式（多步複雜 journey；入口非空＋步驟 ≥2＋斷言 ≥1）**：
+    ```
+    REQ-E2E-002：管理員停用一個使用者帳號
+    - 入口：登入 /admin（super admin）
+    - 步驟：
+      1. 進「使用者管理」列表，搜尋目標帳號
+      2. 點「停用」並在確認彈窗按確定
+    - 斷言：列表狀態變 disabled；該帳號登入回 403
+    ```
+  - 非 web journey 的入口寫調用起點即可（例：`入口：CLI 執行 tool init` / `入口：POST /api/jobs`）。
 - **`REQ-PERF-*`**：效能 budget，**Phase 5 的硬閘門**。一定要含「指標 + 數字 + 分位數」。
   例：`REQ-PERF-001：dashboard 首屏 LCP < 2.5s（p95，4G 模擬）`；`REQ-PERF-002：GET /api/items?page=N p95 < 300ms（10 萬列 seed 資料下）`
+  寫 `N/A` 須使用者拍板＋`flow-state decision perf-waiver` 留檔，否則 `spec-ready` exit 2（一句 N/A 洗不掉效能驗收）。
 - **`REQ-RBAC-*`**：含角色/權限的系統自動注入（動態 RBAC，禁 hardcode 角色）。
 
 ## 寫好需求的自查

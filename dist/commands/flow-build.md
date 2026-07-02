@@ -55,7 +55,7 @@ fan-out 前 orchestrator 先 write-ahead：對本波每個 id 呼叫 `statelib.t
 
 Workflow 回來後，orchestrator 依拓樸序**一個一個**收尾每個 feature：
 - **檔案安全閘門（確定性，整合前 SHALL 先跑、不靠模型自律）**：跑 `flow-state scope --wave <本波 ids>`（mac/linux `node ~/.claude/skills/flow-toolkit/flow-state.mjs scope --wave F-1,F-2`、Windows PS 對應路徑）。它用 **git 真實變動**比對各 feature 宣告的 `conflictZone`——任一檔落在**所有** conflictZone 之外（worker 越界改了共用檔/foundation）→ **exit 2 暫停**，查清是哪個 worker 越界、該檔該不該走序列 foundation，**別硬整合**（這是同 repo 平行的檔案安全底線，模型偽造不了 git diff）。`overlap` 警告＝規劃時 conflictZone 沒切乾淨（同波兩 feature 改同檔有覆寫風險）→ 回 plan 修。
-- **紅軍對賬閘門（確定性，與 scope 同點 SHALL 跑）**：跑 `flow-state redteam --wave <本波 ids>`（路徑同 scope）。它讀 `.flow/redteam/<id>.json`——缺檔、任一 **high** 攻擊無 `covered` 對應項、或其 `testFile` 實際不存在（檔案存在性 script 親驗，worker 自報偽造不了）→ **exit 2 暫停**該波整合，補失敗安全測試轉綠／補落檔後重跑。
+- **紅軍對賬閘門（確定性，與 scope 同點 SHALL 跑）**：跑 `flow-state redteam --wave <本波 ids>`（路徑同 scope）。它讀 `.flow/redteam/<id>.json`——缺檔、攻擊清單 <3 個、任一 **high**（或 severity 缺失/非法值，比照 high）攻擊無 `covered` 對應項、其 `testFile` 實際不存在（檔案存在性 script 親驗，worker 自報偽造不了）、或**高危關鍵字攻擊（auth/注入/權限/金流…）無 covered 且無 `.flow/decisions/redteam-waiver-<id>-<attackId>.json` 豁免檔**（severity 自報調不鬆這道）→ **exit 2 暫停**該波整合，補失敗安全測試轉綠／補落檔後重跑。
 - 掃每個結果的 `driveBy`：**安全/資料正確性 red flag（SQL injection、auth bypass、密碼明文、destructive query 缺 WHERE）一律暫停**告知使用者（順手修紀律）。
 - 有 `blockers` 的標 BLOCKED／needs-decision，跳過；**順手 `flow-state lesson <id> --approach "<試過什麼>" --why "<為何卡住>"`** 記失敗記憶（防下波再生又撞同一面牆；自駕長流程尤其需要）。
 - 其餘一次一個進 Step 5（驗證 → 清垃圾 → done → commit）。
@@ -90,7 +90,7 @@ Workflow 回來後，orchestrator 依拓樸序**一個一個**收尾每個 featu
 - [ ] foundation 先序列、features 才同 repo 平行（conflictZone 算準）
 - [ ] **整合前跑 `flow-state scope --wave` 綠**：無 worker 越界改共用檔/foundation（被 exit 2 擋下＝有人越界，查清再整合，別繞）
 - [ ] 執行策略沒在散文裡自決：偏離預設平行（降級序列/部分平行）有先彈窗拍板＋寫進 `.flow/state.json`
-- [ ] 每 feature 紅軍先行（recipe Stage 1 單一執行點）、攻擊面已落檔 `.flow/redteam/<id>.json`、attackCoverage 對賬過（high 全 covered＋testFile 實存）、worker 走 TDD + 真實資料鏈路（無 mock 假綠）
+- [ ] 每 feature 紅軍先行（recipe Stage 1 單一執行點）、攻擊面已落檔 `.flow/redteam/<id>.json`、attackCoverage 對賬過（攻擊 ≥3＋high 全 covered＋testFile 實存＋高危關鍵字攻擊無無痕 skipped）、worker 走 TDD + 真實資料鏈路（無 mock 假綠）
 - [ ] 每 feature 便宜 sensor 先跑/fail-fast、貴迴圈有界；效能只跑便宜 smoke（嚴謹 p50/p95 留 ship 量一次）
 - [ ] 每個完成的 task：commit 前清驗證垃圾（clean script `--apply` + review 掉 source 內 debug 殘留）→ TaskUpdate completed → **`flow-state done <id>`**（翻 tasks.md [x] + ledger）→ per-task commit+push（scope 帶 canonical id，走 git-tools skill）。被 `flow-commit-gate` 擋下＝你跳過了 `flow-state done`，補跑即可
 - [ ] BLOCKED / 安全 red flag 有暫停回報，沒靜默略過

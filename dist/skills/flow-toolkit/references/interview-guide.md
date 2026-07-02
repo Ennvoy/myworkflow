@@ -29,7 +29,7 @@
    - 安全、相容、可用性
 6. **驗收條件**：每條需求「怎樣算做完」（逼出可驗的 EARS 句）
 
-**收斂是迴圈、不是一輪**：grill-me + spec-reviewer 反覆問，把 `### 開放問題` 一項項清掉，直到**某一輪問不出新問題**才算收斂。收斂後跑 `flow-state spec-ready`（確定性閘門）——`### 開放問題` 沒清零、或缺 `REQ-E2E-`/`REQ-PERF-` 就 exit 2，把未收斂項列回來繼續問；**綠了才往下產互動原型**。真無法當場拍板的，移到 `### 延後決策` 段並 `flow-state decision` 記錄，**不留懸空項**——懸空項就是自駕途中 AI 拿去亂猜、跑歪的源頭。
+**收斂是迴圈、不是一輪**：grill-me + spec-reviewer 反覆問，把 `### 開放問題` 一項項清掉，直到**某一輪問不出新問題**才算收斂。收斂後跑 `flow-state spec-ready`（確定性閘門）——`### 開放問題` 段缺失/沒清零、缺 `REQ-E2E-`/`REQ-PERF-`、placeholder（TODO/待定）、REQ-E2E 缺 journey 結構、REQ-PERF 標 N/A 沒有 perf-waiver 豁免檔，任一就 exit 2，把未收斂項列回來繼續問（含糊詞/缺規範動詞僅警告，帶回訪談補問）；**綠了才往下產互動原型**。真無法當場拍板的，移到 `### 延後決策` 段並 `flow-state decision` 記錄，**不留懸空項**——懸空項就是自駕途中 AI 拿去亂猜、跑歪的源頭。
 
 ## 四、獨立 spec-reviewer（建議）
 
@@ -41,7 +41,7 @@
 
 1. 呼叫 `ui-ux-pro-max:ui-ux-pro-max` 取設計建議（style / palette / font / product-type 規範）。
 2. 產互動原型到 `specs/ui-mockups/`：**全旅程覆蓋**（所有 `REQ-E2E-*` 途經畫面、頁頁互連可點到終點）＋假資料層 `app.js`（localStorage、CRUD 有後果）＋每頁狀態切換器（空/載入/錯誤/權限不足）＋`index.html` journey 走查台（每條 REQ-E2E 一張卡）。Tailwind CDN、零依賴、`file://` 直接開；含中文寫檔一律 UTF-8（PowerShell 加 `-Encoding utf8`）。
-3. SHALL 跑 `flow-state mockup-check`（確定性閘門）：走查台缺 REQ-E2E 卡或連結 404 → exit 2 補齊再來。
+3. SHALL 跑 `flow-state mockup-check`（確定性閘門）：走查台缺 REQ-E2E 卡、連結 404、或連到的頁面是空殼（無 app.js/互動元素）→ exit 2 補齊再來。
 4. **主動開瀏覽器**開 index.html（mac `open` / Windows `Start-Process` / Linux `xdg-open`）（0 摩擦原則，把實體送到使用者眼前，避免被文字滑過）。
 5. `AskUserQuestion` 收方向：「照走查台把 journey 點完了嗎？方向 OK / 某幾頁要改 / 整個方向錯」。**改到使用者點頭才凍結**，後續以原型為錨點反推 API/DB（build 沿用 markup/tokens、假資料層換真 API）。
 

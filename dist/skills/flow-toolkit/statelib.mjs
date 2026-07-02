@@ -225,33 +225,156 @@ export async function readStateJson(root) { return readJSON(statePath(root), {})
 
 // ── 凍結前 requirements 就緒度（純函式可測；只看 requirements.md 內容）──
 // 自駕安全的源頭：spec 沒問乾淨（### 開放問題 沒清零）就凍結，自駕途中 AI 只能猜＝跑歪。
-// 故凍結前 SHALL：① ### 開放問題 段收斂為零（空 /「無」/「N/A」才算零，任一實質列＝未收斂）；
-//   ② 至少各 1 條 REQ-（驗收條件）/ REQ-E2E-（端到端 journey＝驗證來源）/ REQ-PERF-（效能 budget＝ship 硬閘門）。
-// 「延後決策」不放這段（移到獨立段 + flow-state decision 記錄），故 ### 開放問題 任何實質列都算未收斂。
+// 故凍結前 SHALL：① ### 開放問題 段「存在」且收斂為零（段缺失＝帳本沒建過，恆過洞，exit 2；
+//   空 /「無」/「N/A」才算零，任一實質列＝未收斂）；
+//   ② 至少各 1 條 REQ-（驗收條件）/ REQ-E2E-（端到端 journey＝驗證來源）/ REQ-PERF-（效能 budget＝ship 硬閘門）；
+//   ③ 無 placeholder（TODO/TBD/待定/???——需求不能留待填空白）；
+//   ④ 每條 REQ-E2E 有可驗 journey 結構（單行箭頭鏈 ≥3 段，或欄位式 入口：/步驟：≥2/斷言：≥1）；
+//   ⑤ REQ-PERF 標 N/A 只回報 perfNA 旗標——豁免檔對賬（.flow/decisions/perf-waiver.json）由 CLI 做，純函式不碰檔案系統。
+// 另回 warnings（提醒不擋，防 Goodhart 誤殺合法表述）：REQ 行含糊詞無量化、非 E2E/PERF 的 REQ 行缺規範動詞。
+// 「延後決策」不放開放問題段（移到獨立段 + flow-state decision 記錄），故 ### 開放問題 任何實質列都算未收斂。
 const SPEC_NONE_RE = /^(無|（無）|\(無\)|none|n\/?a|—|–|-|\.{1,3})$/i;
+const REQ_DEF_RE = /^\s*(?:[-*+]\s*)?(?:\d+[.)]\s*)?(?:\*\*)?(REQ-[A-Za-z0-9._-]+)/;   // 行首（容列點/編號/粗體）的 REQ 定義行
+// placeholder：英文 TODO 只認標記形（TODO: ）——todo-list 類專案的領域名詞不誤殺；
+// 待定/待補 加負向前瞻排除複合詞（待補貨/待定義）；含 zh-TW 常見變體（待確認/未定/全形？？？/TBC）。
+const PLACEHOLDER_RE = /\bTODO\b\s*[:：]|\bTBD\b|\bTBC\b|\bTBA\b|\bTKTK\b|\bFIXME\b|(?:待定|待補)(?![一-鿿])|待確認|待決定|未定(?!義)|\?{3}|？{3}/i;
+const VAGUE_RE = /好用|快速|迅速|高效|大量|適當|盡量|盡快|友善|直覺|流暢|\b(fast|robust|user-friendly|intuitive|scalable|performant)\b/i;
+const E2E_FIELD_RE = /^\s*(?:[-*+]\s*)?(?:\*\*)?(入口|步驟|斷言)(?:\*\*)?\s*[:：]\s*(.*)$/;
+const LIST_ITEM_RE = /^\s*(?:\d+[.)]|[-*+])\s+\S/;
+const arrowSegs = s => String(s || '').split(/→|->/).map(x => x.trim()).filter(Boolean);
+// 一條 REQ-E2E 是否有可驗 journey 結構。只認「定義行」（REQ_DEF_RE 且捕獲 id 相符）當檢查錨——
+// 總覽/追溯行（「REQ-E2E-001 → REQ-E2E-002 → …」）不是萬用通行證；引用行不參與判定。
+//   形 A：定義行本身是 ≥3 段箭頭鏈（入口 → … → 目標/斷言），且該行不含其他 REQ-E2E id（一行多 id＝引用非定義）
+//   形 B：定義行之後（至下一個 REQ 定義行/標題前）有欄位式 入口：(非空)/步驟：(≥2 列點或箭頭鏈)/斷言：(≥1)
+// 全檔找不到定義行也算 fail（只被引用、沒被定義）。
+function e2eStructureOk(lines, id) {
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(REQ_DEF_RE);
+    if (!m || m[1].toUpperCase() !== id) continue;
+    const otherIds = (lines[i].match(/\bREQ-E2E-[A-Za-z0-9._-]+/gi) || []).filter(x => x.toUpperCase() !== id);
+    if (!otherIds.length && arrowSegs(lines[i]).length >= 3) return true;
+    let hasEntry = false, steps = 0, asserts = 0, cur = '';
+    for (let j = i + 1; j < lines.length; j++) {
+      const l = lines[j];
+      if (/^#{1,6}\s/.test(l) || REQ_DEF_RE.test(l)) break;
+      const f = l.match(E2E_FIELD_RE);
+      if (f) {
+        cur = f[1];
+        const val = f[2].trim();
+        if (cur === '入口' && val) hasEntry = true;
+        if (cur === '步驟' && arrowSegs(val).length >= 3) steps = Math.max(steps, 2);   // 步驟欄同行箭頭鏈也算
+        if (cur === '斷言' && val) asserts++;
+        continue;
+      }
+      if (LIST_ITEM_RE.test(l)) { if (cur === '步驟') steps++; else if (cur === '斷言') asserts++; }
+    }
+    if (hasEntry && steps >= 2 && asserts >= 1) return true;
+  }
+  return false;
+}
 export function specReadiness(md) {
   const text = String(md || '');
-  let inSection = false, level = 0;
+  const lines = text.split(/\r?\n/);
+  // 段落狀態機：開放問題段（open 計數）＋延後決策段（placeholder 降級用）。
+  // 段內「更深層子標題」也算 open item（#### 是否支援 SSO？——常見排版習慣，不能被 heading 分支吞掉）。
+  let inSection = false, level = 0, sawOpenSection = false;
+  let inDeferred = false, defLevel = 0;
   const open = [];
-  for (const raw of text.split(/\r?\n/)) {
+  const deferredLine = new Array(lines.length).fill(false);
+  for (let i = 0; i < lines.length; i++) {
+    const raw = lines[i];
     const h = raw.match(/^(#{1,6})\s+(.*\S)\s*$/);
     if (h) {
       const lv = h[1].length, title = h[2].replace(/\*\*/g, '').trim();
       if (inSection && lv <= level) inSection = false;                 // 同級或更高標題＝段結束
-      if (/開放問題|open\s*questions/i.test(title)) { inSection = true; level = lv; }
+      if (inDeferred && lv <= defLevel) inDeferred = false;
+      if (/開放問題|open\s*questions/i.test(title)) { inSection = true; sawOpenSection = true; level = lv; }
+      else if (/延後決策|deferred/i.test(title)) { inDeferred = true; defLevel = lv; }
+      else if (inSection && !SPEC_NONE_RE.test(title)) open.push(title);   // 段內子標題＝一個開放問題
+      deferredLine[i] = inDeferred;
       continue;
     }
+    deferredLine[i] = inDeferred;
     if (!inSection) continue;
     const body = raw.replace(/\*\*/g, '').replace(/^\s*[-*+]\s*/, '').replace(/^\s*\d+[.)]\s*/, '').trim();
     if (!body || SPEC_NONE_RE.test(body)) continue;                    // 空行 /「無」/「N/A」＝零
     open.push(body);
   }
-  const problems = [];
+  const problems = [], warnings = [];
+  if (!sawOpenSection) problems.push('查無「### 開放問題」段——訪談帳本 SHALL 存在（整段不寫＝閘門看不見任何未決項＝恆過洞）；真的零開放問題就寫「### 開放問題」＋「無」');
   if (open.length) problems.push(`### 開放問題 還有 ${open.length} 項未收斂——凍結前 SHALL 清零（解決成 REQ/EARS，或移到「延後決策」段並 flow-state decision 記錄）`);
   if (!/\bREQ-/.test(text))       problems.push('查無任何 REQ- 驗收條件（requirements.md 形同空殼）');
   if (!/\bREQ-E2E-/i.test(text))  problems.push('查無 REQ-E2E-*（缺可 demo 的端到端 journey＝Phase 4/5 沒驗證來源）');
-  if (!/\bREQ-PERF-/i.test(text)) problems.push('查無 REQ-PERF-*（缺效能 budget；無效能敏感路徑也 SHALL 寫一條 REQ-PERF-001：N/A，表有意識略過）');
-  return { open, problems };
+  if (!/\bREQ-PERF-/i.test(text)) problems.push('查無 REQ-PERF-*（缺效能 budget；真無效能敏感路徑須寫 REQ-PERF-001：N/A 並經使用者拍板 flow-state decision perf-waiver 留檔）');
+  // placeholder：延後決策段內（本就要求逐項 decision 留檔）降 warning、不整段豁免（防「TODO 全倒進該段洗閘門」）。
+  const ph = [];
+  lines.forEach((l, i) => {
+    if (!PLACEHOLDER_RE.test(l)) return;
+    if (deferredLine[i]) warnings.push(`${i + 1} 行（延後決策段）含 placeholder 字樣——確認該項已 flow-state decision 留檔（附 AI 建議預設）`);
+    else ph.push(`${i + 1} 行：${l.trim().slice(0, 60)}`);
+  });
+  if (ph.length) problems.push(`發現 ${ph.length} 處 placeholder（TODO:/TBD/待定/待確認/???）——需求不能留待填空白：問清楚拍板成 REQ/EARS，或改寫措辭（附 AI 建議預設）移入 ### 延後決策 段並 flow-state decision 記錄：` + ph.slice(0, 8).map(s => `\n      · ${s}`).join(''));
+  for (const id of extractReqE2E(text)) {
+    if (!e2eStructureOk(lines, id)) problems.push(`${id} 缺可驗 journey 結構（定義行不合格或只被引用沒被定義）——定義行寫成單行箭頭鏈「入口 → … → 斷言」（≥3 段），或欄位式「入口：/步驟：（≥2 步）/斷言：」（範本見 references/ears-cheatsheet.md）`);
+  }
+  // REQ-PERF 未量化偵測（逐定義行區塊）：整塊無任何數字（budget 沒量化，含 N/A/不適用/同義洗白），
+  // 或定義塊明寫 N/A（限斜線/全形形；裸 NA 可能是區域縮寫不誤中）→ perfNA=true，CLI 端要求 perf-waiver。
+  let perfNA = false;
+  const blockEnd = (i) => { let j = i + 1; while (j < lines.length && !/^#{1,6}\s/.test(lines[j]) && !REQ_DEF_RE.test(lines[j])) j++; return j; };
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(REQ_DEF_RE);
+    if (!m || !/^REQ-PERF-/i.test(m[1])) continue;
+    const block = [lines[i].slice(m[0].length), ...lines.slice(i + 1, blockEnd(i))].join('\n');
+    if (!/\d/.test(block) || /\bN\/A\b|Ｎ／Ａ|不適用/i.test(block)) perfNA = true;
+  }
+  // 表述品質提醒（僅 warning）：規範動詞看「定義行＋其後內文區塊」任一行即可（標題行式 REQ 不誤殺）；
+  // 追溯/對照行（rest 以 →/-> 開頭）跳過；每個 id 每類只警告一次。
+  const warned = new Set();
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(REQ_DEF_RE);
+    if (!m) continue;
+    const id = m[1];
+    const rest = lines[i].slice(m[0].length);      // id 之後的句子（id 本身含數字，不能拿整行測「無量化」）
+    if (/^\s*(?:\*\*)?\s*(?:→|->)/.test(rest)) continue;               // 追溯行「REQ-001 → F-1」非定義
+    const isE2E = /^REQ-E2E-/i.test(id), isPerf = /^REQ-PERF-/i.test(id);
+    const vague = rest.match(VAGUE_RE);
+    if (vague && !/\d/.test(rest) && !warned.has(id + '|vague')) {
+      warned.add(id + '|vague');
+      warnings.push(`${i + 1} 行 ${id} 含含糊詞「${vague[0]}」且無量化數字——建議補可驗的數字/單位`);
+    }
+    if (!isE2E && !isPerf && !warned.has(id + '|verb')) {
+      const blockLines = [rest, ...lines.slice(i + 1, blockEnd(i))];
+      if (!blockLines.some(l => /應|須|SHALL|MUST/i.test(l))) {
+        warned.add(id + '|verb');
+        warnings.push(`${i + 1} 行 ${id} 缺規範動詞（應/須/SHALL/MUST，含其後內文）——不像可驗收的 EARS 句`);
+      }
+    }
+  }
+  return { open, problems, warnings, perfNA };
+}
+
+// ── 專案類型正門（W0-5）：Step 1 彈窗拍板後 flow-state project-type 落檔；--freeze 對賬這筆記錄。──
+// web 類（含 mobile：走垂直切片＋互動原型）凍結時 SHALL 有原型或 mockup-waiver 豁免檔；
+// 非 web 的 enum 記錄本身即豁免（不再造「豁免的豁免」）。
+export const PROJECT_TYPES = ['web-saas', 'web-app', 'mobile', 'cli', 'api', 'data-pipeline', 'library', 'framework', 'desktop-gui'];
+export const WEB_PROJECT_TYPES = ['web-saas', 'web-app', 'mobile'];
+
+// ── 紅軍高危攻擊面判定（W0-6，純函式可測）：命中者禁無痕跳過（skipped 須 decision 豁免檔）。──
+// 三組制降誤中（「prompt 超過 token 上限」「依賴注入順序」這類工程語境不觸發）：
+//   (a) 強訊號詞單獨即觸發（幾乎必為安全面）；
+//   (b) 低訊號 domain 名詞（auth/login/token/session/payment…）須與攻擊動詞（bypass/偽造/竊取/未登入…）同文共現；
+//   (c) 「注入」須與 SQL/script/命令/惡意 等語境共現（排除依賴注入）。
+// 英文詞帶 word boundary（author/repayment 不誤中）；方向仍 fail-safe：誤中代價＝多留一筆可稽核豁免。
+const RISK_STRONG_RE = /\b(injection|sqli|xss|csrf|idor|ssrf|rce|privilege|credential)s?\b|越權|提權|個資|金流|竄改|盜用|冒用/i;
+const RISK_DOMAIN_RE = /\b(auth|login|token|session|payment|admin|account|password)s?\b|權限|登入|後台|帳號|密碼|他人|付費/i;
+const RISK_VERB_RE = /\b(bypass|forge[dr]?|steal|stolen|replay|hijack|escalat\w*|spoof\w*|tamper\w*|unauthori[sz]ed|takeover|impersonat\w*|leak\w*|brute)\b|繞過|偽造|竊取|盜|劫持|外洩|冒用|未授權|未登入|明文/i;
+const RISK_INJECT_CTX_RE = /SQL|script|命令|指令|惡意|payload|XSS/i;
+export function isHighRiskAttackText(text) {
+  const s = String(text || '');
+  if (RISK_STRONG_RE.test(s)) return true;
+  if (RISK_DOMAIN_RE.test(s) && RISK_VERB_RE.test(s)) return true;
+  if (/注入/.test(s) && RISK_INJECT_CTX_RE.test(s)) return true;
+  return false;
 }
 
 // ── tasks.md 同步：把「task 完成」收成一個可被 hook/CLI 共用的原子操作 ──
@@ -430,6 +553,17 @@ export function mockupAudit(requirementsMd, indexHtml) {
     seen.add(local); hrefs.push(local);
   }
   return { reqIds, missingReq, hrefs };
+}
+
+// 走查台連到的每一頁的空殼檢查（W0-8，純函式）：堵「index.html 有卡但頁面是空殼」——
+// 每頁 SHALL 引用共用假資料層 app.js（prototype-guide：CRUD 才有後果）且含 ≥1 互動元素。
+// 故意笨（純文字掃描）：擋的是零互動的空殼，好不好用仍由使用者真點過後定版。
+export function mockupPageProblems(html) {
+  const c = String(html || '');
+  const problems = [];
+  if (!/app\.js/i.test(c)) problems.push('未引用共用假資料層 app.js（prototype-guide：每頁掛同一份假資料層，CRUD 才有後果）');
+  if (!/<form\b|<button\b|<input\b|<select\b|<textarea\b|<a\s[^>]*href\s*=/i.test(c)) problems.push('無任何互動元素（form/button/input/連結）——空殼頁不算可走查的互動原型');
+  return problems;
 }
 
 // ── Playwright journey 真實性審計（純函式可測；導航版「禁 mock 假綠」的確定性節點）──

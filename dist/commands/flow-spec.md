@@ -10,7 +10,7 @@ description: Flow Phase 1 — 訪談定版。蘇格拉底式一次一題彈窗�
 
 ## Step 1：任務類型判定（決定後續切片與 UI 流程）
 
-讀使用者那句需求，判定類型並記到 `.flow/state.json` 的 `projectType`：
+讀使用者那句需求先自行判定類型，**併入首輪訪談彈窗跟使用者確認**（AI 建議置首、不另開新停點），拍板後 SHALL 跑 `flow-state project-type <type>` 落檔（寫 manifest＋state.json）——**`spec-ready --freeze` 會對賬這筆記錄：缺檔凍不了；web 類無互動原型且無豁免檔也凍不了**（「不建目錄＝靜默跳過原型」已封死）：
 - `web-saas` / `web-app` / `mobile`：走**垂直切片**（§ tasks），**且** Step 5 要做互動原型。
 - `cli` / `api` / `data-pipeline` / `library` / `framework` / `desktop-gui`：走**水平拆解**（功能模組），**跳過** Step 5 互動原型（`desktop-gui` 的原生視窗用 HTML/Tailwind 原型不具代表性，故同列跳過）。
 - 含「使用者/角色/權限/後台/admin」字樣 → Step 3 自動注入動態 RBAC 需求（禁 hardcode 角色；初始只 seed 一個 super admin）。
@@ -37,8 +37,8 @@ description: Flow Phase 1 — 訪談定版。蘇格拉底式一次一題彈窗�
 格式見 `references/ears-cheatsheet.md`。一律：
 - **User Story**：作為 `<role>`，我想要 `<action>`，以便 `<benefit>`。
 - **EARS 驗收條件**：`REQ-001：當 <trigger> 時，系統應 <response>`（API 名/欄位/狀態碼保留英文）。
-- **`REQ-E2E-*`**：可 demo 的端到端 user journey（Phase 4/5 的驗證來源）。**SHALL 從入口寫到目標**（例：`登入 → 首頁 → 點 X 卡片 → 進 Y 頁 → 操作 Z → 斷言結果`），不是只描述目標頁——驗證要從真實起點走完整導航（禁直接 goto 目標頁，見 `playwright-real-data-template.md` 第五鐵則）。
-- **`REQ-PERF-*`**：效能 budget（例：`REQ-PERF-001：dashboard 首屏 LCP < 2.5s（p95）`）——**這是 Phase 5 的硬閘門，沒寫等於放棄效能驗收**。
+- **`REQ-E2E-*`**：可 demo 的端到端 user journey（Phase 4/5 的驗證來源）。**SHALL 從入口寫到目標**（例：`登入 → 首頁 → 點 X 卡片 → 進 Y 頁 → 操作 Z → 斷言結果`），不是只描述目標頁——驗證要從真實起點走完整導航（禁直接 goto 目標頁，見 `playwright-real-data-template.md` 第五鐵則）。**`spec-ready` 機檢結構**：單行箭頭鏈 ≥3 段、或欄位式「入口：/步驟：（≥2 步）/斷言：」，範本見 `references/ears-cheatsheet.md`。
+- **`REQ-PERF-*`**：效能 budget（例：`REQ-PERF-001：dashboard 首屏 LCP < 2.5s（p95）`）——**這是 Phase 5 的硬閘門，沒寫等於放棄效能驗收**。真無效能敏感路徑寫 `REQ-PERF-001：N/A`，但 SHALL 先彈窗請使用者拍板並 `flow-state decision perf-waiver --choice "REQ-PERF N/A" --why "<拍板原因>"` 留檔（`spec-ready` 對賬豁免檔，一句 N/A 洗不掉效能驗收）。
 - RBAC 命中 → 注入 `REQ-RBAC-001..007`（動態角色/權限存 DB、super admin short-circuit）。
 - 一個 concern 一段，清楚可逐條對應。`### 開放問題` 收訪談途中還沒拍板的——但**凍結前 SHALL 全部清零**（見 Step 4.5）：每一項要嘛解決成 REQ/EARS、要嘛移到 `### 延後決策` 段並 `flow-state decision` 記錄（附 AI 建議預設），**不留懸空項給自駕猜**。真的零開放問題就寫「無」。
 
@@ -54,7 +54,7 @@ requirements 含 auth / 權限 / payment / 個資 / 合規 / audit 關鍵字 →
 flow-state spec-ready
 ```
 
-它機檢 `specs/requirements.md`：`### 開放問題` 沒清零、或缺 `REQ-`/`REQ-E2E-`/`REQ-PERF-` 任一 → **exit 2**，把未收斂項列回來繼續問。**綠了才往下做 Step 5 互動原型**。這直接堵自駕跑歪——**spec 沒問乾淨就凍結，自駕途中 AI 只能猜（C 類分歧），猜歪了沒人擋**。真無法當場拍板的，移到 `### 延後決策` 段並 `flow-state decision` 記錄（附 AI 建議預設），**不留懸空項在 `### 開放問題`**。
+它機檢 `specs/requirements.md`：`### 開放問題` **段缺失**或沒清零、缺 `REQ-`/`REQ-E2E-`/`REQ-PERF-` 任一、有 placeholder（TODO/TBD/待定/???）、REQ-E2E 缺 journey 結構、REQ-PERF 標 N/A 但無 perf-waiver 豁免檔 → **exit 2**，把未收斂項列回來繼續問（含糊詞/缺規範動詞僅警告不擋，帶回訪談補問）。**綠了才往下做 Step 5 互動原型**。這直接堵自駕跑歪——**spec 沒問乾淨就凍結，自駕途中 AI 只能猜（C 類分歧），猜歪了沒人擋**。真無法當場拍板的，移到 `### 延後決策` 段並 `flow-state decision` 記錄（附 AI 建議預設），**不留懸空項在 `### 開放問題`**。
 
 > 為什麼這裡要硬閘門：訪談「問完了沒」本是模型自評的散文判斷，會被滑過。把「開放問題清零」做成 exit 2 的 `spec-ready`，模型才真的乖乖問到底（憲法確定性閘門原則）。
 
@@ -65,11 +65,11 @@ mockup ≠ 幾頁靜態圖靠想像。產的是**零依賴互動原型**：可�
 0. **選品牌設計系統基底（先做，lazy 載入）**：讀 `references/design-systems/index.md`（150 套大廠設計語言的分類索引，僅清單、約幾 KB），用 `AskUserQuestion` 讓使用者選一套當基底——依 `projectType`/需求推薦 3–4 個置首（工具/SaaS 類推 `shadcn`/`linear-app`/`vercel`、金流推 `stripe`、AI 產品推 `claude`/`openai`），**選項含「不用基底，純 ui-ux-pro-max」**。選定後**只讀選中那套**的 `references/design-systems/<slug>/DESIGN.md`（9 段規範）+ `tokens.css`（CSS 變數），**不全載**（context 零負擔）。設計系統為美學靈感、**非官方品牌資產**（見 `design-systems/NOTICE.md`）。
 1. 呼叫 `ui-ux-pro-max:ui-ux-pro-max` skill 取設計建議（style / palette / font pairing / product-type 規範）——**有選基底時：以基底 `DESIGN.md`/`tokens.css` 的色彩·排版·間距為準，ui-ux-pro-max 補強元件級互動/狀態/a11y 與 shadcn 範例**。未裝 → 提示使用者跑安裝檔的 ui-ux-pro-max 安裝指令（見 README），不提供 fallback。
 2. 依 `prototype-guide.md` 產互動原型到 `specs/ui-mockups/`：**全旅程覆蓋**（所有 `REQ-E2E-*` 途經畫面每頁都做、頁頁互連可點到終點）＋共用假資料層 `app.js`（localStorage、CRUD 有後果、可重置）＋每頁狀態切換器（空/載入/錯誤/權限不足）＋`index.html` **journey 走查台**（每條 REQ-E2E 一張卡：id＋步驟＋入口連結）。Tailwind CDN、零依賴、`file://` 直接開；**有基底時把該套 `tokens.css` 的 `:root` 變數 verbatim inline、不臆造**。**含中文寫檔一律 UTF-8**（PowerShell 加 `-Encoding utf8`）。
-3. **SHALL 跑 `flow-state mockup-check`（確定性閘門）**：走查台缺任一 REQ-E2E 卡、或本地連結 404 → exit 2 補齊再來——堵「只產兩頁就請使用者定版」的偷工（`spec-ready --freeze` 會再驗一次）。
+3. **SHALL 跑 `flow-state mockup-check`（確定性閘門）**：走查台缺任一 REQ-E2E 卡、零本地入口連結、本地連結 404、或連到的頁面是空殼（無 app.js／互動元素、引用的 script 缺檔）→ exit 2 補齊再來——堵「只產兩頁就請使用者定版」與「有卡但頁面空殼」的偷工（`spec-ready --freeze` 會再驗一次）。
 4. **主動開瀏覽器**把走查台送到使用者眼前（mac `open <url>` / Windows `Start-Process <url>` / Linux `xdg-open <url>`；0 摩擦，避免被滑過）。
 5. `AskUserQuestion` 收方向：「照走查台把 journey 點完了嗎？方向 OK / 某幾頁要改 / 整個方向錯」。**改到使用者點頭才凍結**，後續 plan/build 以原型為錨點反推 API/DB（build 沿用其 markup/tokens、把假資料層換真 API）。**凍結時記錄選用的品牌基底 slug**（寫進 requirements 或 `.flow/state.json`，plan/build 沿用其 tokens）。
 
-> 例外：`cli`/`api`/純後端跳過整個 Step 5；使用者明說「跳過 mockup」可豁免，但 SHALL 用 `flow-state decision` 記成一筆「UI 方向延後／自負風險」的決策（**不是寫進 `### 開放問題`**——那會被 spec-ready 閘門擋住凍結），並警告「整體方向風險押到 build 才暴露」。豁免時 `specs/ui-mockups/` 不建目錄（`--freeze` 以目錄存在與否判定要不要驗走查台）。
+> 例外：`cli`/`api`/純後端跳過整個 Step 5（Step 1 落檔的非 web enum 本身即豁免記錄）；**web 類**使用者明說「跳過 mockup」才可豁免，SHALL `flow-state decision mockup-waiver --choice "跳過互動原型" --why "<使用者原話>"` 留檔（**不是寫進 `### 開放問題`**——那會被 spec-ready 閘門擋住凍結），並警告「整體方向風險押到 build 才暴露」。`--freeze` 機檢：web 類無 `specs/ui-mockups/` 且無 mockup-waiver 檔 → exit 2（「不建目錄＝靜默豁免」已封死）。
 
 ## Step 6：凍結閘門
 
@@ -83,6 +83,7 @@ flow-state spec-ready --freeze
 
 ## 完成判準（self-check）
 - [ ] 訪談全程用彈窗、一次一題、有推薦答案
+- [ ] projectType 已彈窗拍板並 `flow-state project-type` 落檔（`--freeze` 會對賬）
 - [ ] **grill-me 深挖閘門已彈窗問過**（深挖／直接凍結二選一）——漏問即不合格
 - [ ] `specs/requirements.md` 存在，含 REQ-XXX + REQ-E2E-* + REQ-PERF-*
 - [ ] **`### 開放問題` 已收斂為零、`flow-state spec-ready` 綠**（產互動原型前）——這是防自駕跑歪的源頭閘門

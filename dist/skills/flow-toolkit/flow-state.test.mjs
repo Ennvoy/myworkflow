@@ -63,6 +63,9 @@ test('redteam：缺落檔 → exit 2', async () => {
   });
 });
 
+// 良性 low 攻擊（不含高危關鍵字、無 coverage 也合法）——湊 minItems:3 鏡射檢查用
+const BENIGN = [{ id: 'A8', severity: 'low', scenario: '清單空狀態顯示錯誤' }, { id: 'A9', severity: 'low', scenario: '長字串截斷顯示' }];
+
 test('redteam：high 攻擊 skipped / testFile 不存在 → exit 2；全 covered 且實存 → 通過', async () => {
   await withRoot(async (root) => {
     await S.init(root, { project: 'p', tasks: [{ id: 'F-1' }] });
@@ -70,27 +73,56 @@ test('redteam：high 攻擊 skipped / testFile 不存在 → exit 2；全 covere
     await mkdir(dir, { recursive: true });
     // high 被 skipped → 擋
     await writeFile(path.join(dir, 'F-1.json'), JSON.stringify({
-      attacks: [{ id: 'A1', severity: 'high' }, { id: 'A2', severity: 'low' }],
+      attacks: [{ id: 'A1', severity: 'high' }, ...BENIGN],
       coverage: [{ attackId: 'A1', status: 'skipped', reason: 'lazy' }],
     }), 'utf8');
     assert.equal(run(['redteam', '--wave', 'F-1'], root).code, 2, 'high 不准 skipped');
     // covered 但 testFile 不存在 → 擋（自報偽造不了檔案存在性）
     await writeFile(path.join(dir, 'F-1.json'), JSON.stringify({
-      attacks: [{ id: 'A1', severity: 'high' }],
+      attacks: [{ id: 'A1', severity: 'high' }, ...BENIGN],
       coverage: [{ attackId: 'A1', status: 'covered', testFile: 'tests/ghost.test.ts' }],
     }), 'utf8');
     assert.equal(run(['redteam', '--wave', 'F-1'], root).code, 2, 'testFile 要真的在');
-    // covered 且 testFile 實存且為真測試 → 通過（low 攻擊不強制）
+    // covered 且 testFile 實存且為真測試 → 通過（良性 low 攻擊不強制）
     await mkdir(path.join(root, 'tests'), { recursive: true });
     await writeFile(path.join(root, 'tests', 'a1.test.ts'),
       "import { test, expect } from 'vitest'\ntest('A1 sql injection blocked', () => { expect(safe).toBe(true) })\n", 'utf8');
     await writeFile(path.join(dir, 'F-1.json'), JSON.stringify({
-      attacks: [{ id: 'A1', severity: 'high' }, { id: 'A2', severity: 'low' }],
+      attacks: [{ id: 'A1', severity: 'high' }, ...BENIGN],
       coverage: [{ attackId: 'A1', status: 'covered', testFile: 'tests/a1.test.ts' }],
     }), 'utf8');
     const r = run(['redteam', '--wave', 'F-1'], root);
     assert.equal(r.code, 0, r.err);
     assert.match(r.out, /通過/);
+  });
+});
+
+test('redteam：攻擊清單 <3（含空/缺欄位）→ exit 2（鏡射 ATTACK_SCHEMA minItems，堵模型親手落檔繞過 schema）', async () => {
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [{ id: 'F-1' }] });
+    const dir = path.join(root, '.flow', 'redteam');
+    await mkdir(dir, { recursive: true });
+    await writeFile(path.join(dir, 'F-1.json'), JSON.stringify({ attacks: [], coverage: [] }), 'utf8');
+    const r0 = run(['redteam', '--wave', 'F-1'], root);
+    assert.equal(r0.code, 2, '空清單不能 vacuous 過關');
+    assert.match(r0.err, /少於 3/);
+    await writeFile(path.join(dir, 'F-1.json'), JSON.stringify({ coverage: [] }), 'utf8');
+    assert.equal(run(['redteam', '--wave', 'F-1'], root).code, 2, 'attacks 欄位缺失同擋');
+  });
+});
+
+test('redteam：severity 缺失/非法值 → 比照 high 強制 covered（fail-safe 從嚴）', async () => {
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [{ id: 'F-1' }] });
+    const dir = path.join(root, '.flow', 'redteam');
+    await mkdir(dir, { recursive: true });
+    await writeFile(path.join(dir, 'F-1.json'), JSON.stringify({
+      attacks: [{ id: 'A1', severity: 'critical', scenario: '長字串造成 UI 破版' }, ...BENIGN],
+      coverage: [],
+    }), 'utf8');
+    const r = run(['redteam', '--wave', 'F-1'], root);
+    assert.equal(r.code, 2, '非法 severity 不能掉出 high 分支');
+    assert.match(r.err, /非法值/);
   });
 });
 
@@ -102,16 +134,43 @@ test('redteam：testFile 是空殼/無測試關鍵字 → exit 2（堵 touch 空
     await mkdir(path.join(root, 'tests'), { recursive: true });
     await writeFile(path.join(root, 'tests', 'empty.ts'), '   \n', 'utf8');           // 空殼
     await writeFile(path.join(dir, 'F-1.json'), JSON.stringify({
-      attacks: [{ id: 'A1', severity: 'high' }],
+      attacks: [{ id: 'A1', severity: 'high' }, ...BENIGN],
       coverage: [{ attackId: 'A1', status: 'covered', testFile: 'tests/empty.ts' }],
     }), 'utf8');
     assert.equal(run(['redteam', '--wave', 'F-1'], root).code, 2, '空殼不算 covered');
     await writeFile(path.join(root, 'tests', 'nokw.ts'), 'const x = 1; console.log(x); // 不含測試框架關鍵字 just code', 'utf8');
     await writeFile(path.join(dir, 'F-1.json'), JSON.stringify({
-      attacks: [{ id: 'A1', severity: 'high' }],
+      attacks: [{ id: 'A1', severity: 'high' }, ...BENIGN],
       coverage: [{ attackId: 'A1', status: 'covered', testFile: 'tests/nokw.ts' }],
     }), 'utf8');
     assert.equal(run(['redteam', '--wave', 'F-1'], root).code, 2, '無測試關鍵字不算 covered');
+  });
+});
+
+test('redteam：高危關鍵字攻擊（非 high）skipped 無豁免 → exit 2；記豁免檔放行且 by=user；無關文字不誤中（W0-6 floor）', async () => {
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [{ id: 'F-1' }] });
+    const dir = path.join(root, '.flow', 'redteam');
+    await mkdir(dir, { recursive: true });
+    // medium＋auth bypass 情境、被 skipped 且無豁免檔 → severity 自報調不鬆 floor
+    await writeFile(path.join(dir, 'F-1.json'), JSON.stringify({
+      attacks: [{ id: 'A1', severity: 'medium', scenario: 'auth bypass via token replay' }, ...BENIGN],
+      coverage: [{ attackId: 'A1', status: 'skipped', reason: '時程' }],
+    }), 'utf8');
+    const r = run(['redteam', '--wave', 'F-1'], root);
+    assert.equal(r.code, 2, '高危面禁無痕跳過');
+    assert.match(r.err, /redteam-waiver-F-1-A1/);
+    // 使用者拍板豁免留檔 → 放行（可稽核）；waiver 類 id 預設記 by:'user'（審計語意：使用者拍板、非 AI 自決）
+    const d = run(['decision', 'redteam-waiver-F-1-A1', '--choice', 'skip', '--why', '此面向由既有 middleware 統一防護'], root);
+    assert.match(d.out, /使用者拍板/);
+    assert.equal((await S.readDecision(root, 'redteam-waiver-F-1-A1')).by, 'user');
+    assert.equal(run(['redteam', '--wave', 'F-1'], root).code, 0, '豁免檔實存即放行');
+    // 無關文字（無高危關鍵字）的 low 攻擊無 coverage → 照舊不擋
+    await writeFile(path.join(dir, 'F-1.json'), JSON.stringify({
+      attacks: [{ id: 'A2', severity: 'low', scenario: '清單空狀態顯示錯誤' }, ...BENIGN.map(a => ({ ...a, id: a.id + 'x' }))],
+      coverage: [],
+    }), 'utf8');
+    assert.equal(run(['redteam', '--wave', 'F-1'], root).code, 0, '非高危面不強制');
   });
 });
 
@@ -128,14 +187,16 @@ test('guardrail-check：settings 缺 stall 斷路器 → exit 2；含則 0', asy
   });
 });
 
-test('complete-check：tasks.md 有未完成 [ ] → exit 2；全 [x] → 0', async () => {
+test('complete-check：tasks.md 有未完成 [ ] → exit 2；全 [x] 但缺 requirements.md → 仍 exit 2（W0-7）', async () => {
   await withRoot(async (root) => {
     await S.init(root, { project: 'p', tasks: [] });
     await mkdir(path.join(root, 'specs'), { recursive: true });
     await writeFile(path.join(root, 'specs', 'tasks.md'), '- [x] **F-1**\n- [ ] **F-2**\n', 'utf8');
     assert.equal(run(['complete-check'], root).code, 2, '還有未完成 → 不准 COMPLETE');
     await writeFile(path.join(root, 'specs', 'tasks.md'), '- [x] **F-1**\n- [x] **F-2**\n', 'utf8');
-    assert.equal(run(['complete-check'], root).code, 0, '全 [x] 放行');
+    const r = run(['complete-check'], root);
+    assert.equal(r.code, 2, '缺 requirements.md ＝ REQ-E2E 謂詞無從對賬，不准 COMPLETE（原本只警告＝歸檔 spec 可靜默關閉整段對賬）');
+    assert.match(r.err, /requirements\.md/);
   });
 });
 
@@ -195,12 +256,88 @@ test('spec-ready --freeze：通過才寫 phase=spec-done + journal，且保留 m
     await S.init(root, { project: 'p', tasks: [] });
     await S.writeStateJson(root, { mode: 'auto', verify: 'none' });
     await writeReq(root, READY_REQ);
+    assert.equal(run(['project-type', 'api'], root).code, 0, 'W0-5：凍結前先落檔專案類型');
     const r = run(['spec-ready', '--freeze'], root);
     assert.equal(r.code, 0, r.err);
     const st = await S.readStateJson(root);
     assert.equal(st.phase, 'spec-done');
     assert.equal(st.mode, 'auto', 'read-modify-write 保留既有欄位');
     assert.ok((await S.readJournal(root)).some(e => e.ev === 'spec.frozen'), 'journal 留 spec.frozen 審計');
+  });
+});
+
+test('project-type：非法值 → exit 1；合法值寫進 manifest+state.json（W0-5 正門）', async () => {
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [] });
+    assert.equal(run(['project-type', 'webapp'], root).code, 1, 'enum 白名單外拒收');
+    const r = run(['project-type', 'web-app'], root);
+    assert.equal(r.code, 0, r.err);
+    assert.equal((await S.readManifest(root)).projectType, 'web-app', '寫 git-tracked manifest');
+    assert.equal((await S.readStateJson(root)).projectType, 'web-app', '寫 state.json 相容 bridge');
+  });
+});
+
+test('spec-ready --freeze：缺 projectType → exit 2；web 類無原型無豁免 → exit 2；記 mockup-waiver → 凍結（W0-5）', async () => {
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [] });
+    await writeReq(root, READY_REQ);
+    const r0 = run(['spec-ready', '--freeze'], root);
+    assert.equal(r0.code, 2, '沒落檔專案類型不准凍結');
+    assert.match(r0.err, /project-type/);
+    run(['project-type', 'web-app'], root);
+    const r1 = run(['spec-ready', '--freeze'], root);
+    assert.equal(r1.code, 2, 'web 類「不建 ui-mockups 目錄＝靜默豁免」已封死');
+    assert.match(r1.err, /mockup-waiver/);
+    run(['decision', 'mockup-waiver', '--choice', '跳過互動原型', '--why', '使用者明說跳過'], root);
+    const r2 = run(['spec-ready', '--freeze'], root);
+    assert.equal(r2.code, 0, r2.err);
+    assert.equal((await S.readStateJson(root)).phase, 'spec-done', '豁免留檔後才准凍結');
+  });
+});
+
+test('spec-ready --freeze：manifest 直寫非 enum 值（webapp）→ exit 2（消費端也驗 enum，堵「自創值＝歸類非 web 免原型」）', async () => {
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [] });
+    await writeReq(root, READY_REQ);
+    const manifest = await S.readManifest(root);
+    await S.writeManifest(root, { ...manifest, projectType: 'webapp' });   // 繞過 CLI 正門手寫
+    const r = run(['spec-ready', '--freeze'], root);
+    assert.equal(r.code, 2, '白名單外的值不能靜默歸類為非 web');
+    assert.match(r.err, /不在合法清單/);
+  });
+});
+
+test('complete-check：requirements.md 實存但 0 條 REQ-E2E（被收束成殼）→ exit 2（W0-7 補強）', async () => {
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [] });
+    await mkdir(path.join(root, 'specs'), { recursive: true });
+    await writeFile(path.join(root, 'specs', 'tasks.md'), '- [x] **F-1**\n', 'utf8');
+    await writeReq(root, '# 需求（已收束）\n完整版見 archive/requirements-v1.md\n');
+    const r = run(['complete-check'], root);
+    assert.equal(r.code, 2, '0/0 vacuous 全綠＝完成謂詞被歸檔關閉，硬擋');
+    assert.match(r.err, /查無任何 REQ-E2E/);
+  });
+});
+
+test('spec-ready：REQ-PERF 標 N/A 無 perf-waiver → exit 2；使用者拍板留檔後放行（W0-3 堵 N/A 洗白）', async () => {
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [] });
+    await writeReq(root, READY_REQ.replace('REQ-PERF-001：dashboard LCP < 2.5s（p95）。', 'REQ-PERF-001：N/A'));
+    const r = run(['spec-ready'], root);
+    assert.equal(r.code, 2, 'N/A 一句話不能洗掉效能驗收');
+    assert.match(r.err, /perf-waiver/);
+    run(['decision', 'perf-waiver', '--choice', 'REQ-PERF N/A', '--why', '內部工具無效能敏感路徑'], root);
+    assert.equal(run(['spec-ready'], root).code, 0, '豁免檔實存即放行');
+  });
+});
+
+test('spec-ready：requirements 缺「### 開放問題」段 → exit 2（W0-1 堵恆過洞）', async () => {
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [] });
+    await writeReq(root, READY_REQ.replace('\n### 開放問題\n無', ''));
+    const r = run(['spec-ready'], root);
+    assert.equal(r.code, 2);
+    assert.match(r.err, /開放問題/);
   });
 });
 
@@ -245,7 +382,10 @@ test('mockup-check：走查台缺 REQ-E2E 卡 → exit 2 並點名', async () =>
   });
 });
 
-test('mockup-check：走查台連結 404 → exit 2；補檔即綠', async () => {
+// 過得了 W0-8 空殼頁機檢的最小合法頁（引 app.js＋含互動元素）
+const PAGE_OK = '<html><script src="../app.js"></script><button>操作</button></html>';
+
+test('mockup-check：走查台連結 404 → exit 2；補「非空殼」檔即綠', async () => {
   await withRoot(async (root) => {
     await S.init(root, { project: 'p', tasks: [] });
     await writeReq(root, READY_REQ);
@@ -254,17 +394,56 @@ test('mockup-check：走查台連結 404 → exit 2；補檔即綠', async () =>
     assert.equal(r.code, 2);
     assert.match(r.err, /404/);
     await mkdir(path.join(root, 'specs', 'ui-mockups', 'pages'), { recursive: true });
-    await writeFile(path.join(root, 'specs', 'ui-mockups', 'pages', 'login.html'), '<html>x</html>', 'utf8');
+    await writeFile(path.join(root, 'specs', 'ui-mockups', 'pages', 'login.html'), PAGE_OK, 'utf8');
+    // 頁面引用 ../app.js → 檔案也要實存（引用缺檔的 script 會被 W0-8 擋）
+    await writeFile(path.join(root, 'specs', 'ui-mockups', 'app.js'), 'const db = JSON.parse(localStorage.getItem("db") || "{}");', 'utf8');
     const r2 = run(['mockup-check'], root);
     assert.equal(r2.code, 0, r2.err);
     assert.match(r2.out, /通過/);
   });
 });
 
-test('spec-ready --freeze：ui-mockups 存在但走查台缺卡 → exit 2 不凍結；目錄不存在 → 照常凍結', async () => {
+test('mockup-check：走查台零本地入口連結 → exit 2（只列 id 文字＝journey 沒得點，整鏈空轉）', async () => {
   await withRoot(async (root) => {
     await S.init(root, { project: 'p', tasks: [] });
-    await writeReq(root, READY_REQ + '\nREQ-E2E-002：下單 journey。');
+    await writeReq(root, READY_REQ);
+    await writeMockups(root, '<h2>REQ-E2E-001 卡</h2><p>步驟描述…（沒有任何 <b>連結</b>）</p>');
+    const r = run(['mockup-check'], root);
+    assert.equal(r.code, 2, '零 href＝404/空殼檢查整鏈空轉，硬擋');
+    assert.match(r.err, /零本地入口連結/);
+  });
+});
+
+test('mockup-check：頁面引用的 script 不存在 → exit 2（掛了 <script src> 但檔案缺＝CRUD 無後果）', async () => {
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [] });
+    await writeReq(root, READY_REQ);
+    await writeMockups(root, '<h2>REQ-E2E-001</h2><a href="login.html">走</a>',
+      { 'login.html': '<html><script src="app.js"></script><button>登入</button></html>' });   // app.js 沒產
+    const r = run(['mockup-check'], root);
+    assert.equal(r.code, 2);
+    assert.match(r.err, /script 不存在/);
+  });
+});
+
+test('mockup-check：連到的頁面是空殼（無 app.js/互動元素）→ exit 2 點名（W0-8）', async () => {
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [] });
+    await writeReq(root, READY_REQ);
+    await writeMockups(root, '<h2>REQ-E2E-001</h2><a href="login.html">走</a>', { 'login.html': '<html><h1>Login</h1></html>' });
+    const r = run(['mockup-check'], root);
+    assert.equal(r.code, 2, '有卡但頁面空殼＝假原型');
+    assert.match(r.err, /app\.js/);
+    assert.match(r.err, /互動元素/);
+  });
+});
+
+test('spec-ready --freeze：ui-mockups 存在但走查台缺卡 → exit 2 不凍結；非 web 型別無目錄 → 照常凍結', async () => {
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [] });
+    // 002 插在開放問題段之前（append 檔尾會落進該段變成 open item，測錯閘門）
+    await writeReq(root, READY_REQ.replace('### 開放問題', 'REQ-E2E-002：登入 → 商品頁 → 下單 → 斷言訂單成立。\n### 開放問題'));
+    run(['project-type', 'web-app'], root);
     await writeMockups(root, '<h2>REQ-E2E-001</h2>');   // 缺 002 的走查卡
     const r = run(['spec-ready', '--freeze'], root);
     assert.equal(r.code, 2);
@@ -274,7 +453,8 @@ test('spec-ready --freeze：ui-mockups 存在但走查台缺卡 → exit 2 不�
   await withRoot(async (root) => {
     await S.init(root, { project: 'p', tasks: [] });
     await writeReq(root, READY_REQ);
-    const r = run(['spec-ready', '--freeze'], root);   // 無 ui-mockups/（非 web / 已記豁免）
+    run(['project-type', 'api'], root);
+    const r = run(['spec-ready', '--freeze'], root);   // 非 web：enum 記錄本身即豁免，無 ui-mockups/ 照常凍結
     assert.equal(r.code, 0, r.err);
     assert.equal((await S.readStateJson(root)).phase, 'spec-done');
   });

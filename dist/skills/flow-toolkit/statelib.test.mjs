@@ -555,10 +555,109 @@ test('specReadiness：缺 REQ-E2E / REQ-PERF 各自報缺', () => {
   assert.match(noPerf.problems.join('\n'), /REQ-PERF/);
 });
 
-test('specReadiness：無 ### 開放問題 標題 → open 視為零（不誤擋）', () => {
-  const r = S.specReadiness('REQ-001：x\nREQ-E2E-001：j\nREQ-PERF-001：N/A');
-  assert.equal(r.open.length, 0);
-  assert.equal(r.problems.length, 0);
+test('specReadiness：無 ### 開放問題 標題 → problems 點名缺段（W0-1 堵「整段不寫＝閘門恆綠」）', () => {
+  const r = S.specReadiness('REQ-001：當 X 時，系統應 Y。\nREQ-E2E-001：登入 → 首頁 → 斷言。\nREQ-PERF-001：LCP < 2.5s');
+  assert.equal(r.open.length, 0, '段不存在 open 仍為零');
+  assert.match(r.problems.join('\n'), /開放問題.*段/, '缺段本身就是 problem');
+});
+
+test('specReadiness：placeholder（TODO/TBD/待定/???）→ problems 點名行號（W0-2）', () => {
+  const md = READY_MD.replace('REQ-001：當 X 時，系統應 Y。', 'REQ-001：當 X 時，系統應 Y。\nREQ-002：權限規則 TBD\n細節 ???');
+  const r = S.specReadiness(md);
+  assert.match(r.problems.join('\n'), /placeholder/);
+  assert.match(r.problems.join('\n'), /TBD/);
+});
+
+test('specReadiness：REQ 行含糊詞無數字 → 只進 warnings 不進 problems（W0-2 防 Goodhart 誤殺）', () => {
+  const md = READY_MD.replace('REQ-001：當 X 時，系統應 Y。', 'REQ-001：當查詢時，系統應快速回應。');
+  const r = S.specReadiness(md);
+  assert.equal(r.problems.length, 0, '含糊詞不擋');
+  assert.match(r.warnings.join('\n'), /含糊詞/);
+  // 同句有數字＝已量化 → 不警告
+  const r2 = S.specReadiness(READY_MD.replace('REQ-001：當 X 時，系統應 Y。', 'REQ-001：當查詢時，系統應快速回應（p95 < 300ms）。'));
+  assert.equal(r2.warnings.filter(w => /含糊詞/.test(w)).length, 0);
+});
+
+test('specReadiness：非 E2E/PERF 的 REQ 行缺規範動詞 → warnings；READY_MD 零警告', () => {
+  const r = S.specReadiness(READY_MD.replace('REQ-001：當 X 時，系統應 Y。', 'REQ-001：使用者可以登入。'));
+  assert.match(r.warnings.join('\n'), /規範動詞/);
+  assert.equal(S.specReadiness(READY_MD).warnings.length, 0, '合格 fixture 不該有噪音警告');
+});
+
+test('specReadiness：REQ-E2E 缺 journey 結構 → problems；箭頭鏈 ≥3 段或欄位式 → 過（W0-4）', () => {
+  // 單行只描述目標頁（無箭頭鏈）→ 擋
+  const bad = S.specReadiness(READY_MD.replace('REQ-E2E-001：登入 → 首頁 → 操作 → 斷言。', 'REQ-E2E-001：使用者能在 dashboard 看到清單。'));
+  assert.match(bad.problems.join('\n'), /REQ-E2E-001.*journey 結構/);
+  // 欄位式（入口/步驟≥2/斷言≥1）→ 過
+  const fieldForm = READY_MD.replace('REQ-E2E-001：登入 → 首頁 → 操作 → 斷言。', [
+    'REQ-E2E-001：訪客完成註冊',
+    '- 入口：/（landing 頁）',
+    '- 步驟：',
+    '  1. 點「註冊」',
+    '  2. 填 email/密碼送出',
+    '- 斷言：導向 /dashboard 且顯示空狀態',
+  ].join('\n'));
+  const ok = S.specReadiness(fieldForm);
+  assert.equal(ok.problems.length, 0, JSON.stringify(ok.problems));
+  // 欄位式缺步驟（只 1 步）→ 擋
+  const oneStep = fieldForm.replace('  2. 填 email/密碼送出\n', '');
+  assert.match(S.specReadiness(oneStep).problems.join('\n'), /REQ-E2E-001/);
+});
+
+test('specReadiness：REQ-PERF 標 N/A → perfNA=true（豁免檔對賬由 CLI 做）；有數字 → false（W0-3）', () => {
+  assert.equal(S.specReadiness(READY_MD).perfNA, false);
+  assert.equal(S.specReadiness(READY_MD.replace('REQ-PERF-001：dashboard LCP < 2.5s（p95）。', 'REQ-PERF-001：N/A')).perfNA, true);
+});
+
+test('specReadiness：perfNA 同義詞/次行變體全數要豁免；真 budget 提到裸 NA 不誤中（覆核 B3/FP2）', () => {
+  const withPerf = v => READY_MD.replace('REQ-PERF-001：dashboard LCP < 2.5s（p95）。', v);
+  // 無量化（同義詞洗白）→ 一律 perfNA
+  for (const v of ['REQ-PERF-001：不適用（內部工具）', 'REQ-PERF-001：無效能敏感路徑', 'REQ-PERF-001：N.A.', 'REQ-PERF-001：Ｎ／Ａ', 'REQ-PERF-001：\n- N/A（無敏感路徑）'])
+    assert.equal(S.specReadiness(withPerf(v)).perfNA, true, v);
+  // 真 budget 含裸 NA（區域縮寫）→ 有數字＝已量化，不誤中、不逼假豁免
+  assert.equal(S.specReadiness(withPerf('REQ-PERF-001：NA 區域用戶 dashboard 首屏 LCP < 2.5s（p95）。')).perfNA, false);
+});
+
+test('specReadiness：開放問題項寫成子標題（#### 問題）也算 open item（覆核 B8）', () => {
+  const md = READY_MD.replace('### 開放問題\n無', '### 開放問題\n#### 是否支援 SSO？\n#### 資料保留幾天？');
+  const r = S.specReadiness(md);
+  assert.equal(r.open.length, 2, '子標題不能被 heading 分支吞掉');
+});
+
+test('specReadiness：總覽/追溯行不是 REQ-E2E 結構的萬用通行證（覆核 B7）', () => {
+  // 三條定義全是零結構句，另有一行含三個 id 的箭頭總覽——不得洗白
+  const md = [
+    '# 需求', 'REQ-001：當 X 時，系統應 Y。',
+    'REQ-E2E-001：使用者能看到清單。', 'REQ-E2E-002：使用者能看到明細。',
+    'journey 順序：REQ-E2E-001 → REQ-E2E-002 → 完成',
+    'REQ-PERF-001：LCP < 2.5s。', '### 開放問題', '無',
+  ].join('\n');
+  const r = S.specReadiness(md);
+  assert.match(r.problems.join('\n'), /REQ-E2E-001/);
+  assert.match(r.problems.join('\n'), /REQ-E2E-002/);
+});
+
+test('specReadiness：placeholder 變體與誤殺邊界（覆核 B9/FP1）', () => {
+  const base = v => READY_MD.replace('REQ-001：當 X 時，系統應 Y。', v);
+  // zh-TW 變體要抓：全形？？？、待確認、未定、TBC
+  for (const v of ['REQ-002：權限規則？？？', 'REQ-002：權限規則待確認', 'REQ-002：配額 TBC', 'REQ-002：排序規則未定'])
+    assert.match(S.specReadiness(base(v)).problems.join('\n'), /placeholder/, v);
+  // 領域名詞/複合詞不誤殺：todo-list app 的 TODO、電商「待補貨」、「未定義」
+  for (const v of ['REQ-002：當使用者新增 TODO 項目時，系統應存入清單。', 'REQ-002：當商品狀態為待補貨時，系統應顯示補貨提示。', 'REQ-002：若欄位未定義，系統應回 400。'])
+    assert.equal(S.specReadiness(base(v)).problems.filter(p => /placeholder/.test(p)).length, 0, v);
+});
+
+test('specReadiness：延後決策段內 placeholder 降 warning 不擋（覆核 I1——逃生口不能被自家閘門堵死）', () => {
+  const md = READY_MD + '\n### 延後決策\n- 排序欄位待定（AI 建議預設 createdAt，已 flow-state decision 記錄）';
+  const r = S.specReadiness(md);
+  assert.equal(r.problems.filter(p => /placeholder/.test(p)).length, 0, '合法逃生寫法不 exit 2');
+  assert.match(r.warnings.join('\n'), /延後決策段/, '仍留提醒可稽核');
+});
+
+test('specReadiness：標題行式 REQ（內文在次行）不誤報缺規範動詞；追溯行不警告（覆核 FP4）', () => {
+  const md = READY_MD.replace('REQ-001：當 X 時，系統應 Y。', 'REQ-001：訂單建立\n當使用者送出表單時，系統應建立訂單並回 201。\nREQ-005 → F-1（追溯對照）');
+  const r = S.specReadiness(md);
+  assert.equal(r.warnings.length, 0, JSON.stringify(r.warnings));
 });
 
 // ── REQ-E2E 覆蓋對賬（extractReqE2E / coverageAudit）：完成謂詞的機讀核心 ──
@@ -628,6 +727,39 @@ test('mockupAudit：requirements 無 REQ-E2E → reqIds 空、不誤報缺卡', 
   const a = S.mockupAudit('REQ-001：非 E2E。', '<a href="p.html">x</a>');
   assert.deepEqual(a.reqIds, []);
   assert.deepEqual(a.missingReq, []);
+});
+
+test('mockupPageProblems：有 app.js＋互動元素 → 空；空殼頁 → 兩項點名（W0-8）', () => {
+  assert.deepEqual(S.mockupPageProblems('<html><script src="../app.js"></script><button>登入</button></html>'), []);
+  const shell = S.mockupPageProblems('<html><h1>Dashboard</h1><p>lorem</p></html>');
+  assert.equal(shell.length, 2, JSON.stringify(shell));
+  assert.match(shell.join('\n'), /app\.js/);
+  assert.match(shell.join('\n'), /互動元素/);
+  assert.deepEqual(S.mockupPageProblems('<script src="app.js"></script><form><input></form>'), [], 'form/input 也算互動');
+});
+
+test('isHighRiskAttackText：真攻擊面命中（含自然語言句型）、工程語境不誤中（W0-6 三組制）', () => {
+  // 真安全面 → true（強訊號單獨；或 domain＋攻擊動詞共現）
+  for (const s of [
+    'auth bypass via token replay',
+    '未登入使用者可繞過權限看到他人資料',
+    'SQL injection on search field',
+    'unauthorized access to admin panel',
+    'account takeover via password reset link',
+    '未登入者可直接開啟 /admin 後台頁',
+    '密碼以明文儲存在 log',
+  ]) assert.equal(S.isHighRiskAttackText(s), true, s);
+  // 非安全語境 → false（domain 名詞單獨出現、依賴注入、word boundary）
+  for (const s of [
+    'author list renders slowly on repayment page',
+    '清單分頁在空狀態顯示錯誤',
+    'prompt 超過 token 上限時截斷',
+    'service 依賴注入順序錯誤',
+    'cache bypass 造成回應變慢',
+    '多個 tab 共用同一 session 時 UI 不同步',
+    'CSV 匯出時 login 次數統計欄位錯位',
+    'payment reminder 信重複寄送',
+  ]) assert.equal(S.isHighRiskAttackText(s), false, s);
 });
 
 // ── Playwright journey 真實性審計（auditJourneyTest）：導航版「禁 mock 假綠」 ──

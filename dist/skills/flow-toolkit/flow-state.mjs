@@ -84,7 +84,25 @@ function mockupProblems(r, dirRel) {
   const audit = S.mockupAudit(existsSync(rp) ? readFileSync(rp, 'utf8') : '', readFileSync(idx, 'utf8'));
   const problems = [];
   for (const id of audit.missingReq) problems.push(`${id} 不在走查台 index.html——每條 REQ-E2E SHALL 列卡（id＋步驟＋入口連結），缺卡＝該 journey 沒原型可走`);
-  for (const h of audit.hrefs) if (!existsSync(path.resolve(dir, h))) problems.push(`走查台連結 404：${h}（index.html 連到但檔案不存在＝假走查）`);
+  // 零入口連結＝journey 沒得點：缺卡檢查只驗 id 字串，404/空殼檢查全掛在 hrefs 上——
+  // index 只列 id 文字、一個本地連結都不放，等於整鏈空轉（省事模型最低成本過關路徑），硬擋。
+  if (audit.reqIds.length > 0 && audit.hrefs.length === 0)
+    problems.push('走查台零本地入口連結——每張 REQ-E2E 卡 SHALL 含入口連結（<a href> 連到本地頁），否則 journey 沒得點＝假走查台');
+  for (const h of audit.hrefs) {
+    const abs = path.resolve(dir, h);
+    if (!existsSync(abs)) { problems.push(`走查台連結 404：${h}（index.html 連到但檔案不存在＝假走查）`); continue; }
+    // 空殼頁機檢（W0-8）：連到的每頁 SHALL 引用 app.js 且含互動元素——「有卡但頁面空殼」不算原型
+    let page = '';
+    try { page = readFileSync(abs, 'utf8'); } catch { problems.push(`走查台連結讀不到：${h}`); continue; }
+    for (const p of S.mockupPageProblems(page)) problems.push(`${h}：${p}`);
+    // 頁內引用的本地 script 須實存（掛了 <script src="app.js"> 但檔案缺＝CRUD 全無後果的空殼）
+    for (const sm of page.matchAll(/<script[^>]+src\s*=\s*["']([^"']+)["']/gi)) {
+      const src = sm[1];
+      if (/^(https?:|\/\/|data:)/i.test(src)) continue;
+      if (!existsSync(path.resolve(path.dirname(abs), src.split(/[?#]/)[0])))
+        problems.push(`${h}：引用的 script 不存在：${src}（掛了 script 但檔案缺＝假資料層失效、CRUD 無後果）`);
+    }
+  }
   return { problems, audit };
 }
 
@@ -169,6 +187,21 @@ switch (cmd) {
     if (m === 'auto') console.log('  提醒：啟用自駕前 SHALL 先過 flow-state guardrail-check（stall 斷路器在線）。');
     break;
   }
+  case 'project-type': {
+    // 專案類型正門（W0-5）：/flow-spec Step 1 併入首輪訪談彈窗跟使用者拍板後落檔（模型只提建議）。
+    // spec-ready --freeze 對賬這筆記錄：缺檔凍不了；web 類無互動原型且無 mockup-waiver → exit 2。
+    // 用法：flow-state project-type <type>
+    const t = argv[1];
+    if (!S.PROJECT_TYPES.includes(t)) { console.error(`usage: flow-state project-type <${S.PROJECT_TYPES.join('|')}>`); process.exit(1); }
+    const manifest = await S.readManifest(root);
+    await S.writeManifest(root, { ...manifest, projectType: t });
+    const st = await S.readStateJson(root);
+    await S.writeStateJson(root, { ...st, projectType: t });
+    console.log(`✓ projectType=${t} 已落檔（manifest+state.json）。${S.WEB_PROJECT_TYPES.includes(t)
+      ? 'web 類：凍結時 SHALL 有互動原型過 mockup-check，或使用者拍板豁免（flow-state decision mockup-waiver）。'
+      : '非 web：凍結時不強制互動原型（enum 記錄本身即豁免）。'}`);
+    break;
+  }
   case 'checkpoint': {
     // mid-task 檢查點（修「開發中當機就重跑整個 task」）：worker 跑到某 TDD 相/整合階段記一筆。
     // 冷啟動 reconstruct 取每 task 最新一筆 → flow-state resume/SessionStart 顯示「上次做到第幾步」，接續只補沒做完的。
@@ -230,13 +263,26 @@ switch (cmd) {
       if (!existsSync(p)) { problems.push(`${id}：缺 .flow/redteam/${id}.json（紅軍清單未落檔——flow-build Step 2 漏了）`); continue; }
       let rec;
       try { rec = JSON.parse(readFileSync(p, 'utf8')); } catch { problems.push(`${id}：.flow/redteam/${id}.json 不是合法 JSON`); continue; }
+      // 數量下限鏡射 ATTACK_SCHEMA 的 minItems:3——schema 只守 Workflow fan-out 路徑，
+      // 本檔可由模型親手落檔（輕量路徑/orchestrator），attacks 空/太少＝紅軍空轉，閘門端同擋。
+      if (!Array.isArray(rec.attacks) || rec.attacks.length < 3) {
+        problems.push(`${id}：紅軍清單少於 3 個攻擊（現 ${Array.isArray(rec.attacks) ? rec.attacks.length : 0} 個）——攻擊面至少列 3 個（邊界值/併發/惡意輸入/相依故障/配置漂移），別省`);
+        continue;
+      }
       const coverage = rec.coverage || [];
       for (const a of (rec.attacks || [])) {
         const sev = String(a.severity || '').toLowerCase();
+        // severity 缺失/非法值（''/'critical'）＝自報資料可疑，fail-safe 從嚴比照 high（否則掉出 high 分支只剩關鍵字網）
+        const sevKnown = ['high', 'medium', 'low'].includes(sev);
         const c = coverage.find((x) => x.attackId === a.id && x.status === 'covered');
-        if (sev === 'high' && !c) { problems.push(`${id}/${a.id}（high）：無 covered 對應項——high 攻擊不准 skipped，先補失敗安全測試轉綠`); continue; }
+        if ((sev === 'high' || !sevKnown) && !c) { problems.push(`${id}/${a.id}（${sevKnown ? sev : `severity 非法值「${a.severity || ''}」，比照 high`}）：無 covered 對應項——high 攻擊不准 skipped，先補失敗安全測試轉綠`); continue; }
         // 任何 covered（含 medium/low）都驗 testFile 真實有效（非空 + 含測試關鍵字），堵「touch 空檔即過閘」
-        if (c) { const prob = testFileProblem(c.testFile); if (prob) problems.push(`${id}/${a.id}（${sev || '?'}）：${prob}——coverage 是自報的，檔案得真的是測試`); }
+        if (c) { const prob = testFileProblem(c.testFile); if (prob) problems.push(`${id}/${a.id}（${sev || '?'}）：${prob}——coverage 是自報的，檔案得真的是測試`); continue; }
+        // 高危關鍵字 floor（W0-6）：severity 自報調不鬆這道——攻擊文字命中高危面（auth/注入/權限/金流…）
+        // 就禁無痕跳過：沒 covered 須有使用者拍板的豁免檔（誤中的代價＝多留一筆可稽核豁免，fail-safe 方向）。
+        if (S.isHighRiskAttackText(`${a.scenario || ''} ${a.failingTestHint || ''}`)
+            && !existsSync(path.join(root, '.flow', 'decisions', `redteam-waiver-${id}-${a.id}.json`)))
+          problems.push(`${id}/${a.id}（${sev || '?'}）：攻擊涉及高危面（auth/注入/權限/金流…）不准無痕跳過——補失敗安全測試轉 covered，或使用者拍板豁免：flow-state decision redteam-waiver-${id}-${a.id} --choice "skip" --why "<理由>"`);
       }
     }
     if (problems.length) {
@@ -245,7 +291,7 @@ switch (cmd) {
       console.error('  暫停整合：補測試/落檔後重跑。別跳過本閘門硬整合（high 攻擊面沒防禦＝出貨即漏洞）。');
       process.exit(2);
     }
-    console.log('✓ 紅軍對賬通過：本波 high 攻擊全數 covered 且 testFile 實存。');
+    console.log('✓ 紅軍對賬通過：攻擊 ≥3、high 全 covered、testFile 實存、高危攻擊無無痕跳過。');
     break;
   }
   case 'decision': {
@@ -257,9 +303,13 @@ switch (cmd) {
     const choice = flag('--choice') || '';
     if (!choice) { console.error('需給 --choice（你自決了什麼）'); process.exit(1); }
     const rid = await resolveIdOrExit(id);
-    try { await S.recordDecision(root, rid, { question: flag('--question') || '', choice, why: flag('--why') || '', by: 'auto' }); }
+    // 審計語意：waiver 類（perf-waiver/mockup-waiver/redteam-waiver-*）規格上是「使用者彈窗拍板後留檔」，
+    // 預設記 by:'user'；其餘（自駕 C 類自決）預設 by:'auto'。--by 可明示覆寫。
+    const by = flag('--by') || (/waiver/i.test(rid) ? 'user' : 'auto');
+    if (by !== 'user' && by !== 'auto') { console.error('--by 須為 user / auto'); process.exit(1); }
+    try { await S.recordDecision(root, rid, { question: flag('--question') || '', choice, why: flag('--why') || '', by }); }
     catch (e) { if (e && e.code === 'UNSAFE_ID') { console.error('✗ ' + e.message); process.exit(1); } throw e; }
-    console.log(`✓ 已記自決：${rid}：${choice}${flag('--why') ? `（${flag('--why')}）` : ''}`);
+    console.log(`✓ ${by === 'user' ? '已記使用者拍板' : '已記自決'}：${rid}：${choice}${flag('--why') ? `（${flag('--why')}）` : ''}`);
     console.log('  審計線在 .flow/journal.ndjson（ev:decision）；最新快照在 .flow/decisions/。使用者可事後翻、要改再說。');
     break;
   }
@@ -305,7 +355,10 @@ switch (cmd) {
     console.log(`✓ tasks.md 全數 [x]${xstar ? `（注意：尚見 ${xstar} 處 X-* cross-cutting 標記，ship 前確認已清）` : ''}。`);
     // REQ-E2E 覆蓋對賬（把原本的散文提示升級成確定性節點）。requirements.md 缺則提醒不擋（不破壞既有最小用法）。
     const cov = await coverageReport(root);
-    if (cov.skipped) { console.error('⚠ 查無 specs/requirements.md——略過 REQ-E2E 覆蓋對賬（ship 階段不該缺，請確認）。'); break; }
+    // W0-7：缺 requirements.md 從警告升 exit 2——「歸檔/改名 spec ＝ 整段 REQ-E2E 完成謂詞靜默關閉」的洞封死。
+    if (cov.skipped) { console.error('✗ 查無 specs/requirements.md——REQ-E2E 完成謂詞無從對賬，不准發 COMPLETE（spec 被歸檔/改名？還原它，或用 --root 指對專案根）。'); process.exit(2); }
+    // 檔案實存但被收束成 0 條 REQ-E2E 的殼（/flow-compact 歸檔變體）＝完成謂詞 0/0 空轉，同擋。
+    if (cov.audit.total === 0) { console.error('✗ specs/requirements.md 實存但查無任何 REQ-E2E-*——spec 被收束成殼？（凍結底線＝至少 1 條）從 specs/archive/ 還原完整版再對賬，不准發 COMPLETE。'); process.exit(2); }
     printCoverage(cov.audit);
     if (!cov.audit.ok) {
       console.error('✗ 完成謂詞未達：上列 REQ-E2E-* 未全部驗綠，不准發 COMPLETE。');
@@ -320,6 +373,7 @@ switch (cmd) {
     // 用法：flow-state coverage —— 比對 requirements.md 的 REQ-E2E-* vs .flow/verify/*.json 記錄。
     const cov = await coverageReport(root);
     if (cov.skipped) { console.error('✗ 查無 specs/requirements.md——無從對賬 REQ-E2E 覆蓋。'); process.exit(2); }
+    if (cov.audit.total === 0) { console.error('✗ specs/requirements.md 實存但查無任何 REQ-E2E-*——0 條＝無從驗收（spec 被收束成殼？）。'); process.exit(2); }
     printCoverage(cov.audit);
     if (!cov.audit.ok) {
       console.error('✗ REQ-E2E 覆蓋未達：缺驗證記錄或有 fail。用 flow-state verify-e2e <id> --status pass --evidence "<ref>" 記真綠。');
@@ -396,7 +450,16 @@ switch (cmd) {
       console.error('✗ 查無 specs/requirements.md——還沒有可凍結的需求。先跑 /flow-spec 訪談並寫 requirements.md。');
       process.exit(2);
     }
-    const { open, problems } = S.specReadiness(readFileSync(rp, 'utf8'));
+    const { open, problems: specProblems, warnings, perfNA } = S.specReadiness(readFileSync(rp, 'utf8'));
+    const problems = [...specProblems];
+    // REQ-PERF 標 N/A 的逃生口對賬（W0-3）：效能豁免 SHALL 使用者拍板留檔，不能一句 N/A 洗掉效能驗收。
+    if (perfNA && !existsSync(path.join(root, '.flow', 'decisions', 'perf-waiver.json')))
+      problems.push('REQ-PERF 標了 N/A 但查無 .flow/decisions/perf-waiver.json——效能豁免 SHALL 使用者彈窗拍板後留檔：flow-state decision perf-waiver --choice "REQ-PERF N/A" --why "<拍板原因>"');
+    if (warnings.length) {
+      console.error('⚠ 需求品質提醒（不擋，建議回訪談補問）：');
+      for (const w of warnings.slice(0, 5)) console.error('  · ' + w);
+      if (warnings.length > 5) console.error(`  · …其餘 ${warnings.length - 5} 條略`);
+    }
     if (problems.length) {
       console.error('✗ 需求尚未收斂，不能凍結／推進：');
       for (const p of problems) console.error('  - ' + p);
@@ -405,17 +468,39 @@ switch (cmd) {
       process.exit(2);
     }
     if (argv.includes('--freeze')) {
-      // 凍結順序：spec-ready（收斂檢查）→ 產互動原型 → --freeze。故有 specs/ui-mockups/（web 走了原型路）
-      // 就一併驗走查台覆蓋骨架；目錄不存在＝非 web / 使用者豁免（已 flow-state decision 記錄）→ 不擋。
+      // 凍結順序：spec-ready（收斂檢查）→ 產互動原型 → --freeze。projectType 正門（W0-5）：
+      // 先對賬 flow-state project-type 落的記錄——web 類 SHALL 有互動原型或 mockup-waiver 豁免檔，
+      // 封掉「不建 specs/ui-mockups/ 目錄＝靜默跳過原型驗證」的通道；非 web 的 enum 記錄本身即豁免。
+      const manifest = await S.readManifest(root);
+      const st0 = await S.readStateJson(root);
+      const ptype = manifest.projectType || st0.projectType || '';
+      if (!ptype) {
+        console.error('✗ 凍結前 SHALL 先落檔專案類型：跟使用者彈窗確認後跑 flow-state project-type <type>。');
+        console.error(`  合法值：${S.PROJECT_TYPES.join(' | ')}（${S.WEB_PROJECT_TYPES.join('/')}＝web 類，凍結時驗互動原型）`);
+        process.exit(2);
+      }
+      if (!S.PROJECT_TYPES.includes(ptype)) {
+        // 消費端也驗 enum——手寫 manifest 塞自創值（webapp/saas/frontend）會被歸類「非 web」靜默免原型，堵住
+        console.error(`✗ projectType="${ptype}" 不在合法清單——只能經正門落檔：flow-state project-type <type>。`);
+        console.error(`  合法值：${S.PROJECT_TYPES.join(' | ')}`);
+        process.exit(2);
+      }
       const mockDirRel = path.join('specs', 'ui-mockups');
       if (existsSync(path.join(root, mockDirRel))) {
         const { problems: mp } = mockupProblems(root, mockDirRel);
         if (mp.length) {
           console.error('✗ 互動原型走查台未過（specs/ui-mockups/ 存在即驗）：');
           for (const p of mp) console.error('  - ' + p);
-          console.error('  修正：補齊走查台缺卡/斷鏈（flow-state mockup-check 可單獨重驗），或整目錄不做原型時刪除並 flow-state decision 記豁免。');
+          console.error('  修正：補齊走查台缺卡/斷鏈/空殼頁（flow-state mockup-check 可單獨重驗），或整目錄不做原型時刪除並 flow-state decision mockup-waiver 記豁免。');
           process.exit(2);
         }
+      } else if (S.WEB_PROJECT_TYPES.includes(ptype)) {
+        if (!existsSync(path.join(root, '.flow', 'decisions', 'mockup-waiver.json'))) {
+          console.error(`✗ projectType=${ptype}（web 類）但查無 specs/ui-mockups/ 也查無豁免記錄——「不建目錄＝靜默跳過原型」已封死。`);
+          console.error('  二選一：① 依 prototype-guide 產互動原型並過 flow-state mockup-check；② 使用者明說跳過才豁免：flow-state decision mockup-waiver --choice "跳過互動原型" --why "<使用者原話>"（UI 方向風險押到 build 才暴露，自負）。');
+          process.exit(2);
+        }
+        console.log('⚠ web 類無互動原型、已有 mockup-waiver 豁免記錄——UI 方向風險自負（decision 已留審計）。');
       }
       const st = await S.readStateJson(root);
       await S.writeStateJson(root, { ...st, phase: 'spec-done' });        // read-modify-write，保留 mode/tasks/verify/tdd
@@ -445,21 +530,22 @@ switch (cmd) {
     break;
   }
   default:
-    console.log(`flow-state <resume|status|done|checkpoint|mode|scope|redteam|journey-check|verify-e2e|coverage|lesson|decision|guardrail-check|complete-check|spec-ready|mockup-check> [--root <path>]
+    console.log(`flow-state <resume|status|done|checkpoint|mode|project-type|scope|redteam|journey-check|verify-e2e|coverage|lesson|decision|guardrail-check|complete-check|spec-ready|mockup-check> [--root <path>]
   resume | status        冷啟動：reconstruct 印現況 + 下一步 + mid-task 進度 + 對帳 + 已知死路（換 session/電腦/中斷後接手；平行波看 /workflows）
   done <id> [--commit]   標一個 task 完成：翻 tasks.md [x] + ledger→delivered（自帶 verify 閘門；先標、再 commit）
   checkpoint <id> --phase <red|green|refactor|integrated> [--note]   記 mid-task 進度（開發中當機 → resume 帶出「上次做到第幾步」，只補沒做完的）
   mode <auto|manual>     設推進模式並寫進 git-tracked manifest（換機 clone 後自駕不掉回 manual）
+  project-type <type>    落檔專案類型（Step 1 彈窗拍板後跑；--freeze 對賬：web 類 SHALL 有互動原型或 mockup-waiver 豁免檔）
   scope --wave <ids>     同 repo 平行檔案安全閘門：git 真實變動 vs 各 feature conflictZone，越界 exit 2（整合前跑）
-  redteam --wave <ids>   紅軍對賬閘門：.flow/redteam/<id>.json 的 high 攻擊須全 covered 且 testFile 實存，否則 exit 2
+  redteam --wave <ids>   紅軍對賬閘門：.flow/redteam/<id>.json 攻擊 <3、high 未全 covered、testFile 不實存、或高危關鍵字攻擊無痕 skipped（無 waiver decision）→ exit 2
   journey-check [--dir]  journey 真實性閘門：掃 Playwright 測試，出現 mock/網路攔截 或 單一 test 內 >1 goto → exit 2（web 驗證宣稱綠前跑）
   verify-e2e <id> --status <pass|fail|n/a> --evidence "<ref>"   記一條 REQ-E2E journey 驗證結果（Evaluator 真綠後落檔，供 coverage 對賬）
   coverage               REQ-E2E 覆蓋對賬：requirements.md 的 REQ-E2E-* vs .flow/verify 記錄，缺/未過 exit 2
   lesson <id> --approach "<a>" --why "<w>"   記一條失敗記憶（防再生撞同一面牆；標 BLOCKED/stall 升級時記）
-  decision <id> --choice "<c>" --why "<w>"   記一個自駕自決分歧（T1 放手下 AI 自決的 C 類需求分歧留審計）
+  decision <id> --choice "<c>" --why "<w>" [--by user|auto]   記決策留審計（waiver 類 id 預設 by:user＝使用者拍板；其餘預設 by:auto＝自駕自決）
   guardrail-check        自駕前置：確認 settings.json 含 stall 斷路器，缺則 exit 2（/flow 寫 mode:auto 前跑）
-  complete-check         完成謂詞硬閘門：tasks.md 全 [x] ＋ 所有 REQ-E2E-* 有 pass/n-a 記錄 才准發 COMPLETE，否則 exit 2（/flow-ship 出口跑）
-  spec-ready [--freeze]  需求收斂閘門：requirements.md ### 開放問題 沒清零/缺 REQ-E2E·PERF → exit 2（產原型前＋凍結前跑；--freeze 通過才寫 spec-done，且 specs/ui-mockups/ 存在時一併驗走查台）
-  mockup-check [--dir]   互動原型走查閘門：specs/ui-mockups/index.html 缺 REQ-E2E 走查卡 或 本地連結 404 → exit 2（產完原型、開瀏覽器請使用者定版前跑）
+  complete-check         完成謂詞硬閘門：tasks.md 全 [x] ＋ requirements.md 實存 ＋ 所有 REQ-E2E-* 有 pass/n-a 記錄 才准發 COMPLETE，否則 exit 2（/flow-ship 出口跑）
+  spec-ready [--freeze]  需求收斂閘門：### 開放問題 段缺失/沒清零、缺 REQ-E2E·PERF、placeholder、REQ-E2E 缺 journey 結構、PERF N/A 無豁免檔 → exit 2（含糊詞僅警告；--freeze 另對賬 projectType＋走查台/mockup-waiver）
+  mockup-check [--dir]   互動原型走查閘門：specs/ui-mockups/index.html 缺 REQ-E2E 走查卡、本地連結 404、或連到的頁面是空殼（無 app.js/互動元素）→ exit 2（產完原型、開瀏覽器請使用者定版前跑）
 決策/討論一律回 Claude（彈窗）；狀態都在專案的 .flow/。`);
 }

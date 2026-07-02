@@ -42,7 +42,7 @@ specs/ui-mockups/
 
 ## 六、確定性閘門與定版
 
-1. 產完原型 SHALL 跑 `flow-state mockup-check`：`index.html` 缺任一 REQ-E2E 走查卡、或走查台連到的本地頁 404 → **exit 2**（堵「只產兩頁就請使用者定版」的偷工；`spec-ready --freeze` 在 `specs/ui-mockups/` 存在時會再驗一次）。閘門只守覆蓋骨架——**好不好看、對不對味仍由使用者定版**。
+1. 產完原型 SHALL 跑 `flow-state mockup-check`：`index.html` 缺任一 REQ-E2E 走查卡、走查台連到的本地頁 404、或連到的頁面是**空殼**（未引用 `app.js` 或無任何 form/button/連結互動元素）→ **exit 2**（堵「只產兩頁就請使用者定版」與「有卡但頁面空殼」的偷工；`spec-ready --freeze` 在 `specs/ui-mockups/` 存在時會再驗一次）。閘門只守覆蓋骨架——**好不好看、對不對味仍由使用者定版**。
 2. 綠了才**主動開瀏覽器**送 index.html 到使用者眼前（mac `open` / Windows `Start-Process` / Linux `xdg-open`）。
 3. `AskUserQuestion` 收方向：「照走查台點完了嗎？方向 OK / 某幾頁要改 / 整個方向錯」。改到使用者點頭才凍結。
 

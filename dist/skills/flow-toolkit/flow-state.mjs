@@ -303,9 +303,9 @@ switch (cmd) {
     const choice = flag('--choice') || '';
     if (!choice) { console.error('需給 --choice（你自決了什麼）'); process.exit(1); }
     const rid = await resolveIdOrExit(id);
-    // 審計語意：waiver 類（perf-waiver/mockup-waiver/redteam-waiver-*）規格上是「使用者彈窗拍板後留檔」，
-    // 預設記 by:'user'；其餘（自駕 C 類自決）預設 by:'auto'。--by 可明示覆寫。
-    const by = flag('--by') || (/waiver/i.test(rid) ? 'user' : 'auto');
+    // 審計語意：waiver/signoff 類（perf-waiver/mockup-waiver/redteam-waiver-*/ui-signoff）規格上是
+    // 「使用者彈窗拍板後留檔」，預設記 by:'user'；其餘（自駕 C 類自決）預設 by:'auto'。--by 可明示覆寫。
+    const by = flag('--by') || (/waiver|signoff/i.test(rid) ? 'user' : 'auto');
     if (by !== 'user' && by !== 'auto') { console.error('--by 須為 user / auto'); process.exit(1); }
     try { await S.recordDecision(root, rid, { question: flag('--question') || '', choice, why: flag('--why') || '', by }); }
     catch (e) { if (e && e.code === 'UNSAFE_ID') { console.error('✗ ' + e.message); process.exit(1); } throw e; }
@@ -464,7 +464,7 @@ switch (cmd) {
       console.error('✗ 需求尚未收斂，不能凍結／推進：');
       for (const p of problems) console.error('  - ' + p);
       if (open.length) { console.error('  未收斂的開放問題：'); for (const q of open.slice(0, 12)) console.error('    · ' + q); }
-      console.error('  繼續蘇格拉底訪談 + grill-me + spec-reviewer，把每一項問到拍板（彈窗）後全清零再凍結。別手改檔繞過閘門。');
+      console.error('  繼續蘇格拉底訪談 + grill-me + lens 審查矩陣（spec-redteam/spec-consistency），把每一項問到拍板（彈窗）後全清零再凍結。別手改檔繞過閘門。');
       process.exit(2);
     }
     if (argv.includes('--freeze')) {
@@ -502,6 +502,31 @@ switch (cmd) {
         }
         console.log('⚠ web 類無互動原型、已有 mockup-waiver 豁免記錄——UI 方向風險自負（decision 已留審計）。');
       }
+      // 第 1 波：多角度審查收斂判準（機讀，取代「某一輪問不出新問題」的模型自評）——
+      // required lens（redteam/consistency）各 ≥2 輪、末輪零新發現（或滿 3 輪封頂）、末輪 docHash==現行文字、
+      // 全部 findings 走到四種終局之一。codex lens 有 ledger 就一併對賬、沒裝不強制。
+      // 收斂判準只看「最後一次凍結之後」的輪（週期斷代，防再凍結時舊週期輪數蒙混）；終局對賬吃全量（findings 不可蒸發）。
+      const allLedgers = await S.listSpecReviewLedgers(root);
+      const cycleLedgers = S.currentCycleLedgers(allLedgers, await S.readJournal(root));
+      const reqText = readFileSync(rp, 'utf8');
+      const curHash = S.sha256Text(reqText);
+      const decisionExists = (did) => existsSync(path.join(root, '.flow', 'decisions', did + '.json'));
+      const srProblems = [
+        ...S.lensConvergenceAudit(cycleLedgers, curHash),
+        ...S.reviewCheckAudit(allLedgers, await S.readSpecResolutions(root), reqText, decisionExists, curHash),
+      ];
+      if (srProblems.length) {
+        console.error('✗ 多角度審查未收斂，不能凍結（迴圈細節見 references/spec-review-loop.md）：');
+        for (const p of srProblems) console.error('  - ' + p);
+        process.exit(2);
+      }
+      // UI 定版記錄（走了原型路才要求）：使用者彈窗定版後 SHALL 留檔——機器證明不了「使用者真點過」，
+      // 但「沒有定版記錄就凍結」從此擋得住（decision 檔可由模型自寫屬蓄意欺騙級，靠彈窗雙寫＋git 審計線兜底）。
+      if (existsSync(path.join(root, mockDirRel)) && !decisionExists('ui-signoff')) {
+        console.error('✗ 互動原型存在但查無 UI 定版記錄——使用者照走查台點完、彈窗定版後 SHALL 留檔：');
+        console.error('  flow-state decision ui-signoff --choice "<方向 OK/改了哪幾頁後 OK>" --why "<使用者原話>"');
+        process.exit(2);
+      }
       const st = await S.readStateJson(root);
       await S.writeStateJson(root, { ...st, phase: 'spec-done' });        // read-modify-write，保留 mode/tasks/verify/tdd
       await S.appendJournal(root, { ev: 'spec.frozen' });
@@ -529,8 +554,93 @@ switch (cmd) {
     console.log('  下一步：開瀏覽器把走查台每條 journey 真點一遍，再用彈窗跟使用者定版 UI。');
     break;
   }
+  case 'spec-review': {
+    // 收一輪 lens 審查 findings 落機讀 ledger（第 1 波）。docHash 由本 CLI 讀現行 requirements.md 自算
+    // （模型不可自填）、round 自動遞增——「哪些 lens 跑過、跑了幾輪、審的是哪版文字」變成檔案事實。
+    // 用法：flow-state spec-review <redteam|consistency|codex> --file <findings.json> [--exec "<cmd>"]
+    //   findings.json 形狀：{ "findings": [{ "id":"SR-RT-001", "category":"…", "severity":"high|medium|low",
+    //   "claim":"…（含 REQ 錨點）", "suggest":"…" }], "attestation": "…(選填)" }；零發現給空陣列。
+    //   --exec：（codex 跨家族 lens 用）由 CLI 親自執行命令並把 stdout/exit 原文存進 ledger raw 欄位。
+    const lens = argv[1];
+    if (!S.SPEC_REVIEW_LENSES.includes(lens)) { console.error(`usage: flow-state spec-review <${S.SPEC_REVIEW_LENSES.join('|')}> --file <findings.json> [--exec "<cmd>"]`); process.exit(1); }
+    const fp = flag('--file');
+    if (!fp) { console.error('需給 --file <findings.json>（lens subagent 回傳的結構化 findings）'); process.exit(1); }
+    const rp2 = path.join(root, 'specs', 'requirements.md');
+    if (!existsSync(rp2)) { console.error('✗ 查無 specs/requirements.md——沒有可審的需求文件。'); process.exit(2); }
+    let obj;
+    try { const s = readFileSync(path.resolve(root, fp), 'utf8'); obj = JSON.parse(s.charCodeAt(0) === 0xfeff ? s.slice(1) : s); }  // strip BOM（PS5.1 utf8 帶 BOM）
+    catch (e) { console.error(`✗ findings 檔讀取/解析失敗：${e.message}`); process.exit(1); }
+    const shapeProblems = S.validateSpecReviewFindings(obj, lens);
+    if (shapeProblems.length) {
+      console.error('✗ findings 檔形狀不合法（schema 擋壞形狀，修好再收）：');
+      for (const p of shapeProblems) console.error('  - ' + p);
+      process.exit(1);
+    }
+    // 跨 lens／跨輪 id 全域查重：resolutions 以 id 為全域 key，撞號會讓一筆終局吃掉兩條不同質疑（無痕蒸發）
+    const seenIds = new Map();
+    for (const rec of await S.listSpecReviewLedgers(root)) for (const f of (rec.findings || [])) seenIds.set(String(f.id || '').toUpperCase(), `${rec.lens} r${rec.round}`);
+    const clash = obj.findings.map(f => String(f.id || '').toUpperCase()).filter(id => seenIds.has(id));
+    if (clash.length) {
+      console.error('✗ finding id 與既有 ledger 撞號（跨 lens/輪唯一，防一筆終局蒸發兩條質疑）：');
+      for (const id of clash) console.error(`  - ${id} 已存在於 ${seenIds.get(id)}——換流水號（${S.SPEC_LENS_ID_PREFIX[lens]}<新號>）`);
+      process.exit(1);
+    }
+    let raw;
+    const execCmd = flag('--exec');
+    if (execCmd) {
+      try { raw = { cmd: execCmd, stdout: execSync(execCmd, { cwd: root, encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 }).slice(0, 65536), exit: 0 }; }
+      catch (e) { raw = { cmd: execCmd, stdout: String(e.stdout || e.message || '').slice(0, 65536), exit: (e.status ?? 1) }; }
+    }
+    const docHash = S.sha256Text(readFileSync(rp2, 'utf8'));
+    const round = await S.writeSpecReviewLedger(root, lens, { findings: obj.findings, attestation: obj.attestation || '', ...(raw ? { raw } : {}), docHash });
+    console.log(`✓ ${lens} r${round} 已落檔（${obj.findings.length} 條 findings；docHash 由 CLI 綁定現行 requirements.md）。`);
+    console.log(obj.findings.length
+      ? '  下一步：逐條 flow-state review-resolve <SR-id> --as <resolved:REQ-xxx|open|deferred:<id>|rejected:<id>>——發現不能無痕蒸發。'
+      : '  零新發現——若已 ≥2 輪且全 findings 終局，spec-ready --freeze 的收斂判準可過。');
+    break;
+  }
+  case 'review-resolve': {
+    // 把一條 lens finding 走到四種終局之一（各附機器可驗指標；resolve 當下即驗、freeze 再驗一次）。
+    // 用法：flow-state review-resolve <SR-id> --as <resolved:REQ-xxx|open|deferred:<decisionId>|rejected:<decisionId>>
+    const fid = argv[1];
+    const asStr = flag('--as');
+    if (!fid || fid.startsWith('--') || !asStr) { console.error('usage: flow-state review-resolve <SR-id> --as <resolved:REQ-xxx|open|deferred:<id>|rejected:<id>>'); process.exit(1); }
+    const ledgers = await S.listSpecReviewLedgers(root);
+    const idU = fid.toUpperCase();
+    if (!ledgers.some(r => (r.findings || []).some(f => String(f.id || '').toUpperCase() === idU))) {
+      console.error(`✗ 查無 finding「${fid}」——它不在任何 .flow/spec-review/ ledger 裡（先 spec-review 落檔才有東西可終局）。`);
+      process.exit(1);
+    }
+    const rp3 = path.join(root, 'specs', 'requirements.md');
+    const reqMd = existsSync(rp3) ? readFileSync(rp3, 'utf8') : '';
+    const curHash = S.sha256Text(reqMd);
+    const fLedger = ledgers.find(r => (r.findings || []).some(f => String(f.id || '').toUpperCase() === idU));
+    const prob = S.specResolutionProblem(idU, asStr, reqMd, (did) => existsSync(path.join(root, '.flow', 'decisions', did + '.json')),
+      { findingDocHash: fLedger && fLedger.docHash, currentHash: curHash });
+    if (prob) { console.error('✗ ' + prob); process.exit(2); }
+    await S.writeSpecResolution(root, idU, { as: asStr });
+    console.log(`✓ ${idU} → ${asStr}（指標已驗；freeze 前 review-check 會再驗一次）。`);
+    break;
+  }
+  case 'review-check': {
+    // findings 終局化對賬（可單獨跑、診斷用；spec-ready --freeze 內含同一檢查＋lens 收斂判準）。
+    const ledgers = await S.listSpecReviewLedgers(root);
+    if (!ledgers.length) { console.log('⚠ 查無任何 .flow/spec-review/ ledger——lens 審查還沒跑（freeze 會要求 redteam/consistency 各 ≥2 輪）。'); break; }
+    const rp4 = path.join(root, 'specs', 'requirements.md');
+    const reqMd = existsSync(rp4) ? readFileSync(rp4, 'utf8') : '';
+    const problems = S.reviewCheckAudit(ledgers, await S.readSpecResolutions(root), reqMd,
+      (did) => existsSync(path.join(root, '.flow', 'decisions', did + '.json')), S.sha256Text(reqMd));
+    if (problems.length) {
+      console.error('✗ findings 終局化對賬未過（發現不能無痕蒸發）：');
+      for (const p of problems) console.error('  - ' + p);
+      process.exit(2);
+    }
+    const total = ledgers.reduce((n, r) => n + (r.findings || []).length, 0);
+    console.log(`✓ ${total} 條 findings 全數終局且指標有效（resolved/open/deferred/rejected）。`);
+    break;
+  }
   default:
-    console.log(`flow-state <resume|status|done|checkpoint|mode|project-type|scope|redteam|journey-check|verify-e2e|coverage|lesson|decision|guardrail-check|complete-check|spec-ready|mockup-check> [--root <path>]
+    console.log(`flow-state <resume|status|done|checkpoint|mode|project-type|scope|redteam|journey-check|verify-e2e|coverage|lesson|decision|guardrail-check|complete-check|spec-ready|spec-review|review-resolve|review-check|mockup-check> [--root <path>]
   resume | status        冷啟動：reconstruct 印現況 + 下一步 + mid-task 進度 + 對帳 + 已知死路（換 session/電腦/中斷後接手；平行波看 /workflows）
   done <id> [--commit]   標一個 task 完成：翻 tasks.md [x] + ledger→delivered（自帶 verify 閘門；先標、再 commit）
   checkpoint <id> --phase <red|green|refactor|integrated> [--note]   記 mid-task 進度（開發中當機 → resume 帶出「上次做到第幾步」，只補沒做完的）
@@ -545,7 +655,10 @@ switch (cmd) {
   decision <id> --choice "<c>" --why "<w>" [--by user|auto]   記決策留審計（waiver 類 id 預設 by:user＝使用者拍板；其餘預設 by:auto＝自駕自決）
   guardrail-check        自駕前置：確認 settings.json 含 stall 斷路器，缺則 exit 2（/flow 寫 mode:auto 前跑）
   complete-check         完成謂詞硬閘門：tasks.md 全 [x] ＋ requirements.md 實存 ＋ 所有 REQ-E2E-* 有 pass/n-a 記錄 才准發 COMPLETE，否則 exit 2（/flow-ship 出口跑）
-  spec-ready [--freeze]  需求收斂閘門：### 開放問題 段缺失/沒清零、缺 REQ-E2E·PERF、placeholder、REQ-E2E 缺 journey 結構、PERF N/A 無豁免檔 → exit 2（含糊詞僅警告；--freeze 另對賬 projectType＋走查台/mockup-waiver）
+  spec-ready [--freeze]  需求收斂閘門：### 開放問題 段缺失/沒清零、缺 REQ-E2E·PERF、placeholder、REQ-E2E 缺 journey 結構、PERF N/A 無豁免檔 → exit 2（含糊詞僅警告；--freeze 另對賬 projectType＋走查台/mockup-waiver＋lens 收斂/findings 終局＋ui-signoff）
+  spec-review <lens> --file <findings.json> [--exec "<cmd>"]   收一輪 lens 審查落 ledger（redteam|consistency|codex；docHash 由 CLI 自算、round 自動遞增）
+  review-resolve <SR-id> --as <resolved:REQ-xxx|open|deferred:<id>|rejected:<id>>   把一條 finding 走到終局（附機器可驗指標，發現不能無痕蒸發）
+  review-check           findings 終局化對賬：任一 finding 未終局/指標失效 → exit 2（freeze 內含同一檢查）
   mockup-check [--dir]   互動原型走查閘門：specs/ui-mockups/index.html 缺 REQ-E2E 走查卡、本地連結 404、或連到的頁面是空殼（無 app.js/互動元素）→ exit 2（產完原型、開瀏覽器請使用者定版前跑）
 決策/討論一律回 Claude（彈窗）；狀態都在專案的 .flow/。`);
 }

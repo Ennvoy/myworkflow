@@ -738,6 +738,101 @@ test('mockupPageProblems：有 app.js＋互動元素 → 空；空殼頁 → 兩
   assert.deepEqual(S.mockupPageProblems('<script src="app.js"></script><form><input></form>'), [], 'form/input 也算互動');
 });
 
+// ── spec 審查 lens ledger（第 1 波）：驗形／終局／收斂判準的純核心 ──
+
+test('validateSpecReviewFindings：合法（含空陣列）過；缺欄/壞 id/前綴不符 lens/重複/lens 不符逐項點名', () => {
+  assert.deepEqual(S.validateSpecReviewFindings({ findings: [] }, 'redteam'), [], '零發現＝空陣列合法');
+  assert.deepEqual(S.validateSpecReviewFindings({ lens: 'redteam', findings: [{ id: 'SR-RT-001', severity: 'high', claim: 'REQ-012 scope 缺口' }] }, 'redteam'), []);
+  assert.deepEqual(S.validateSpecReviewFindings({ findings: [{ id: 'SR-CS-001', severity: 'low', claim: 'REQ-005 與 story 矛盾' }] }, 'consistency'), []);
+  assert.match(S.validateSpecReviewFindings({}, 'redteam').join('\n'), /findings 陣列/);
+  assert.match(S.validateSpecReviewFindings({ lens: 'consistency', findings: [] }, 'redteam').join('\n'), /lens/);
+  // 前綴綁 lens：redteam 用了 SR-CS- → 擋（防跨 lens 撞號蒸發質疑）
+  assert.match(S.validateSpecReviewFindings({ findings: [{ id: 'SR-CS-001', severity: 'high', claim: 'x' }] }, 'redteam').join('\n'), /SR-RT-/);
+  const bad = S.validateSpecReviewFindings({ findings: [{ id: 'X-1', severity: 'critical', claim: '' }, { id: 'SR-RT-9', severity: 'low', claim: 'x' }, { id: 'sr-rt-9', severity: 'low', claim: 'y' }] }, 'redteam');
+  assert.match(bad.join('\n'), /SR-RT-/);
+  assert.match(bad.join('\n'), /severity/);
+  assert.match(bad.join('\n'), /claim/);
+  assert.match(bad.join('\n'), /重複/);
+});
+
+const REVIEW_MD = READY_MD.replace('### 開放問題\n無', '### 開放問題\n- [SR-RT-002] 刪父層時子資源怎麼辦？');
+
+test('specResolutionProblem：四種終局各附機器指標；指標失效/亂寫逐一擋（第 1 波）', () => {
+  const dec = id => id === 'D-1';
+  assert.equal(S.specResolutionProblem('SR-RT-001', 'resolved:REQ-001', READY_MD, dec), null);
+  assert.match(S.specResolutionProblem('SR-RT-001', 'resolved:REQ-999', READY_MD, dec), /不存在/);
+  assert.equal(S.specResolutionProblem('SR-RT-002', 'open', REVIEW_MD, dec), null, '開放問題段有 [SR-RT-002] bullet');
+  assert.match(S.specResolutionProblem('SR-RT-001', 'open', REVIEW_MD, dec), /查無帶 \[SR-RT-001\]/, '沒掛標籤不算 open');
+  assert.equal(S.specResolutionProblem('SR-RT-003', 'rejected:D-1', READY_MD, dec), null);
+  assert.match(S.specResolutionProblem('SR-RT-003', 'deferred:D-404', READY_MD, dec), /不存在/);
+  assert.match(S.specResolutionProblem('SR-RT-003', '算了不管', READY_MD, dec), /不合法的終局/);
+});
+
+test('reviewCheckAudit：未終局/指標失效點名；全終局＝零 problems（發現不能無痕蒸發）', () => {
+  const ledgers = [{ lens: 'redteam', round: 1, findings: [{ id: 'SR-RT-001', severity: 'high' }, { id: 'SR-RT-002', severity: 'low' }] }];
+  const dec = () => false;
+  const none = S.reviewCheckAudit(ledgers, {}, REVIEW_MD, dec);
+  assert.equal(none.length, 2, '兩條都沒終局');
+  assert.match(none.join('\n'), /SR-RT-001.*未終局/);
+  const ok = S.reviewCheckAudit(ledgers, { 'SR-RT-001': { as: 'resolved:REQ-001' }, 'sr-rt-002': { as: 'open' } }, REVIEW_MD, dec);
+  assert.deepEqual(ok, [], JSON.stringify(ok));
+});
+
+test('sha256Text：行尾正規化——CRLF/LF/CR 同文字同 hash（覆核 W1 docHash 對 autocrlf 不敏感）', () => {
+  assert.equal(S.sha256Text('a\r\nb'), S.sha256Text('a\nb'));
+  assert.equal(S.sha256Text('a\rb'), S.sha256Text('a\nb'));
+  assert.notEqual(S.sha256Text('a\nb'), S.sha256Text('a\nc'), '真改字仍不同');
+});
+
+test('specResolutionProblem：resolved 要求文件在 finding 落檔後有變動——指回一字未改的 REQ 擋（覆核 W1）', () => {
+  const dec = () => false;
+  const H = S.sha256Text(READY_MD);
+  // findingDocHash == currentHash（文件零改動）→ 擋
+  assert.match(S.specResolutionProblem('SR-RT-001', 'resolved:REQ-001', READY_MD, dec, { findingDocHash: H, currentHash: H }), /無任何變動/);
+  // 文件已改（hash 不同）→ 過
+  assert.equal(S.specResolutionProblem('SR-RT-001', 'resolved:REQ-001', READY_MD, dec, { findingDocHash: 'old', currentHash: H }), null);
+  // 不給 hash（review-resolve 當下無 currentHash）→ 只驗 REQ 存在（向後相容）
+  assert.equal(S.specResolutionProblem('SR-RT-001', 'resolved:REQ-001', READY_MD, dec), null);
+});
+
+test('specResolutionProblem：deferred/rejected id 收中文（與 decision 正門對齊）、擋 .. 穿越（覆核 W1）', () => {
+  assert.equal(S.specResolutionProblem('SR-RT-001', 'rejected:延後付款', READY_MD, id => id === '延後付款'), null, '中文 id 對齊 safeId');
+  assert.match(S.specResolutionProblem('SR-RT-001', 'deferred:../secrets', READY_MD, () => true), /\.\./);
+});
+
+test('openSectionHasTag：tag 掛在段內子標題也算（覆核 W1，堵「算未收斂卻登記不了 open」死結）', () => {
+  const md = '### 開放問題\n#### [SR-RT-001] 刪父層時子資源怎麼辦？\n';
+  assert.equal(S.openSectionHasTag(md, 'SR-RT-001'), true);
+  assert.equal(S.openSectionHasTag('### 開放問題\n- [SR-CS-002] bullet 形式\n', 'SR-CS-002'), true);
+  assert.equal(S.openSectionHasTag('### 開放問題\n無\n', 'SR-RT-001'), false);
+});
+
+test('currentCycleLedgers：只留最後一次 spec.frozen 之後的輪；無凍結事件＝全留（覆核 W1 週期斷代）', () => {
+  const led = [
+    { lens: 'redteam', round: 1, at: '2026-01-01T00:00:00Z' },
+    { lens: 'redteam', round: 2, at: '2026-01-02T00:00:00Z' },
+    { lens: 'redteam', round: 3, at: '2026-01-04T00:00:00Z' },
+  ];
+  assert.equal(S.currentCycleLedgers(led, []).length, 3, '沒凍結過＝全留');
+  const j = [{ ev: 'spec.frozen', t: '2026-01-03T00:00:00Z' }];
+  const cur = S.currentCycleLedgers(led, j);
+  assert.equal(cur.length, 1);
+  assert.equal(cur[0].round, 3, '只留凍結後那輪');
+});
+
+test('lensConvergenceAudit：未跑/1 輪/末輪有 findings 擋；2 輪末輪空過；docHash 不符擋；3 輪封頂放行（第 1 波）', () => {
+  const H = 'hash-now';
+  const mk = (lens, round, n, docHash = H) => ({ lens, round, docHash, findings: Array.from({ length: n }, (_, i) => ({ id: `SR-X-${round}${i}` })) });
+  assert.match(S.lensConvergenceAudit([], H).join('\n'), /redteam.*未跑/);
+  assert.match(S.lensConvergenceAudit([mk('redteam', 1, 0), mk('consistency', 1, 0), mk('consistency', 2, 0)], H).join('\n'), /redteam.*未收斂/, '單輪即使空也不算收斂（≥2 輪）');
+  const good = [mk('redteam', 1, 2), mk('redteam', 2, 0), mk('consistency', 1, 0), mk('consistency', 2, 0)];
+  assert.deepEqual(S.lensConvergenceAudit(good, H), []);
+  const stale = [mk('redteam', 1, 0), mk('redteam', 2, 0, 'hash-old'), mk('consistency', 1, 0), mk('consistency', 2, 0)];
+  assert.match(S.lensConvergenceAudit(stale, H).join('\n'), /docHash 不符/);
+  const capped = [mk('redteam', 1, 3), mk('redteam', 2, 2), mk('redteam', 3, 1), mk('consistency', 1, 0), mk('consistency', 2, 0)];
+  assert.deepEqual(S.lensConvergenceAudit(capped, H), [], '滿 3 輪封頂（剩餘 findings 由 review-check 逼終局）');
+});
+
 test('isHighRiskAttackText：真攻擊面命中（含自然語言句型）、工程語境不誤中（W0-6 三組制）', () => {
   // 真安全面 → true（強訊號單獨；或 domain＋攻擊動詞共現）
   for (const s of [

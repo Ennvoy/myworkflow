@@ -66,7 +66,7 @@ foreach ($hk in 'flow-verify-gate.mjs', 'flow-session-start.mjs', 'flow-size-che
   $p = Join-Path $ClaudeHome "hooks\$hk"
   if (Test-Path $p) { $targets.Add($p) }
 }
-foreach ($ag in 'red-team.md', 'code-reviewer.md', 'spec-reviewer.md', 'evaluator.md') {
+foreach ($ag in 'red-team.md', 'code-reviewer.md', 'spec-reviewer.md', 'evaluator.md', 'spec-redteam.md', 'spec-consistency.md') {
   $p = Join-Path $ClaudeHome "agents\$ag"
   if (Test-Path $p) { $targets.Add($p) }
 }

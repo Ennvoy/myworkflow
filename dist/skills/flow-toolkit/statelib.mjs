@@ -25,7 +25,10 @@ function safeId(id) {
 
 async function readJSON(p, fallback) {
   if (!existsSync(p)) return fallback;
-  try { return JSON.parse(await readFile(p, 'utf8')); } catch { return fallback; }
+  try {
+    const raw = await readFile(p, 'utf8');
+    return JSON.parse(raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw);   // strip BOM（PS5.1 utf8 帶 BOM）
+  } catch { return fallback; }
 }
 // 原子寫任意內容：先寫唯一暫存檔 → rename 覆蓋正式檔。當機中途只會壞在 tmp，正式檔永遠是「上一個完整版本」，
 // 不再出現半寫的空檔/截斷。同卷 rename 在 POSIX 與 Windows（Node 走 MoveFileEx replace-existing）皆原子。
@@ -47,7 +50,7 @@ async function writeJSON(p, obj) { await writeFileAtomic(p, JSON.stringify(obj, 
 // 把「耐久證據進 git、瞬時/衍生檔忽略」從散文鐵則釘成確定性檔，放在 .flow/ 內＝self-contained、隨目錄走、
 // 不必動專案根 .gitignore（那支由 clean-verify-artifacts 管另一塊）。清單為相對 .flow/ 的瞬時檔：
 //   state.json（當前 task 衍生指標、每動一次重寫）/ state.json.mode / monitor.port / *.log / *-reminded（ctx/size 提醒旗標）。
-// 耐久證據（manifest.json / ledger/ / redteam/ / verify/ / decisions/ / journal.ndjson / lessons.ndjson / 本 .gitignore）
+// 耐久證據（manifest.json / ledger/ / redteam/ / verify/ / decisions/ / spec-review/ / journal.ndjson / lessons.ndjson / 本 .gitignore）
 // 不在清單 → 照常 track（換機 clone 即 reconstruct、ship 審查讀紅軍清單）。冪等 managed block：只換自己區塊、保留使用者自訂行。
 const FLOW_GITIGNORE_BLOCK = [
   '# >>> flow-state (managed by flow-toolkit) >>>',
@@ -375,6 +378,172 @@ export function isHighRiskAttackText(text) {
   if (RISK_DOMAIN_RE.test(s) && RISK_VERB_RE.test(s)) return true;
   if (/注入/.test(s) && RISK_INJECT_CTX_RE.test(s)) return true;
   return false;
+}
+
+// ── spec 審查 lens ledger（第 1 波）：訪談多角度 review 的機讀痕跡 ──
+// 設計：lens 綁「互異機制」（redteam＝對抗目標函數、consistency＝斷開 context 全集推理、codex＝跨模型家族
+// opportunistic）而非換 persona（Nine Judges：同模型換提示詞 9 評審 ≈ 2.18 張獨立票＝假多角度）。
+// docHash 由 CLI 收檔時自算（模型不可自填）＝「這輪審的是哪個版本的文字」是機器事實；
+// findings 一旦落檔就只能走四種終局（resolved/open/deferred/rejected，各附機器可驗指標）、無法無痕蒸發。
+// 誠實邊界：ledger「出處」不可機器證明（模型可不 spawn subagent 自編 findings）——防懶不防蓄意欺騙，
+// 偽造成本＝編一整份結構化連環謊＋git 審計線可稽，與手改 state.json 同級。
+export const SPEC_REVIEW_LENSES = ['redteam', 'consistency', 'codex'];
+export const REQUIRED_SPEC_LENSES = ['redteam', 'consistency'];
+export const SPEC_REVIEW_ROUND_CAP = 3;
+
+// 行尾正規化後雜湊：docHash 語意是「文字版本」非「位元組版本」——git autocrlf/Windows 編輯器翻行尾
+// 不該讓全 lens 末輪假性 stale（換機 clone 接手是本 harness 主軸，不能跟它打架）。
+export function sha256Text(s) { return createHash('sha256').update(String(s || '').replace(/\r\n?/g, '\n'), 'utf8').digest('hex'); }
+
+const specReviewDir = root => path.join(dir(root), 'spec-review');
+const specResolutionsPath = root => path.join(specReviewDir(root), 'resolutions.json');
+
+// findings 檔形狀驗證（模型自報內容，CLI 收檔前擋壞形狀；round/docHash 由 CLI 覆寫、不信自填）。
+// id 前綴綁 lens（redteam→SR-RT-、consistency→SR-CS-、codex→SR-CX-）——resolutions 以 id 為全域 key，
+// 跨 lens 撞號會讓一筆終局同時吃掉兩條不同質疑（無痕蒸發），結構上直接堵；跨輪撞號由 CLI 收檔時全域查重擋。
+export const SPEC_LENS_ID_PREFIX = { redteam: 'SR-RT-', consistency: 'SR-CS-', codex: 'SR-CX-' };
+export function validateSpecReviewFindings(obj, lens) {
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return ['不是 JSON 物件'];
+  const problems = [];
+  if (obj.lens && obj.lens !== lens) problems.push(`檔內 lens「${obj.lens}」與命令列 lens「${lens}」不符`);
+  if (!Array.isArray(obj.findings)) return [...problems, '缺 findings 陣列（零發現要給空陣列 []，不是省略欄位——「沒看」與「看過且乾淨」要可分）'];
+  const prefix = SPEC_LENS_ID_PREFIX[lens] || 'SR-';
+  const seen = new Set();
+  obj.findings.forEach((f, i) => {
+    const at = `findings[${i}]`;
+    if (!f || typeof f !== 'object') { problems.push(`${at} 不是物件`); return; }
+    const id = String(f.id || '').toUpperCase();
+    if (!id.startsWith(prefix) || !/^SR-[A-Z]{2}-[A-Za-z0-9._-]+$/i.test(id)) problems.push(`${at} id 須為 ${prefix}<流水號>（如 ${prefix}001）——前綴綁 lens，防跨 lens 撞號蒸發質疑`);
+    else if (seen.has(id)) problems.push(`${at} id 重複：${f.id}`);
+    else seen.add(id);
+    if (!String(f.claim || '').trim()) problems.push(`${at} 缺 claim（具體質疑，含 REQ 錨點）`);
+    if (!['high', 'medium', 'low'].includes(String(f.severity || '').toLowerCase())) problems.push(`${at} severity 須為 high/medium/low`);
+  });
+  return problems;
+}
+
+// 開放問題段是否有帶 [findingId] 標籤的 bullet（open 終局的機器指標；之後由既有 spec-ready 逼清零＝逼到彈窗問使用者）
+export function openSectionHasTag(md, findingId) {
+  const lines = String(md || '').split(/\r?\n/);
+  const tag = '[' + String(findingId).toUpperCase() + ']';
+  let inSection = false, level = 0;
+  for (const raw of lines) {
+    const h = raw.match(/^(#{1,6})\s+(.*\S)\s*$/);
+    if (h) {
+      const lv = h[1].length, title = h[2].replace(/\*\*/g, '').trim();
+      if (inSection && lv <= level) inSection = false;
+      if (/開放問題|open\s*questions/i.test(title)) { inSection = true; level = lv; continue; }
+      // 段內子標題也算 open item（specReadiness 同款）——tag 掛在子標題上同樣有效，別造成
+      // 「算未收斂卻登記不了 open」的死結
+      if (inSection && raw.toUpperCase().includes(tag)) return true;
+      continue;
+    }
+    if (inSection && raw.toUpperCase().includes(tag)) return true;
+  }
+  return false;
+}
+
+// 單筆終局驗證（純函式；decisionExists 注入、不碰 fs）：回 null＝合法，否則錯誤訊息。
+// opts.findingDocHash + opts.currentHash（皆給時）：resolved 要求文件在 finding 落檔後有變動——
+// 「指回被批評、一字未改的既有 REQ」不算解決（質疑不成立的正路是 rejected）。
+export function specResolutionProblem(findingId, asStr, requirementsMd, decisionExists, opts = {}) {
+  const s = String(asStr || '').trim();
+  let m;
+  if ((m = s.match(/^resolved:(REQ-[A-Za-z0-9._-]+)$/i))) {
+    const re = new RegExp('\\b' + m[1].replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b', 'i');
+    if (!re.test(String(requirementsMd || ''))) return `resolved 指向的 ${m[1]} 不存在於 requirements.md（id 打錯？先把質疑真的落成 REQ）`;
+    if (opts.findingDocHash && opts.currentHash && opts.findingDocHash === opts.currentHash)
+      return `finding 落檔後 requirements.md 無任何變動——先把質疑真的落成/改寫 REQ 再 resolved；質疑本身不成立走 rejected:<decisionId>`;
+    return null;
+  }
+  if (/^open$/i.test(s)) {
+    return openSectionHasTag(requirementsMd, findingId) ? null
+      : `標記 open 但「### 開放問題」段查無帶 [${String(findingId).toUpperCase()}] 標籤的 bullet——答案已落地就改 resolved:REQ-xxx，還沒問就把 bullet 補回去`;
+  }
+  if ((m = s.match(/^(deferred|rejected):([^\s\\/]+)$/i))) {
+    if (m[2].includes('..')) return `decisionId 不得含 ..`;
+    return decisionExists(m[2]) ? null : `${m[1]} 指向的 decision「${m[2]}」不存在——先 flow-state decision ${m[2]} --choice "…" --why "…" 留檔`;
+  }
+  return `不合法的終局「${s}」——須為 resolved:REQ-xxx / open / deferred:<decisionId> / rejected:<decisionId>`;
+}
+
+// review-check 核心（純函式）：每條 finding 都要有終局且指標當下仍有效——發現不能無痕蒸發。
+// currentHash（選填）：給了就對 resolved 加「文件有進展」錨點（finding 所屬輪的 docHash ≠ 現行）。
+export function reviewCheckAudit(ledgers, resolutions, requirementsMd, decisionExists, currentHash) {
+  const problems = [];
+  const res = {};
+  for (const [k, v] of Object.entries(resolutions || {})) res[k.toUpperCase()] = v;
+  for (const rec of (ledgers || [])) {
+    for (const f of (rec.findings || [])) {
+      const id = String(f.id || '').toUpperCase();
+      const r = res[id];
+      if (!r) { problems.push(`${id}（${rec.lens} r${rec.round}，${f.severity}）未終局——flow-state review-resolve ${id} --as <resolved:REQ-xxx|open|deferred:<id>|rejected:<id>>`); continue; }
+      const p = specResolutionProblem(id, r.as, requirementsMd, decisionExists, { findingDocHash: rec.docHash, currentHash });
+      if (p) problems.push(`${id}：${p}`);
+    }
+  }
+  return problems;
+}
+
+// 凍結側收斂判準（純函式）：required lens 各 ≥2 輪且末輪零新發現（或滿 cap 輪封頂＝防「審查者永遠找得到新毛病」
+// 的死循環，剩餘 findings 仍須全終局）；末輪 docHash SHALL 等於現行 requirements.md hash——
+// 「審完 → 大改文 → 凍結」會讓零新發現 attest 到舊文，機器擋。
+export function lensConvergenceAudit(ledgers, currentHash, requiredLenses = REQUIRED_SPEC_LENSES, cap = SPEC_REVIEW_ROUND_CAP) {
+  const problems = [];
+  const byLens = {};
+  for (const r of (ledgers || [])) (byLens[r.lens] = byLens[r.lens] || []).push(r);
+  for (const arr of Object.values(byLens)) arr.sort((a, b) => (a.round || 0) - (b.round || 0));
+  for (const lens of requiredLenses) {
+    const rounds = byLens[lens] || [];
+    if (!rounds.length) { problems.push(`lens「${lens}」未跑——SHALL 至少 2 輪（spawn ${lens === 'redteam' ? 'spec-redteam' : 'spec-consistency'} subagent → flow-state spec-review ${lens} --file <findings.json>）`); continue; }
+    const last = rounds[rounds.length - 1];
+    if (last.docHash !== currentHash) { problems.push(`lens「${lens}」末輪（r${last.round}）審的不是現行 requirements.md（docHash 不符）——文字在末輪審查後被改過，重跑一輪把新文字審過`); continue; }
+    const lastN = (last.findings || []).length;
+    if (!((rounds.length >= 2 && lastN === 0) || rounds.length >= cap))
+      problems.push(`lens「${lens}」未收斂：${rounds.length} 輪、末輪 ${lastN} 條 findings——逐條終局化後重跑，直到末輪零新發現（或滿 ${cap} 輪且全終局封頂）`);
+  }
+  return problems;
+}
+
+// ── ledger 儲存（fs 端；寫入一律經 flow-state CLI 正門，flow-spec-gate 擋裸寫）──
+export async function writeSpecReviewLedger(root, lens, record) {
+  await mkdir(specReviewDir(root), { recursive: true });
+  const existing = (await listSpecReviewLedgers(root)).filter(r => r.lens === lens);
+  const round = existing.reduce((m, r) => Math.max(m, r.round || 0), 0) + 1;
+  await writeJSON(path.join(specReviewDir(root), `${lens}-r${round}.json`), { ...record, lens, round, at: nowISO() });
+  await appendJournal(root, { ev: 'spec.review', lens, round, findings: (record.findings || []).length });
+  return round;
+}
+export async function listSpecReviewLedgers(root) {
+  const d = specReviewDir(root);
+  if (!existsSync(d)) return [];
+  const out = [];
+  for (const f of await readdir(d)) {
+    // 只認 CLI 寫出的正規檔名——「內容有 lens 欄位就算一輪」會讓留在目錄裡的 findings 輸入檔
+    // 被灌成一輪（1 個真輪就打穿 ≥2 輪收斂門）。lens/round 以檔名為準、不信檔內自填。
+    const m = f.match(/^(redteam|consistency|codex)-r(\d+)\.json$/i);
+    if (!m) continue;
+    const rec = await readJSON(path.join(d, f), null);
+    if (rec) out.push({ ...rec, lens: m[1].toLowerCase(), round: Number(m[2]) });
+  }
+  return out;
+}
+// 只取「最後一次凍結之後」的 lens 輪（純函式）：收斂週期斷代——已 ship 的長線專案回 /flow-spec 追加需求時，
+// 「各 ≥2 輪＋末輪零新發現」要對本週期重新成立，不能被上個週期累計的輪數蒙混（rounds.length>=cap 永久為真）。
+// spec.frozen journal 事件是天然斷代點；ledger 帶 at 時戳。歷史輪的 findings 已終局，reviewCheckAudit 仍吃全量（保「不可蒸發」）。
+export function currentCycleLedgers(ledgers, journal) {
+  let t0 = '';
+  for (const e of (journal || [])) if (e && e.ev === 'spec.frozen' && (e.t || '') > t0) t0 = e.t || '';
+  if (!t0) return ledgers || [];
+  return (ledgers || []).filter(r => (r.at || '') > t0);
+}
+
+export async function readSpecResolutions(root) { return readJSON(specResolutionsPath(root), {}); }
+export async function writeSpecResolution(root, findingId, resObj) {
+  const cur = await readSpecResolutions(root);
+  cur[String(findingId).toUpperCase()] = { ...resObj, at: nowISO() };
+  await writeJSON(specResolutionsPath(root), cur);
+  await appendJournal(root, { ev: 'spec.review.resolve', id: String(findingId).toUpperCase(), as: resObj.as });
 }
 
 // ── tasks.md 同步：把「task 完成」收成一個可被 hook/CLI 共用的原子操作 ──

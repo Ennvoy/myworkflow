@@ -31,7 +31,7 @@ description: Flow 一鍵總控 — 偵測起始 phase，選自駕（spec 定版�
 ## Step 0.5：小功能輕量路徑（跳訪談、仍寫 SDD）
 
 使用者明說「小調整 / 不用訪談」**或** `/flow` 判斷改動範圍小（單一既有 feature 的局部調整、**無新實體 / 無新角色 / 無新外部整合**）→ 走輕量分支，貫徹 SDD 但不重：
-- **跳過**：`/flow-spec` 蘇格拉底全套訪談、互動原型對焦、spec-reviewer。
+- **跳過**：`/flow-spec` 蘇格拉底全套訪談、互動原型對焦、lens 審查矩陣（spec-redteam/spec-consistency）。
 - **仍 SHALL 寫 SDD**：往 `specs/requirements.md` 的「當前迭代」段補一條精簡 `REQ-XXX`（EARS）+ 往 `specs/tasks.md` 補一個 `F-*` task。
 - **照走 build 紀律**：紅軍（針對小範圍）→ TDD 三相 → 真實資料鏈路驗證 → per-task commit → 狀態落 `.flow/`。
 - **安全閘門（升回完整 `/flow-spec`）**：偵測到**需求級**變動——新實體 / 新角色 / auth / RBAC / payment / 個資 scope——**強制升回完整 `/flow-spec`**（自駕下這也是 T1 必停）。

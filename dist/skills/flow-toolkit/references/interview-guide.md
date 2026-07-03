@@ -29,11 +29,15 @@
    - 安全、相容、可用性
 6. **驗收條件**：每條需求「怎樣算做完」（逼出可驗的 EARS 句）
 
-**收斂是迴圈、不是一輪**：grill-me + spec-reviewer 反覆問，把 `### 開放問題` 一項項清掉，直到**某一輪問不出新問題**才算收斂。收斂後跑 `flow-state spec-ready`（確定性閘門）——`### 開放問題` 段缺失/沒清零、缺 `REQ-E2E-`/`REQ-PERF-`、placeholder（TODO/待定）、REQ-E2E 缺 journey 結構、REQ-PERF 標 N/A 沒有 perf-waiver 豁免檔，任一就 exit 2，把未收斂項列回來繼續問（含糊詞/缺規範動詞僅警告，帶回訪談補問）；**綠了才往下產互動原型**。真無法當場拍板的，移到 `### 延後決策` 段並 `flow-state decision` 記錄，**不留懸空項**——懸空項就是自駕途中 AI 拿去亂猜、跑歪的源頭。
+**收斂是迴圈、不是一輪，且終點是機讀判準**：grill-me + lens 審查矩陣（見第四節）反覆問，把 `### 開放問題` 一項項清掉——「問完了沒」不由感覺判定，由 `spec-ready --freeze` 對賬（lens 各 ≥2 輪末輪零新發現＋findings 全終局）。收斂後跑 `flow-state spec-ready`（確定性閘門）——`### 開放問題` 段缺失/沒清零、缺 `REQ-E2E-`/`REQ-PERF-`、placeholder（TODO/待定）、REQ-E2E 缺 journey 結構、REQ-PERF 標 N/A 沒有 perf-waiver 豁免檔，任一就 exit 2，把未收斂項列回來繼續問（含糊詞/缺規範動詞僅警告，帶回訪談補問）；**綠了才往下產互動原型**。真無法當場拍板的，移到 `### 延後決策` 段並 `flow-state decision` 記錄，**不留懸空項**——懸空項就是自駕途中 AI 拿去亂猜、跑歪的源頭。
 
-## 四、獨立 spec-reviewer（建議）
+## 四、lens 審查矩陣（SHALL，`--freeze` 對賬）
 
-整理出初版需求後，對「你整理的需求」呼叫獨立 `spec-reviewer` subagent（另開 context），請它回 5–7 條質疑清單：邊界、衝突、隱含假設、缺失異常路徑。把質疑帶回，用彈窗跟使用者對焦。**這跟 grill-me 互補**：grill-me 是與使用者的連續對話、spec-reviewer 是一次性獨立質疑清單。
+整理出初版需求後，spawn 兩個**機制互異**的獨立 subagent（機制互異才有真獨立票——同模型換 persona 是假多角度）：
+- **`spec-redteam`**（L2）：攻擊者目標函數打 spec 文本——權限洞、可濫用規則、異常路徑缺席、邊界未定義。
+- **`spec-consistency`**（L3）：只餵 requirements.md、看不到訪談對話——抓跨 REQ 矛盾、術語漂移、實體生命週期孤兒態。
+
+各自回 findings JSON → `flow-state spec-review <lens> --file` 落 ledger（docHash 由 CLI 綁定）→ 逐條 `review-resolve` 終局（落成 REQ／進開放問題帶 `[SR-id]` 標籤彈窗問使用者／deferred/rejected 附 decision）→ 有 findings 或文字改過就重跑該 lens，直到末輪零新發現（≥2 輪；滿 3 輪封頂）。**這跟 grill-me 互補**：grill-me 是與使用者的連續對話、lens 是獨立 context 的結構化審查。迴圈全貌與 fail 對策見 `references/spec-review-loop.md`。
 
 ## 五、UI 方向對齊——互動原型（僅 web 類，鐵則）
 

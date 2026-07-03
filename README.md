@@ -46,7 +46,7 @@ git clone https://github.com/Ennvoy/myworkflow.git flow && cd flow && chmod +x i
 
 | 指令 | 階段 | 做什麼 |
 |---|---|---|
-| `/flow-spec` | 訪談定版 | 蘇格拉底一次一題彈窗 + grill-me 深挖 + 獨立 spec-reviewer，**收斂迴圈問到 `### 開放問題` 清零**（`flow-state spec-ready` 閘門守）→ 凍結 `requirements.md`(EARS) → 產**零依賴互動原型**（全 journey 可點走查、假資料 CRUD、狀態切換；`mockup-check` 閘門守覆蓋）、開瀏覽器、彈窗定 UI |
+| `/flow-spec` | 訪談定版 | 蘇格拉底一次一題彈窗 + grill-me 深挖 + **互異機制 lens 審查矩陣**（spec-redteam／spec-consistency，findings 落機讀 ledger 逐條終局），**收斂迴圈問到 `### 開放問題` 清零＋lens 末輪零新發現**（`flow-state spec-ready`／`--freeze` 逐項對賬）→ 凍結 `requirements.md`(EARS) → 產**零依賴互動原型**（全 journey 可點走查、假資料 CRUD、狀態切換；`mockup-check` 閘門守覆蓋）、開瀏覽器、彈窗定 UI＋`ui-signoff` 留檔 |
 | `/flow-plan` | 設計 | 架構 + **接縫契約釘一處**（編譯期擋發散）+ 垂直切片 + 依賴分波 |
 | `/flow-build` | 多工交付 | 波次內 Workflow 腳本 fan-out 同 repo 平行生成 worker，紅軍 → TDD → 序列整合（驗證/commit 一個個）→ per-task commit+push（走 git-tools skill） |
 | `/flow-verify` | 獨立驗證 | 另開 context 的**對抗性 Evaluator** 用 Playwright headed 真點擊、打真 API、查真 DB；效能硬閘門 |
@@ -60,12 +60,12 @@ git clone https://github.com/Ennvoy/myworkflow.git flow && cd flow && chmod +x i
 
 ## 功能特點
 
-- **需求訪談（收斂到零開放問題才凍結）**：蘇格拉底一次一題彈窗（每題附推薦答案）+ grill-me 連續深挖 + **獨立 context** 的 spec-reviewer 外部視角，**收斂迴圈把 `### 開放問題` 問到清零**，由 `flow-state spec-ready` 確定性閘門守（沒清零擋住產原型 / 凍結）+ `flow-spec-gate` hook 擋裸寫繞過——**這是自駕不跑歪的源頭**（spec 沒問乾淨＝自駕途中只能猜）；web 類用**零依賴互動原型**把 UI 方向釘死在最早能「親手點過」實體的時點——全 REQ-E2E journey 可點走查、假資料 CRUD 有真實感、可切空/錯誤/權限不足狀態，覆蓋骨架由 `flow-state mockup-check` 閘門機檢（走查台缺卡 / 零入口連結 / 連結 404 / 頁面空殼無 app.js·互動元素 → exit 2）。
+- **需求訪談（多角度 review 到機讀收斂才凍結）**：蘇格拉底一次一題彈窗（每題附推薦答案）+ grill-me 連續深挖 + **互異機制 lens 審查矩陣**（spec-redteam 攻擊 spec 文本／spec-consistency 斷開 context 抓全集矛盾；findings 落機讀 ledger、docHash 由 CLI 綁定、逐條走終局不能無痕蒸發），**收斂迴圈把 `### 開放問題` 問到清零＋lens 各 ≥2 輪末輪零新發現**，由 `flow-state spec-ready`／`--freeze` 逐項對賬 + `flow-spec-gate` hook 擋裸寫繞過——**這是自駕不跑歪的源頭**（spec 沒問乾淨＝自駕途中只能猜）；web 類用**零依賴互動原型**把 UI 方向釘死在最早能「親手點過」實體的時點——全 REQ-E2E journey 可點走查、假資料 CRUD 有真實感、可切空/錯誤/權限不足狀態，覆蓋骨架由 `flow-state mockup-check` 閘門機檢（走查台缺卡 / 零入口連結 / 連結 404 / 頁面空殼無 app.js·互動元素 → exit 2）。
 - **多工並行（Workflow 模式）**：波次內 fan-out 同 repo 平行生成 worker（只寫各自不重疊的檔）、序列整合、階段間人工閘門；foundation 先序列、features 才並行（靠 `conflictZone` 算準）；成本路由（Opus 編排 / 審查、Sonnet 平行苦工）。
 - **真實資料鏈路驗證（禁 mock 假綠）**：對抗性 Evaluator + Playwright headed + 假資料經**真 create API seed 進真 DB 再讀回**；真依賴未 ready 標 BLOCKED，不准 mock fallback 假裝綠。
 - **效能硬閘門**：load / render / API 延遲 budget，**p50 + p95**，任一維度不達標 = FAIL，高平均不能買回失敗維度。
 - **可恢復狀態（殺不死）**：write-ahead journal + 冷啟動 `reconstruct`，狀態寫進 `.flow/` + git；關機 / 換 session / 換電腦純讀檔接手，**並行多 worker 的中斷點各自獨立、不互蓋**。
-- **紅藍軍獨立 reviewer**：red-team（寫 code 前列攻擊面 + failingTestHint）、code-reviewer（出貨前全 diff 審）、spec-reviewer（需求審查）——各自獨立 context、看不到主對話。
+- **紅藍軍獨立 reviewer**：red-team（寫 code 前列攻擊面 + failingTestHint）、code-reviewer（出貨前全 diff 審）、spec-redteam／spec-consistency（需求雙 lens 審查）、evaluator（對抗性驗證者）——各自獨立 context、看不到主對話。
 - **確定性閘門**：git commit+push（走 git-tools skill：智慧分群提交＋安全推送）、`.flow` 狀態寫入、`flow-commit-gate`（先標再 commit）、`flow-verify-gate`（沒驗不准標完成）、verify runner 都是 hook / script / skill 確定性節點，模型不能假裝過關。
 - **文件收束防腐化**：單檔 > 50KB（`flow-size-check` hook 自動提醒）/ ship `COMPLETE` 兩道自動觸發歸檔，context 吃緊時另建議手動跑 `/flow-compact`；主檔保持「當前迭代 + 接縫契約 + 索引」精簡態。
 - **自包含一鍵裝**：commands / agents / skills / rules / hooks 全打包，冪等可重跑、自動備份，新電腦 `git clone` → 跑一支 script 即可。
@@ -82,7 +82,7 @@ flow/
 ├── docs/                       # architecture + harness 研究 + 設計檔
 └── dist/                       # 安裝 payload（裝進 ~/.claude）
     ├── commands/flow*.md       # 8 個 /flow* 指令
-    ├── agents/                 # red-team / code-reviewer / spec-reviewer
+    ├── agents/                 # red-team / code-reviewer / evaluator / spec-redteam / spec-consistency
     ├── rules/flow.md           # 薄 root 憲法（注入 CLAUDE.md）
     ├── skills/flow-toolkit/    # references + recipes（Workflow 腳本）+ statelib / flow-state.mjs
     ├── skills/git-tools/       # 智慧分群 commit + 安全 push + PR description（Flow commit+push 機制）

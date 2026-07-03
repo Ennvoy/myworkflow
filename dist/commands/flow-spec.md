@@ -30,7 +30,7 @@ description: Flow Phase 1 — 訪談定版。蘇格拉底式一次一題彈窗�
 
 **蘇格拉底初輪收斂後，grill-me 深挖閘門（SHALL，不可跳）**：初輪訪談一收斂，**就 SHALL 用 `AskUserQuestion` 跳一題**「要進 grill-me 對決策樹逐分支深挖，還是直接凍結？」（選項①深挖（建議）②直接凍結）。**這一問是鐵則、漏問＝流程缺陷**（別自行假設使用者要直接凍結就略過）。選深挖 → 實際呼叫 `grill-me` skill（mattpocock/skills，安裝檔已裝整套）對需求 **連續質問到每個決策分支釐清**（一次一題、能查 code 先查、每題給推薦答案）。grill-me ＝「在主 context 跟使用者互動深挖」。
 
-接著（可選但建議）對「你自己整理出的需求」呼叫獨立 `spec-reviewer` subagent（另開 context、**看不到主對話＝外部視角，與 grill-me 互補不重疊**），請它回一份 5–7 條質疑清單（邊界、衝突、隱含假設、缺失異常路徑），把質疑帶回再彈窗跟使用者對焦。
+接著跑 **lens 審查矩陣（SHALL，`--freeze` 會對賬、不是可選；於 Step 3 已把 requirements.md 落檔、首次 `flow-state spec-ready` 綠之後才跑——CLI 缺檔會 exit 2）**：對「你整理出的 requirements.md」spawn 兩個**機制互異**的獨立 subagent——`spec-redteam`（攻擊者目標函數打 spec 文本，id 前綴 `SR-RT-`）＋`spec-consistency`（只餵 requirements.md、看不到本對話＝抓全集矛盾，id 前綴 `SR-CS-`），各自回結構化 findings JSON → 存暫存檔（**放 `.flow/spec-review/` 之外**，如 `$CLAUDE_JOB_DIR/tmp/`；避免被誤計為一輪）→ `flow-state spec-review <redteam|consistency> --file <findings.json>` 落機讀 ledger（docHash 由 CLI 綁定當下文字）→ 每條 finding 走終局（`flow-state review-resolve`：落成 REQ／進開放問題帶 `[SR-id]` 標籤**彈窗問使用者**／deferred/rejected 附 decision）。裝了 Codex 再加跨家族 lens（`spec-review codex --exec`，id 前綴 `SR-CX-`），沒裝跳過。**spawn 時 SHALL 附前輪 findings＋終局、明示按錨點去重、禁重提已 rejected**。**lens 末輪 SHALL 在 requirements.md 最後一次編輯（含開放問題清零、UI slug 只寫 state.json 不寫這裡）之後跑**——凍結前又改了 requirements.md 就重跑受影響 lens 一輪。迴圈與 fail 對策見 `references/spec-review-loop.md`。
 
 ## Step 3：寫 `specs/requirements.md`（EARS，凍結用）
 
@@ -48,7 +48,7 @@ requirements 含 auth / 權限 / payment / 個資 / 合規 / audit 關鍵字 →
 
 ## Step 4.5：需求收斂閘門（鐵則，產互動原型前先過）
 
-訪談是**收斂迴圈**，不是問一輪就算：grill-me + spec-reviewer 反覆問，把每個決策分支問到拍板、`### 開放問題` 一項項清掉，直到**某一輪問不出新問題**才算收斂。收斂後 SHALL 跑確定性閘門：
+訪談是**收斂迴圈**，不是問一輪就算：grill-me + lens 審查矩陣反覆問，把每個決策分支問到拍板、`### 開放問題` 一項項清掉。**收斂終點是機讀判準、不是「感覺問不出新問題」**：L2/L3 lens 各 ≥2 輪且**末輪零新發現**（或滿 3 輪封頂且全終局）＋ findings 全數終局＋末輪 docHash==現行文字——由 `spec-ready --freeze` 逐項對賬。每輪收斂後 SHALL 跑確定性閘門：
 
 ```
 flow-state spec-ready
@@ -67,7 +67,7 @@ mockup ≠ 幾頁靜態圖靠想像。產的是**零依賴互動原型**：可�
 2. 依 `prototype-guide.md` 產互動原型到 `specs/ui-mockups/`：**全旅程覆蓋**（所有 `REQ-E2E-*` 途經畫面每頁都做、頁頁互連可點到終點）＋共用假資料層 `app.js`（localStorage、CRUD 有後果、可重置）＋每頁狀態切換器（空/載入/錯誤/權限不足）＋`index.html` **journey 走查台**（每條 REQ-E2E 一張卡：id＋步驟＋入口連結）。Tailwind CDN、零依賴、`file://` 直接開；**有基底時把該套 `tokens.css` 的 `:root` 變數 verbatim inline、不臆造**。**含中文寫檔一律 UTF-8**（PowerShell 加 `-Encoding utf8`）。
 3. **SHALL 跑 `flow-state mockup-check`（確定性閘門）**：走查台缺任一 REQ-E2E 卡、零本地入口連結、本地連結 404、或連到的頁面是空殼（無 app.js／互動元素、引用的 script 缺檔）→ exit 2 補齊再來——堵「只產兩頁就請使用者定版」與「有卡但頁面空殼」的偷工（`spec-ready --freeze` 會再驗一次）。
 4. **主動開瀏覽器**把走查台送到使用者眼前（mac `open <url>` / Windows `Start-Process <url>` / Linux `xdg-open <url>`；0 摩擦，避免被滑過）。
-5. `AskUserQuestion` 收方向：「照走查台把 journey 點完了嗎？方向 OK / 某幾頁要改 / 整個方向錯」。**改到使用者點頭才凍結**，後續 plan/build 以原型為錨點反推 API/DB（build 沿用其 markup/tokens、把假資料層換真 API）。**凍結時記錄選用的品牌基底 slug**（寫進 requirements 或 `.flow/state.json`，plan/build 沿用其 tokens）。
+5. `AskUserQuestion` 收方向：「照走查台把 journey 點完了嗎？方向 OK / 某幾頁要改 / 整個方向錯」。**改到使用者點頭才凍結**，點頭後 SHALL `flow-state decision ui-signoff --choice "<方向 OK/改哪幾頁後 OK>" --why "<使用者原話>"` 留定版記錄（`--freeze` 對賬，缺檔凍不了）。後續 plan/build 以原型為錨點反推 API/DB（build 沿用其 markup/tokens、把假資料層換真 API）。**凍結時記錄選用的品牌基底 slug**（只寫進 `.flow/state.json`，**禁寫進 requirements.md**——凍結前任何一行後改都會讓 lens 末輪 docHash 失效、逼重跑；plan/build 沿用其 tokens）。
 
 > 例外：`cli`/`api`/純後端跳過整個 Step 5（Step 1 落檔的非 web enum 本身即豁免記錄）；**web 類**使用者明說「跳過 mockup」才可豁免，SHALL `flow-state decision mockup-waiver --choice "跳過互動原型" --why "<使用者原話>"` 留檔（**不是寫進 `### 開放問題`**——那會被 spec-ready 閘門擋住凍結），並警告「整體方向風險押到 build 才暴露」。`--freeze` 機檢：web 類無 `specs/ui-mockups/` 且無 mockup-waiver 檔 → exit 2（「不建目錄＝靜默豁免」已封死）。
 
@@ -79,13 +79,14 @@ mockup ≠ 幾頁靜態圖靠想像。產的是**零依賴互動原型**：可�
 flow-state spec-ready --freeze
 ```
 
-它先再驗一次收斂（開放問題清零＋REQ 齊；`specs/ui-mockups/` 存在時一併驗走查台覆蓋），通過才寫 `.flow/state.json`：`phase="spec-done"`＋落 journal `spec.frozen`。**別手改 state.json 裸寫 `phase=spec-done` 繞過**——`flow-spec-gate` hook 會 exit 2 擋裸寫轉移（自駕下模型竄改不了）。
+它先再驗一次收斂（開放問題清零＋REQ 齊＋lint）＋projectType 對賬＋（`specs/ui-mockups/` 存在時）走查台覆蓋與 `ui-signoff` 定版記錄＋**lens 收斂判準與 findings 終局對賬**（L2/L3 各 ≥2 輪末輪零新發現、docHash==現行文字，見 `references/spec-review-loop.md`），全綠才寫 `.flow/state.json`：`phase="spec-done"`＋落 journal `spec.frozen`。**別手改 state.json 裸寫 `phase=spec-done`、別裸寫 `.flow/spec-review/` 繞過**——`flow-spec-gate` hook 會 exit 2 擋（自駕下模型竄改不了）。
 
-## 完成判準（self-check）
+## 完成判準（self-check）——逐項對應 `spec-ready --freeze` 的機檢清單，不是自報勾選
 - [ ] 訪談全程用彈窗、一次一題、有推薦答案
 - [ ] projectType 已彈窗拍板並 `flow-state project-type` 落檔（`--freeze` 會對賬）
 - [ ] **grill-me 深挖閘門已彈窗問過**（深挖／直接凍結二選一）——漏問即不合格
 - [ ] `specs/requirements.md` 存在，含 REQ-XXX + REQ-E2E-* + REQ-PERF-*
 - [ ] **`### 開放問題` 已收斂為零、`flow-state spec-ready` 綠**（產互動原型前）——這是防自駕跑歪的源頭閘門
-- [ ] web 類：互動原型全旅程覆蓋＋`flow-state mockup-check` 綠 + 已開瀏覽器讓使用者照走查台點過 + 已彈窗定版
+- [ ] **lens 審查矩陣已跑到機讀收斂**：spec-redteam＋spec-consistency 各 ≥2 輪、findings 全終局、`flow-state review-check` 綠（`--freeze` 逐項對賬）
+- [ ] web 類：互動原型全旅程覆蓋＋`flow-state mockup-check` 綠 + 已開瀏覽器讓使用者照走查台點過 + 已彈窗定版＋`ui-signoff` decision 落檔
 - [ ] 凍結走 `flow-state spec-ready --freeze`（非裸寫 state.json）、使用者已拍板

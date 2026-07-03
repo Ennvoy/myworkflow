@@ -56,6 +56,8 @@ cp -Rf "$DIST"/skills/design-system-base "$CLAUDE_HOME/skills/"
 cp -f "$DIST"/rules/flow.md "$CLAUDE_HOME/rules/flow.md"
 for f in "$DIST"/hooks/*.mjs; do case "$f" in *.test.mjs) continue;; esac; cp -f "$f" "$CLAUDE_HOME/hooks/"; done
 cp -Rf "$DIST"/agents/* "$CLAUDE_HOME/agents/"
+# 升級清理：已退役的 agent 定義檔（v0.23.0 起 spec-reviewer 拆成 spec-redteam/spec-consistency）
+rm -f "$CLAUDE_HOME/agents/spec-reviewer.md"
 # 寫安裝來源/版本標記（供 flow-session-start 非阻擋漂移提醒：改了 dist 沒重裝時提醒）
 FLOW_VERSION="$(cat "$SCRIPT_DIR/VERSION" 2>/dev/null | tr -d '[:space:]' || true)"
 printf '{"version":"%s","source":"%s","installedAt":"%s"}\n' "$FLOW_VERSION" "$SCRIPT_DIR" "$STAMP" > "$CLAUDE_HOME/.flow-version.json"

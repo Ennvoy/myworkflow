@@ -46,7 +46,7 @@ fi
 for hk in flow-verify-gate.mjs flow-session-start.mjs flow-size-check.mjs flow-commit-gate.mjs flow-design-base-hint.mjs flow-stall-monitor.mjs flow-auto-gate.mjs flow-spec-gate.mjs; do
   [ -f "$CLAUDE_HOME/hooks/$hk" ] && TARGETS+=("$CLAUDE_HOME/hooks/$hk")
 done
-for ag in red-team.md code-reviewer.md spec-reviewer.md evaluator.md; do
+for ag in red-team.md code-reviewer.md spec-reviewer.md evaluator.md spec-redteam.md spec-consistency.md; do
   [ -f "$CLAUDE_HOME/agents/$ag" ] && TARGETS+=("$CLAUDE_HOME/agents/$ag")
 done
 [ -f "$CLAUDE_HOME/FLOW-POST-INSTALL.md" ] && TARGETS+=("$CLAUDE_HOME/FLOW-POST-INSTALL.md")

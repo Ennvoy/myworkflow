@@ -219,6 +219,15 @@ async function writeReq(root, md) {
   await mkdir(path.join(root, 'specs'), { recursive: true });
   await writeFile(path.join(root, 'specs', 'requirements.md'), md, 'utf8');
 }
+// 第 1 波 lens 收斂 fixture：redteam/consistency 各 2 輪零發現（SHALL 在 requirements 定稿「之後」跑——docHash 綁定當下文字）
+async function passLenses(root) {
+  const fp = path.join(root, 'findings-empty.json');
+  await writeFile(fp, JSON.stringify({ findings: [] }), 'utf8');
+  for (const lens of ['redteam', 'consistency']) for (let i = 0; i < 2; i++) {
+    const r = run(['spec-review', lens, '--file', fp], root);
+    assert.equal(r.code, 0, r.err);
+  }
+}
 
 test('spec-ready：查無 requirements.md → exit 2', async () => {
   await withRoot(async (root) => {
@@ -257,12 +266,124 @@ test('spec-ready --freeze：通過才寫 phase=spec-done + journal，且保留 m
     await S.writeStateJson(root, { mode: 'auto', verify: 'none' });
     await writeReq(root, READY_REQ);
     assert.equal(run(['project-type', 'api'], root).code, 0, 'W0-5：凍結前先落檔專案類型');
+    await passLenses(root);
     const r = run(['spec-ready', '--freeze'], root);
     assert.equal(r.code, 0, r.err);
     const st = await S.readStateJson(root);
     assert.equal(st.phase, 'spec-done');
     assert.equal(st.mode, 'auto', 'read-modify-write 保留既有欄位');
     assert.ok((await S.readJournal(root)).some(e => e.ev === 'spec.frozen'), 'journal 留 spec.frozen 審計');
+  });
+});
+
+test('spec-review：ledger 由 CLI 落檔——round 自動遞增、docHash 綁定現行 requirements（模型不可自填）；壞形狀 exit 1（W1）', async () => {
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [] });
+    await writeReq(root, READY_REQ);
+    const fp = path.join(root, 'f.json');
+    await writeFile(fp, JSON.stringify({ findings: [{ id: 'SR-RT-001', severity: 'high', claim: 'REQ-001 邊界未定義' }], docHash: '偽造的' }), 'utf8');
+    assert.equal(run(['spec-review', 'redteam', '--file', fp], root).code, 0);
+    const [led] = await S.listSpecReviewLedgers(root);
+    assert.equal(led.round, 1);
+    assert.equal(led.docHash, S.sha256Text(READY_REQ), 'docHash 由 CLI 自算、自填的被覆寫');
+    await writeFile(fp, JSON.stringify({ findings: [] }), 'utf8');
+    assert.equal(run(['spec-review', 'redteam', '--file', fp], root).code, 0);
+    assert.equal((await S.listSpecReviewLedgers(root)).filter(l => l.lens === 'redteam').length, 2, 'round 自動遞增');
+    await writeFile(fp, JSON.stringify({ findings: [{ id: '沒前綴', severity: 'huge', claim: '' }] }), 'utf8');
+    assert.equal(run(['spec-review', 'redteam', '--file', fp], root).code, 1, '壞形狀擋收檔');
+    assert.equal(run(['spec-review', '不存在的lens', '--file', fp], root).code, 1);
+  });
+});
+
+test('spec-review：跨 lens id 撞號 → exit 1 拒收（W1 防一筆終局蒸發兩條質疑）；BOM 檔可收（PS5.1 utf8）', async () => {
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [] });
+    await writeReq(root, READY_REQ);
+    const fp = path.join(root, 'f.json');
+    await writeFile(fp, JSON.stringify({ findings: [{ id: 'SR-RT-001', severity: 'high', claim: 'REQ-001 缺併發' }] }), 'utf8');
+    assert.equal(run(['spec-review', 'redteam', '--file', fp], root).code, 0);
+    // consistency 想用同號（撞 redteam 的 SR-RT-001）——前綴驗證先擋（須 SR-CS-）
+    await writeFile(fp, JSON.stringify({ findings: [{ id: 'SR-RT-001', severity: 'low', claim: '別的質疑' }] }), 'utf8');
+    assert.equal(run(['spec-review', 'consistency', '--file', fp], root).code, 1, '前綴不符 lens 擋');
+    // 正確前綴但跨輪重號（redteam r2 重用 SR-RT-001）——全域查重擋
+    await writeFile(fp, JSON.stringify({ findings: [{ id: 'SR-RT-001', severity: 'low', claim: '重號' }] }), 'utf8');
+    const clash = run(['spec-review', 'redteam', '--file', fp], root);
+    assert.equal(clash.code, 1, '跨輪撞號擋');
+    assert.match(clash.err, /撞號/);
+    // BOM 檔（PS5.1 -Encoding utf8 產出）可正常收
+    await writeFile(fp, '﻿' + JSON.stringify({ findings: [] }), 'utf8');
+    assert.equal(run(['spec-review', 'redteam', '--file', fp], root).code, 0, 'BOM 不該炸解析');
+  });
+});
+
+test('review-resolve/review-check：finding 終局附機器指標，未終局/指標失效 exit 2（W1 發現不能無痕蒸發）', async () => {
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [] });
+    await writeReq(root, READY_REQ);
+    const fp = path.join(root, 'f.json');
+    await writeFile(fp, JSON.stringify({ findings: [{ id: 'SR-CS-001', severity: 'medium', claim: 'REQ-001 與 story 對不上' }] }), 'utf8');
+    run(['spec-review', 'consistency', '--file', fp], root);
+    assert.equal(run(['review-check'], root).code, 2, '未終局擋');
+    assert.equal(run(['review-resolve', 'SR-CS-999', '--as', 'open'], root).code, 1, '不存在的 finding 拒收');
+    assert.equal(run(['review-resolve', 'SR-CS-001', '--as', 'resolved:REQ-999'], root).code, 2, '指向不存在的 REQ 擋');
+    assert.equal(run(['review-resolve', 'SR-CS-001', '--as', 'rejected:D-1'], root).code, 2, 'decision 檔不存在擋');
+    run(['decision', 'D-1', '--choice', '不採納', '--why', '超出本迭代範圍'], root);
+    assert.equal(run(['review-resolve', 'SR-CS-001', '--as', 'rejected:D-1'], root).code, 0, '洩壓閥：留審計線即可關閉');
+    assert.equal(run(['review-check'], root).code, 0, '全終局放行');
+  });
+});
+
+test('spec-ready --freeze：lens 未跑 → exit 2；審完改文（docHash 漂移）→ exit 2 逼重跑末輪（W1 收斂判準機讀化）', async () => {
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [] });
+    await writeReq(root, READY_REQ);
+    run(['project-type', 'api'], root);
+    const r0 = run(['spec-ready', '--freeze'], root);
+    assert.equal(r0.code, 2, '沒跑 lens 不准凍結——「多角度 review 過了」不再是散文自報');
+    assert.match(r0.err, /lens/);
+    await passLenses(root);
+    // 審完偷改需求 → 末輪 docHash 對不上現行文字（插在開放問題段之前，別誤觸 open-item 閘門）
+    await writeReq(root, READY_REQ.replace('REQ-001：當 X 時，系統應 Y。', 'REQ-001：當 X 時，系統應 Y。\nREQ-002：當 Y 時，系統應 Z。'));
+    const r1 = run(['spec-ready', '--freeze'], root);
+    assert.equal(r1.code, 2, '零新發現 attest 的是舊文，不算數');
+    assert.match(r1.err, /docHash/);
+    await passLenses(root);   // 對新文字重跑
+    assert.equal(run(['spec-ready', '--freeze'], root).code, 0);
+  });
+});
+
+test('spec-ready --freeze：末輪有 findings → 未收斂擋；終局＋補跑空末輪後放行（W1 完整迴圈）', async () => {
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [] });
+    await writeReq(root, READY_REQ);
+    run(['project-type', 'api'], root);
+    const fp = path.join(root, 'f.json');
+    await writeFile(fp, JSON.stringify({ findings: [{ id: 'SR-RT-001', severity: 'high', claim: 'REQ-001 缺併發處置' }] }), 'utf8');
+    run(['spec-review', 'redteam', '--file', fp], root);
+    await passLenses(root);   // redteam 補到 r3？——passLenses 各跑 2 輪：redteam 變 r2,r3（r3 空）、consistency r1,r2
+    const mid = run(['spec-ready', '--freeze'], root);
+    assert.equal(mid.code, 2, 'SR-RT-001 未終局，review-check 擋');
+    assert.match(mid.err, /SR-RT-001/);
+    run(['decision', 'D-skip', '--choice', '不採納', '--why', '單人工具無併發面'], root);
+    assert.equal(run(['review-resolve', 'SR-RT-001', '--as', 'rejected:D-skip'], root).code, 0);
+    assert.equal(run(['spec-ready', '--freeze'], root).code, 0, '末輪空＋全終局＝機讀收斂');
+  });
+});
+
+test('spec-ready --freeze：走原型路須有 ui-signoff 定版記錄，缺檔 exit 2（W1 堵「使用者沒點過就凍結」）', async () => {
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [] });
+    await writeReq(root, READY_REQ);
+    run(['project-type', 'web-app'], root);
+    await writeMockups(root, '<h2>REQ-E2E-001</h2><a href="login.html">走</a>', { 'login.html': PAGE_OK.replace('../app.js', 'app.js') });
+    await writeFile(path.join(root, 'specs', 'ui-mockups', 'app.js'), 'const db = {};', 'utf8');
+    await passLenses(root);
+    const r = run(['spec-ready', '--freeze'], root);
+    assert.equal(r.code, 2, '走查台綠了但沒有定版記錄，不准凍結');
+    assert.match(r.err, /ui-signoff/);
+    const d = run(['decision', 'ui-signoff', '--choice', '方向 OK', '--why', '使用者照走查台點完拍板'], root);
+    assert.match(d.out, /使用者拍板/, 'signoff 類預設 by:user');
+    assert.equal(run(['spec-ready', '--freeze'], root).code, 0, r.err);
   });
 });
 
@@ -281,6 +402,7 @@ test('spec-ready --freeze：缺 projectType → exit 2；web 類無原型無豁�
   await withRoot(async (root) => {
     await S.init(root, { project: 'p', tasks: [] });
     await writeReq(root, READY_REQ);
+    await passLenses(root);
     const r0 = run(['spec-ready', '--freeze'], root);
     assert.equal(r0.code, 2, '沒落檔專案類型不准凍結');
     assert.match(r0.err, /project-type/);
@@ -454,6 +576,7 @@ test('spec-ready --freeze：ui-mockups 存在但走查台缺卡 → exit 2 不�
     await S.init(root, { project: 'p', tasks: [] });
     await writeReq(root, READY_REQ);
     run(['project-type', 'api'], root);
+    await passLenses(root);
     const r = run(['spec-ready', '--freeze'], root);   // 非 web：enum 記錄本身即豁免，無 ui-mockups/ 照常凍結
     assert.equal(r.code, 0, r.err);
     assert.equal((await S.readStateJson(root)).phase, 'spec-done');

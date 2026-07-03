@@ -58,10 +58,20 @@ export const KEEP_RE = [
   /baseline/i, /golden/i, /snapshot/i, /\.fixture\./i,
 ];
 
+// 歧義命名前綴（tmp-/temp-/scratch-/debug-）＋已知原始碼/設定/資產副檔名＝多半是正常檔非垃圾——排除，
+// 堵誤判並誤刪 src/temp-storage.ts、scratch-pad.tsx、debug-config.json 這類正常原始碼/設定（commit 被 gate 擋、且 --apply 會 rm 掉真檔）。
+// 刻意不含 .yml/.yaml：那正是「臨時 .yml」（Playwright 等）常見副檔名，維持可清；漏清一個 temp-*.json 遠比誤刪原始碼安全（fail-safe）。
+const AMBIGUOUS_PREFIX_RE = /^(tmp|temp|scratch|debug)[-.]/i;
+const SOURCE_EXT_RE = /\.(ts|tsx|js|jsx|mjs|cjs|py|go|rs|java|rb|php|c|h|hpp|cpp|cc|cs|swift|kt|scala|css|scss|less|vue|svelte|json|jsonc|toml|md|mdx|html?|sql|sh|graphql|gql|proto)$/i;
+
 // ── 判斷函數（純、可被 commit-gate import；白名單單一事實來源）──
 export const keep = base => KEEP_RE.some(re => re.test(base));
 export const isArtifactDir = base => ARTIFACT_DIRS.has(base);
-export const isHardArtifact = base => !keep(base) && HARD_FILE_RE.some(re => re.test(base));
+export const isHardArtifact = base => {
+  if (keep(base) || !HARD_FILE_RE.some(re => re.test(base))) return false;
+  if (AMBIGUOUS_PREFIX_RE.test(base) && SOURCE_EXT_RE.test(base)) return false;  // 歧義前綴 + source 副檔名 → 正常檔非垃圾
+  return true;
+};
 export const isSoftArtifact = base => !keep(base) && SOFT_FILE_RE.some(re => re.test(base));
 // relative 路徑是否落在產物目錄下（任一路徑段命中 ARTIFACT_DIRS，例：.playwright-mcp/page-x.yml）。
 export const underArtifactDir = relpath => relpath.split(/[/\\]/).some(seg => ARTIFACT_DIRS.has(seg));

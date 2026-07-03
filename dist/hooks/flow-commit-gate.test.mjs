@@ -154,3 +154,92 @@ test('壞輸入（非 JSON / 空）→ 放行不炸', () => {
   const r2 = spawnSync(process.execPath, [HOOK], { input: '', encoding: 'utf8' });
   assert.equal(r2.status, 0);
 });
+
+// ── W3-3：模型端補堵繞過 pre-commit 兜底的兩條旗標 ──
+test('W3-3：git commit --no-verify → exit 2（模型不准關掉 pre-commit 兜底）', async () => {
+  await withFlowRepo(async (root) => {
+    const r = runHook(bash('git commit --no-verify -m "feat: x"', root));
+    assert.equal(r.code, 2);
+    assert.match(r.stderr, /no-verify|pre-commit/);
+  });
+});
+
+test('W3-3：git -c core.hooksPath=/dev/null commit → exit 2', async () => {
+  await withFlowRepo(async (root) => {
+    const r = runHook(bash('git -c core.hooksPath=/dev/null commit -m "feat: x"', root));
+    assert.equal(r.code, 2);
+    assert.match(r.stderr, /core\.hooksPath|pre-commit/);
+  });
+});
+
+test('W3-3：commit message 內文含「--no-verify」字串 → 不誤擋（挖掉引號後才測旗標）', async () => {
+  await withFlowRepo(async (root) => {
+    const r = runHook(bash('git commit -m "docs: 說明 --no-verify 這個旗標"', root));
+    assert.equal(r.code, 0, '引號內的 --no-verify 是 message 內容、非旗標，不該擋');
+  });
+});
+
+// ── 第 3 波對抗驗證修復回歸（旗標繞過 / secrets / 交叉引用）──
+test('#1：git commit "--no-verify"（引號包旗標）→ exit 2（去引號字元後仍測得到）', async () => {
+  await withFlowRepo(async (root) => {
+    assert.equal(runHook(bash('git commit "--no-verify" -m "wip"', root)).code, 2);
+  });
+});
+
+test('#1：git -c "core.hooksPath=/dev/null" commit → exit 2', async () => {
+  await withFlowRepo(async (root) => {
+    assert.equal(runHook(bash('git -c "core.hooksPath=/dev/null" commit -m "wip"', root)).code, 2);
+  });
+});
+
+test('#2：git commit -n（--no-verify 短式）→ exit 2', async () => {
+  await withFlowRepo(async (root) => {
+    assert.equal(runHook(bash('git commit -n -m "wip"', root)).code, 2);
+  });
+});
+
+test('#3：git -c core.hookspath=x commit（config key 全小寫）→ exit 2', async () => {
+  await withFlowRepo(async (root) => {
+    assert.equal(runHook(bash('git -c core.hookspath=/dev/null commit -m "wip"', root)).code, 2);
+  });
+});
+
+test('#3：git config core.hooksPath x; git commit（config 子命令持久改向）→ exit 2', async () => {
+  await withFlowRepo(async (root) => {
+    assert.equal(runHook(bash('git config core.hooksPath /dev/null; git commit -m "wip"', root)).code, 2);
+  });
+});
+
+test('#12：commit message 含轉義引號＋--no-verify 文字 → 不誤擋（挖 -m 值吞轉義）', async () => {
+  await withFlowRepo(async (root) => {
+    assert.equal(runHook(bash('git commit -m "fix escaped \\" --no-verify handling "', root)).code, 0);
+  });
+});
+
+test('#4：staged production.env（無前導點 dotenv 變體）→ exit 2', async () => {
+  await withFlowRepo(async (root) => {
+    await writeFile(path.join(root, 'production.env'), 'DB_PASS=secret123\n', 'utf8');
+    execFileSync('git', ['-C', root, 'add', '-f', 'production.env']);
+    assert.equal(runHook(bash('git commit -m "cfg"', root)).code, 2);
+  });
+});
+
+test('#6：.npmrc 用 ${NPM_TOKEN}（env 引用、安全寫法）→ 不誤擋', async () => {
+  await withFlowRepo(async (root) => {
+    await writeFile(path.join(root, '.npmrc'), 'registry=https://registry.npmjs.org/\n//registry.npmjs.org/:_authToken=${NPM_TOKEN}\n', 'utf8');
+    execFileSync('git', ['-C', root, 'add', '-f', '.npmrc']);
+    assert.equal(runHook(bash('git commit -m "cfg"', root)).code, 0);
+  });
+});
+
+test('#8：F-1 已交付、訊息交叉引用未交付 F-2（unblocks）→ 不誤擋；直接點名 F-2 → 擋', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'flowgate8-'));
+  try {
+    execFileSync('git', ['-C', root, 'init', '-q']);
+    await mkdir(path.join(root, '.flow', 'ledger'), { recursive: true });
+    await writeFile(path.join(root, '.flow', 'manifest.json'), JSON.stringify({ tasks: [{ id: 'F-1' }, { id: 'F-2' }] }), 'utf8');
+    await writeFile(path.join(root, '.flow', 'ledger', 'F-1.json'), JSON.stringify({ id: 'F-1', state: 'delivered' }), 'utf8');
+    assert.equal(runHook(bash('git commit -m "F-1 done (unblocks F-2)"', root)).code, 0, '交叉引用不誤擋');
+    assert.equal(runHook(bash('git commit -m "F-2 wip"', root)).code, 2, '直接點名未交付仍擋');
+  } finally { await rm(root, { recursive: true, force: true }); }
+});

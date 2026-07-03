@@ -53,6 +53,17 @@ process.stdin.on('end', async () => {
     }
   } catch { /* fail-silent，漂移提醒非關鍵、永不影響 session */ }
 
+  // W3-3：冪等安裝 git 原生 pre-commit 兜底（使用者已選「自動放」）。首裝醒目告知一行（狀態變更）；
+  // 已裝/非 git/husky 改向/既有非 sh hook（advisory skip）→ 靜默不每 session 重複打擾；只有「寫入失敗」才提醒。全程 fail-silent、永不影響 session。
+  let precommitLine = '';
+  try {
+    const piUrl = pathToFileURL(join(dirname(fileURLToPath(import.meta.url)), 'precommit-install.mjs')).href;
+    const { installPrecommit } = await import(piUrl);
+    const r = installPrecommit(cwd);
+    if (r.installed) precommitLine = `- 🔒 已在本專案裝 git pre-commit 兜底（commit 前擋 secrets/驗證垃圾，連你手動 commit／腳本也擋；只檢查這兩件事、不覆蓋你既有 hook）：${r.path}。Flow 卸載後自動失效（守衛偵測檔不在即跳過、不 brick commit）；要徹底清殘留刪該檔 # flow-gate 區塊。急著跳過單次 commit：git commit --no-verify。`;
+    else if (r.warn && !r.skipped) precommitLine = `- ⚠️ Flow pre-commit 兜底寫入失敗：${r.warn}`;  // advisory skip（husky/foreign-interpreter）不每 session 重印，只報真寫入失敗
+  } catch { /* 安裝非關鍵、fail-silent，永不影響 session */ }
+
   // 智慧精簡：用 statelib briefStatus 判斷「有沒有事要接」；只在有事時印一行（含對帳分歧）。全完成 → 靜默。
   // 完整進度（含 mid-task checkpoint）留給 /flow-resume 的 summarizeView。任何錯都退回 phase 粗判一行，絕不 brick。
   let body = '';
@@ -84,8 +95,8 @@ process.stdin.on('end', async () => {
       : '';
   }
 
-  const additionalContext = [body, driftLine].filter(Boolean).join('\n');
-  if (!additionalContext) process.exit(0);   // 全部完成出貨且無漂移 → 真靜默、不打擾
+  const additionalContext = [body, driftLine, precommitLine].filter(Boolean).join('\n');
+  if (!additionalContext) process.exit(0);   // 全部完成出貨、無漂移、pre-commit 已裝（無首裝告知）→ 真靜默、不打擾
   const out = {
     hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext },
   };

@@ -13,9 +13,9 @@ description: Flow Phase 3 — 多工交付（混合基座）。取當前波次�
 跑 flow-toolkit 的 `flow-state.mjs resume`（路徑/shell 依 flow.md 環境慣例——mac/linux `node ~/.claude/skills/flow-toolkit/flow-state.mjs resume`、Windows PS `node "$env:USERPROFILE\.claude\skills\flow-toolkit\flow-state.mjs" resume`）用 statelib **reconstruct** 純從磁碟重建「還剩什麼 + 未完成 dangling」（不靠對話記憶），有 dangling（上次中斷）先冪等補完；補 `specs/tasks.md` 的 `[ ]`/`[x]`。**reconstruct 也帶出每個開發中 task 的 mid-task checkpoint（上次做到第幾步 red/green/refactor）——接續從該相續、別重跑整個 task、別覆蓋已寫的檔。**
 **進度怎麼看**：跑 `flow-state status`（in-chat 文字進度）；平行生成那段看 Workflow 的 `/workflows`（每 worker 即時進度/token/狀態）。
 
-## Step 1：算當前波次可並行集合
+## Step 1：算當前波次可並行集合（跑 `wave --compute`，確定性）
 
-可並行 = `state` 可推進 ∧ `blockedBy` 已 delivered ∧ `conflictZone` **互不重疊**。
+可並行 = `state` 可推進 ∧ `blockedBy` 已 delivered ∧ `conflictZone` **互不重疊**。**別在 thinking 裡心算波次**——SHALL 跑 `flow-state wave --compute`（mac/linux `node ~/.claude/skills/flow-toolkit/flow-state.mjs wave --compute`、Windows PS 對應路徑）：它讀 manifest 的 `blockedBy`/`conflictZone` ＋ ledger delivered 做**純拓樸排序**（同層 id 字典序 tie-break、blockedBy 未交付不進波、conflictZone 前綴重疊自動拆波、成環/懸空依賴 exit 2），並**從凍結 requirements.md 逐字抽每個 task 承接的 REQ 區塊**，一起落 `.flow/trace/wave-plan.json`（含 manifest hash + reqHash）＝本波 dispatch 的**唯一事實來源**，取代模型臨場判斷。manifest 事後合法改動 → 重跑本指令。
 - **foundation/共用檔先序列**：全域 router / 共享型別 / DB schema / auth（`P-*`）**SHALL 先做完並 merge 進 trunk**，features 才 fan-out——否則大家改同一個檔 = merge 地獄。
 - **釘契約**：跨 worker 的接縫用 design.md 釘好的單一 type/schema，各 worker import 同一份。
 - **波次寬度合理控制**：多工 ~15x token，只把「真互不依賴＋夠份量」的放進同一波。簡單/相依的別硬塞平行。
@@ -37,7 +37,7 @@ description: Flow Phase 3 — 多工交付（混合基座）。取當前波次�
 ## Step 3：fan-out 平行生成 worker（Workflow 腳本，同 repo）
 
 用 `references/recipes/parallel-build.js` spawn worker，**每 feature 一個**，在同一個工作目錄平行生成。prompt 帶：
-- task 描述 + 對應 REQ + design.md 釘的契約 + 該 feature 的 conflictZone（worker 只准碰這些檔）
+- task 描述 + **逐字 REQ 文字**（用 `wave-plan.json` 該 task 的 `reqText`，**別叫 worker 自讀 requirements.md**——同 task＋同凍結 spec → worker 收到逐 byte 相同的規格，堵版本漂移）+ design.md 釘的契約 + 該 feature 的 conflictZone（worker 只准碰這些檔）
 - **紅軍攻擊面 → 先寫失敗安全測試、再用防禦碼轉綠**
 - **TDD 三相**（見 `references/verification-playbook.md` §TDD）：Red 寫自己的測試檔、單跑出真 assertion failure → Green 最小實作 → Refactor。**每過一相落 checkpoint**：`flow-state checkpoint <id> --phase <red|green|refactor> --note "<一句進度>"`（輕量一行、append-only）——開發中當機/被關終端，重啟靠它接續沒做完的相、不重跑整個 task、不覆蓋已寫的檔
 - **真實資料鏈路鐵則**：涉 API/資料 SHALL 打真後端真 DB、**禁 mock 假綠**、測試資料 seed 進真 DB；真依賴未 ready（上游 5xx/未實作）→ 標 **BLOCKED**，不准 mock fallback
@@ -48,7 +48,7 @@ description: Flow Phase 3 — 多工交付（混合基座）。取當前波次�
 - 要求**結構化回傳** `{feature, files, selfCheck{unitGreen,realData}, blockers, driveBy}`
 
 fan-out 前 orchestrator 先 write-ahead：對本波每個 id 呼叫 `statelib.transition(root, id, 'pending', 'building')`，讓 `flow-state status` 反映這波在生成中。
-**orchestrator 可控的確定性 checkpoint 節點（不靠 worker 自律）**：fan-out 前對每個 id 落 `flow-state checkpoint <id> --phase dispatched`；worker 回傳後落 `--phase worker-returned`；該 feature 整合完成落 `--phase integrated`。worker 內的 red/green/refactor 是更細的自報（有更好），但**即使 worker 沒自報，這三個 orchestrator 一定經過的節點也保證有粗粒度接續點**——中斷重啟不會退回「整個 task 從零重做」。
+**orchestrator 可控的確定性 checkpoint 節點（不靠 worker 自律）**：fan-out 前落 `flow-state checkpoint <代表 id> --phase dispatched --wave <本波 ids>`（順帶對賬本波成員＝wave-plan 某波、manifest 未漂移，比整合前的 scope 更早擋自行併/拆波）；worker 回傳後落 `--phase worker-returned`；該 feature 整合完成落 `--phase integrated`。worker 內的 red/green/refactor 是更細的自報（有更好），但**即使 worker 沒自報，這三個 orchestrator 一定經過的節點也保證有粗粒度接續點**——中斷重啟不會退回「整個 task 從零重做」。
 **中斷重啟時**：先跑 `flow-state status` 讀每個開發中 task 的最新 checkpoint，把「上次做到 `<phase>`」塞進該 worker 的 prompt，要它**從該相接續、別重做已完成的相、別覆蓋已寫的檔**——只重 fan-out 沒做完的，不重跑整波（省 ~15x token）。
 
 ## Step 4：序列整合（逐 feature，主流程序列做）
@@ -88,7 +88,8 @@ Workflow 回來後，orchestrator 依拓樸序**一個一個**收尾每個 featu
 
 ## 完成判準（self-check）
 - [ ] foundation 先序列、features 才同 repo 平行（conflictZone 算準）
-- [ ] **整合前跑 `flow-state scope --wave` 綠**：無 worker 越界改共用檔/foundation（被 exit 2 擋下＝有人越界，查清再整合，別繞）
+- [ ] **起手跑 `flow-state wave --compute` 綠**：波次拓樸/逐字 reqText 落 wave-plan.json，dispatch 用它的 `reqText`（別叫 worker 自讀 requirements.md）
+- [ ] **整合前跑 `flow-state scope --wave` 綠**：無 worker 越界改共用檔/foundation（被 exit 2 擋下＝有人越界，查清再整合，別繞）；另對賬 wave-plan 成員/manifest 未漂移
 - [ ] 執行策略沒在散文裡自決：偏離預設平行（降級序列/部分平行）有先彈窗拍板＋寫進 `.flow/state.json`
 - [ ] 每 feature 紅軍先行（recipe Stage 1 單一執行點）、攻擊面已落檔 `.flow/redteam/<id>.json`、attackCoverage 對賬過（攻擊 ≥3＋high 全 covered＋testFile 實存＋高危關鍵字攻擊無無痕 skipped）、worker 走 TDD + 真實資料鏈路（無 mock 假綠）
 - [ ] 每 feature 便宜 sensor 先跑/fail-fast、貴迴圈有界；效能只跑便宜 smoke（嚴謹 p50/p95 留 ship 量一次）

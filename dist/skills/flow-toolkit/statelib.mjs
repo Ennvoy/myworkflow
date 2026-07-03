@@ -573,7 +573,8 @@ const planCheckPath = root => path.join(traceDir(root), 'plan-check.json');
 // 全型號 REQ id（REQ-*/REQ-E2E-*/REQ-PERF-*/REQ-RBAC-*…）——去重保序大寫。
 export function extractAllReqIds(md) {
   const out = [], seen = new Set();
-  for (const m of String(md || '').matchAll(/\bREQ-[A-Za-z0-9._-]+/gi)) {
+  // 字元類不含「.」——真實 REQ id 無中綴點；含點會讓「對應 REQ-E2E-001.」句尾把尾點吞進 id 變幻覺 id（plan-check/wave 誤 exit 2）。
+  for (const m of String(md || '').matchAll(/\bREQ-[A-Za-z0-9_-]+/gi)) {
     const id = m[0].toUpperCase();
     if (!seen.has(id)) { seen.add(id); out.push(id); }
   }
@@ -664,9 +665,143 @@ export function planManifestDiff(tasksMd, manifest) {
 }
 
 export async function writePlanCheck(root, manifest, head) {
-  await writeJSON(planCheckPath(root), { manifestHash: sha256Text(JSON.stringify(manifest || {})), head: head || '', at: nowISO() });
+  await writeJSON(planCheckPath(root), { manifestHash: manifestScopeHash(manifest), head: head || '', at: nowISO() });
 }
 export async function readPlanCheck(root) { return readJSON(planCheckPath(root), null); }
+
+// ── 第 3 波：執行期波次計算（W3-1）＋ worker 逐字投餵（W3-2），合流一個 .flow/trace/wave-plan.json ──
+// 動機：`/flow-build` 的「同一波可並行」過去靠模型臨場算（讀 blockedBy/conflictZone 心算），零確定性節點＝
+//   自駕下可能把有依賴/zone 重疊的 task 併同波（覆寫地獄／破壞接縫），或 worker 各自 re-read requirements.md
+//   讀到漂移版本（H10）。這裡把「波次拓樸」與「每 task 逐字 REQ 文字」都算成一個確定性檔，dispatch 只讀它。
+const wavePlanPath = root => path.join(traceDir(root), 'wave-plan.json');
+
+// manifest 的「波次/scope 語意」canonical hash——只投影 tasks 的 id/blockedBy/conflictZone（排序正規化），
+// 對 updatedAt/mode/projectType 等語意無關欄位穩定：否則 wave --compute/plan-check 後跑 mode/project-type
+// （writeManifest 會 bump updatedAt）就誤判「manifest 漂移」擋 scope。buildWavePlan/waveMembershipProblem/writePlanCheck/complete-check 四處共用同一投影。
+export function manifestScopeHash(manifest) {
+  const tasks = (((manifest && manifest.tasks) || []).map(t => ({
+    id: t.id,
+    blockedBy: [...(t.blockedBy || [])].sort(),
+    conflictZone: [...(t.conflictZone || [])].map(normZone).sort(),
+  }))).sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  return sha256Text(JSON.stringify(tasks));
+}
+
+// zone 前綴重疊（以路徑邊界為界，非裸子字串——src/ab 不算 src/a 的子路徑）。normZone 已去尾斜線/大小寫。
+function zonePrefixOverlap(za, zb) {
+  const a = normZone(za), b = normZone(zb);
+  return a === b || b.startsWith(a + '/') || a.startsWith(b + '/');
+}
+const zoneSetsOverlap = (A, B) => (A || []).some(za => (B || []).some(zb => zonePrefixOverlap(za, zb)));
+
+// 純函式：純拓樸排序（Kahn 分層）→ 波次。輸入 manifest（tasks[].blockedBy/conflictZone）＋ deliveredSet（已交付 id）。
+//   ① 已 delivered 的 task 不進波（已完成）；② blockedBy 未全滿足（∉ placed）者延到後波；
+//   ③ 同層按 id 字典序 tie-break（真「同輸入同輸出」，去除 Map 插入序偶然性）；
+//   ④ 同波 conflictZone 前綴重疊 → 優先自動拆波（把後者延到下一波，降並行度、附 warning），不 exit；
+//   ⑤ 剩餘 task 全部 blockedBy 卡死（成環／懸空依賴／依賴永不交付）＝拓樸無解 → problems 非空（CLI exit 2）。
+// zone 重疊「拆波總能解」（延後不造成環，因無依賴關係的 task 分兩波只是變序列）；唯一 exit＝依賴拓樸無解。
+export function computeWaves(manifest, deliveredSet) {
+  const tasks = ((manifest && manifest.tasks) || []).filter(t => t && t.id);
+  const done = new Set([...(deliveredSet || [])]);
+  const placed = new Set([...done]);
+  const left = new Map(tasks.filter(t => !done.has(t.id)).map(t => [t.id, t]));
+  const waves = [], warnings = [];
+  let guard = left.size + 5;
+  while (left.size) {
+    const ready = [...left.values()]
+      .filter(t => (t.blockedBy || []).every(b => placed.has(b)))
+      .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    if (!ready.length) {
+      return { waves, warnings, problems: [`波次拓樸無解：這些 task 的 blockedBy 成環／指向不存在或永不交付的 task，永遠進不了任何波 → ${[...left.keys()].join(', ')}。回 /flow-plan 修 blockedBy（斬環或補齊被依賴 task）。`] };
+    }
+    const wave = [], chosenZones = [];
+    for (const t of ready) {
+      const z = (t.conflictZone || []).map(normZone);
+      if (z.length && chosenZones.some(cz => zoneSetsOverlap(cz, z))) { warnings.push(`${t.id} 因 conflictZone 與同波成員重疊被自動拆到後波（並行度受限）——回 /flow-plan Step 4.5 評估能否把中央檔擴充點改成各 feature 自己的檔`); continue; }
+      wave.push(t.id); chosenZones.push(z);
+    }
+    for (const id of wave) { placed.add(id); left.delete(id); }
+    waves.push(wave);
+    if (--guard < 0) return { waves, warnings, problems: ['波次計算超出迭代上限（疑似邏輯錯誤，請回報）'] };
+  }
+  return { waves, warnings, problems: [] };
+}
+
+// 純函式：tasks.md 每個 task 行承接的 REQ id（標題「（對應 REQ-E2E-001）」）。回 { [taskId]: [reqId...] }。
+// 只掃 checkbox task 行本身（不含續行/註解），與 reqTaskCoverage 的 taskLinesText 同源避免假承接。
+export function taskReqIds(tasksMd) {
+  const out = {};
+  for (const raw of String(tasksMd || '').split(/\r?\n/)) {
+    const m = raw.match(LINE_RE);
+    if (!m) continue;
+    const id = lineId(m[4]);
+    if (!id) continue;
+    out[id] = extractAllReqIds(m[4]);
+  }
+  return out;
+}
+
+// 純函式：從 requirements.md 逐字抽某 REQ id 的定義區塊（定義行含 id → 至下一個 REQ 定義行/標題）。
+// 找不到回 null（W3-2：任一承接的具體 REQ 抽不到＝ id 打錯/已刪，buildWavePlan 據此 exit 2）。與 reqPerfBlock 同款切界。
+export function extractReqBlock(reqMd, id) {
+  const lines = String(reqMd || '').split(/\r?\n/);
+  const target = String(id).toUpperCase();
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(REQ_DEF_RE);
+    if (!m || m[1].toUpperCase() !== target) continue;
+    let j = i + 1;
+    while (j < lines.length && !/^#{1,6}\s/.test(lines[j]) && !REQ_DEF_RE.test(lines[j])) j++;
+    return lines.slice(i, j).join('\n').replace(/\s+$/, '');   // 含定義行、逐字、去尾空白
+  }
+  return null;
+}
+
+// 純函式：組裝 wave-plan（波次拓樸 + 每 task 逐字 REQ 文字）。任一拓樸無解或承接 REQ 抽不到區塊 → problems 非空。
+// reqText 逐字來自凍結 requirements.md（呼叫端 CLI 先過 reqHashProblem 確保是凍結版）＝同 task＋同凍結 spec →
+// worker 收到的規格文字逐 byte 相同（堵 H10：worker 各自 re-read 讀到漂移版本）。glob 前綴（REQ-PERF-*）不抽區塊、跳過。
+export function buildWavePlan(manifest, deliveredSet, tasksMd, reqMd, reqIndex) {
+  const { waves, warnings, problems } = computeWaves(manifest, deliveredSet);
+  if (problems.length) return { problems, warnings };
+  const reqMap = taskReqIds(tasksMd);
+  const missing = [];
+  const detailWaves = waves.map(w => w.map(id => {
+    const reqIds = (reqMap[id] || []).filter(r => !r.endsWith('-'));   // 排除 glob 前綴（非具體 id）
+    const blocks = [];
+    for (const rid of reqIds) {
+      const blk = extractReqBlock(reqMd, rid);
+      if (blk == null) { missing.push(`${id} 承接 ${rid}，但凍結 requirements.md 抽不到該 REQ 區塊（id 打錯或已被刪）——修 tasks.md 或重新凍結`); continue; }
+      blocks.push(blk);
+    }
+    return { id, reqIds, reqText: blocks.join('\n\n') };
+  }));
+  if (missing.length) return { problems: missing, warnings };
+  return {
+    manifestHash: manifestScopeHash(manifest),
+    reqHash: sha256Text(reqMd || ''),
+    reqIndexHash: (reqIndex && reqIndex.reqHash) || '',
+    waves: detailWaves, warnings, problems: [],
+  };
+}
+
+export async function writeWavePlan(root, plan) { await writeJSON(wavePlanPath(root), { ...plan, at: nowISO() }); }
+export async function readWavePlan(root) { return readJSON(wavePlanPath(root), null); }
+
+// 純函式：--wave 傳入的一組 id 是否對應 wave-plan 的「某一波」（成員集合相等，順序無關）＋ manifest hash 一致。
+// scope --wave / checkpoint --phase dispatched 增驗用（堵 H6：dispatch/整合時自行併波或用漂移 manifest）。
+// 回 null＝相符或無 wave-plan（向後相容：沒跑過 wave --compute 就跳過本增驗，只做原本的 conflictZone 檢查）。
+export function waveMembershipProblem(plan, manifest, waveIds) {
+  if (!plan || !Array.isArray(plan.waves)) return null;               // 無 wave-plan → 不擋（相容既有流程）
+  const curHash = manifestScopeHash(manifest);
+  if (plan.manifestHash && plan.manifestHash !== curHash)
+    return 'manifest 已與 wave-plan 快照不符（plan 後改過 blockedBy/conflictZone）——重跑 flow-state wave --compute 重算波次再跑。';
+  const want = new Set((waveIds || []).map(String));
+  const hit = plan.waves.some(w => {
+    const s = new Set((w || []).map(x => (x && x.id) || x));
+    return s.size === want.size && [...want].every(id => s.has(id));
+  });
+  if (!hit) return `--wave 成員 [${(waveIds || []).join(', ')}] 不對應 wave-plan 算出的任何一波——照 flow-state wave --compute 的波次跑，別自行併/拆波（會破壞 zone 互斥與依賴序）。`;
+  return null;
+}
 
 // ── REQ-PERF budget 解析＋達標判定（純函式）：verify-perf 用 ──
 // 抽「比較運算子＋數字＋單位」，回 { op, budget, unit, lower } 或 null。要點：

@@ -1260,3 +1260,164 @@ test('reconstruct：mode 優先讀 git-tracked manifest（換機 clone 後自駕
     assert.equal((await S.reconstruct(root)).mode, 'auto', '從 manifest 帶出 auto');
   });
 });
+
+// ── 第 3 波：波次計算（W3-1）＋ worker 逐字投餵（W3-2）純函式 ──
+
+test('computeWaves：線性依賴 → 逐波拆開', () => {
+  const m = { tasks: [
+    { id: 'F-1', blockedBy: [], conflictZone: ['a/'] },
+    { id: 'F-2', blockedBy: ['F-1'], conflictZone: ['b/'] },
+    { id: 'F-3', blockedBy: ['F-2'], conflictZone: ['c/'] },
+  ] };
+  const r = S.computeWaves(m, []);
+  assert.deepEqual(r.problems, []);
+  assert.deepEqual(r.waves, [['F-1'], ['F-2'], ['F-3']]);
+});
+
+test('computeWaves：無依賴＋zone 不重疊 → 全同一波（字典序）', () => {
+  const m = { tasks: [
+    { id: 'F-2', blockedBy: [], conflictZone: ['b/'] },
+    { id: 'F-1', blockedBy: [], conflictZone: ['a/'] },
+  ] };
+  const r = S.computeWaves(m, []);
+  assert.deepEqual(r.waves, [['F-1', 'F-2']], '同層按 id 字典序、非 manifest 插入序');
+});
+
+test('computeWaves：conflictZone 前綴重疊 → 自動拆波＋warning（不 exit）', () => {
+  const m = { tasks: [
+    { id: 'F-1', blockedBy: [], conflictZone: ['src/'] },
+    { id: 'F-2', blockedBy: [], conflictZone: ['src/x.ts'] },  // 落在 src/ 內＝重疊
+  ] };
+  const r = S.computeWaves(m, []);
+  assert.deepEqual(r.problems, []);
+  assert.deepEqual(r.waves, [['F-1'], ['F-2']], '重疊者延到後波');
+  assert.ok(r.warnings.some((w) => /F-2/.test(w)), '有並行度受限 warning');
+});
+
+test('computeWaves：src/ab 不算 src/a 的子路徑（路徑邊界，非裸子字串）', () => {
+  const m = { tasks: [
+    { id: 'F-1', blockedBy: [], conflictZone: ['src/a'] },
+    { id: 'F-2', blockedBy: [], conflictZone: ['src/ab'] },
+  ] };
+  const r = S.computeWaves(m, []);
+  assert.deepEqual(r.waves, [['F-1', 'F-2']], 'src/a 與 src/ab 不重疊、可同波');
+});
+
+test('computeWaves：已 delivered 的 task 不進波、解開其下游', () => {
+  const m = { tasks: [
+    { id: 'F-1', blockedBy: [], conflictZone: ['a/'] },
+    { id: 'F-2', blockedBy: ['F-1'], conflictZone: ['b/'] },
+  ] };
+  const r = S.computeWaves(m, ['F-1']);
+  assert.deepEqual(r.waves, [['F-2']], 'F-1 已交付被排除、F-2 依賴滿足直接可跑');
+});
+
+test('computeWaves：blockedBy 成環 → problems 非空（拓樸無解）', () => {
+  const m = { tasks: [
+    { id: 'F-1', blockedBy: ['F-2'], conflictZone: ['a/'] },
+    { id: 'F-2', blockedBy: ['F-1'], conflictZone: ['b/'] },
+  ] };
+  const r = S.computeWaves(m, []);
+  assert.ok(r.problems.length, '成環回 problems');
+  assert.match(r.problems[0], /拓樸無解|成環/);
+});
+
+test('computeWaves：懸空依賴（blockedBy 指向不存在/永不交付）→ problems 非空', () => {
+  const m = { tasks: [{ id: 'F-1', blockedBy: ['GHOST'], conflictZone: ['a/'] }] };
+  const r = S.computeWaves(m, []);
+  assert.ok(r.problems.length);
+  assert.match(r.problems[0], /F-1/, '列出被卡死進不了波的 task');
+  assert.deepEqual(r.waves, [], '無任何波');
+});
+
+test('taskReqIds：抽每 task 行承接的 REQ id（只掃 checkbox 行）', () => {
+  const md = [
+    '- [ ] **F-1 · 登入（對應 REQ-E2E-001）**',
+    '- [ ] F-2 報表（對應 REQ-E2E-002, REQ-PERF-001）',
+    '  這行是註解不是 task：REQ-E2E-999',   // 非 checkbox 行 → 不算承接
+  ].join('\n');
+  assert.deepEqual(S.taskReqIds(md), {
+    'F-1': ['REQ-E2E-001'],
+    'F-2': ['REQ-E2E-002', 'REQ-PERF-001'],
+  });
+});
+
+test('extractReqBlock：逐字抽定義區塊、找不到回 null', () => {
+  const md = [
+    '## 需求',
+    '',
+    '- **REQ-E2E-001** 使用者登入',
+    '  詳細：帳密驗證、鎖定策略',
+    '',
+    '- **REQ-E2E-002** 報表匯出',
+  ].join('\n');
+  const blk = S.extractReqBlock(md, 'REQ-E2E-001');
+  assert.ok(/REQ-E2E-001/.test(blk) && /帳密驗證/.test(blk), '含定義行與細節');
+  assert.ok(!/REQ-E2E-002/.test(blk), '切界在下個 REQ 定義行');
+  assert.equal(S.extractReqBlock(md, 'REQ-E2E-999'), null);
+});
+
+test('buildWavePlan：組裝波次＋逐字 reqText；承接 REQ 抽不到 → problems', () => {
+  const m = { tasks: [
+    { id: 'F-1', blockedBy: [], conflictZone: ['a/'] },
+    { id: 'F-2', blockedBy: ['F-1'], conflictZone: ['b/'] },
+  ] };
+  const reqMd = [
+    '- **REQ-E2E-001** 登入',
+    '  帳密驗證',
+    '- **REQ-E2E-002** 報表',
+  ].join('\n');
+  const tasksMd = [
+    '- [ ] F-1 登入（對應 REQ-E2E-001）',
+    '- [ ] F-2 報表（對應 REQ-E2E-002）',
+  ].join('\n');
+  const idx = { reqHash: S.sha256Text(reqMd) };
+  const plan = S.buildWavePlan(m, [], tasksMd, reqMd, idx);
+  assert.deepEqual(plan.problems, []);
+  assert.equal(plan.waves.length, 2);
+  assert.equal(plan.waves[0][0].id, 'F-1');
+  assert.ok(/帳密驗證/.test(plan.waves[0][0].reqText), 'reqText 逐字內嵌');
+  assert.equal(plan.reqHash, idx.reqHash);
+  // 承接一個 requirements.md 沒有的 REQ → problems 非空
+  const bad = S.buildWavePlan(m, [], '- [ ] F-1 x（對應 REQ-E2E-999）', reqMd, idx);
+  assert.ok(bad.problems.length);
+  assert.match(bad.problems[0], /REQ-E2E-999/);
+});
+
+test('buildWavePlan：glob 前綴（REQ-PERF-*）不抽區塊、不算 missing', () => {
+  const m = { tasks: [{ id: 'F-1', blockedBy: [], conflictZone: ['a/'] }] };
+  const reqMd = '- **REQ-E2E-001** 登入\n';
+  const tasksMd = '- [ ] F-1 全部（對應 REQ-E2E-001, REQ-PERF-*）';
+  const plan = S.buildWavePlan(m, [], tasksMd, reqMd, { reqHash: S.sha256Text(reqMd) });
+  assert.deepEqual(plan.problems, [], 'REQ-PERF-* glob 前綴被跳過、不判 missing');
+  assert.deepEqual(plan.waves[0][0].reqIds, ['REQ-E2E-001']);
+});
+
+test('waveMembershipProblem：成員相符 null、不符/漂移/無 plan 各回正確', () => {
+  const m = { tasks: [{ id: 'F-1' }, { id: 'F-2' }] };
+  const plan = { waves: [[{ id: 'F-1' }, { id: 'F-2' }]], manifestHash: S.manifestScopeHash(m) };
+  assert.equal(S.waveMembershipProblem(plan, m, ['F-2', 'F-1']), null, '成員集合相等、順序無關');
+  assert.match(S.waveMembershipProblem(plan, m, ['F-1']), /不對應.*任何一波|成員/, '缺一個成員→不符');
+  const m2 = { tasks: [{ id: 'F-1' }, { id: 'F-2' }, { id: 'F-3' }] };  // hash 變了
+  assert.match(S.waveMembershipProblem(plan, m2, ['F-1', 'F-2']), /manifest.*不符|漂移|重跑/, 'manifest 漂移→擋');
+  assert.equal(S.waveMembershipProblem(null, m, ['F-1']), null, '無 wave-plan→相容跳過');
+});
+
+// ── 第 3 波對抗驗證修復回歸 ──
+
+test('#10：manifestScopeHash 對 updatedAt/mode/projectType 穩定、只認 blockedBy/conflictZone', () => {
+  const m1 = { tasks: [{ id: 'F-1', blockedBy: [], conflictZone: ['a/'] }], updatedAt: 't0', mode: 'manual' };
+  const m2 = { tasks: [{ id: 'F-1', blockedBy: [], conflictZone: ['a/'] }], updatedAt: 't1', mode: 'auto', projectType: 'web' };
+  assert.equal(S.manifestScopeHash(m1), S.manifestScopeHash(m2), 'updatedAt/mode/projectType 不影響 hash（否則 wave --compute 後跑 mode 誤判漂移）');
+  const m3 = { tasks: [{ id: 'F-1', blockedBy: ['F-0'], conflictZone: ['a/'] }] };
+  assert.notEqual(S.manifestScopeHash(m1), S.manifestScopeHash(m3), 'blockedBy 變則 hash 變');
+  assert.equal(
+    S.manifestScopeHash({ tasks: [{ id: 'F-1', conflictZone: ['a/'] }] }),
+    S.manifestScopeHash({ tasks: [{ id: 'F-1', conflictZone: ['a'] }] }),
+    'zone 尾斜線正規化');
+});
+
+test('#11：extractAllReqIds 不吞尾 ASCII 句點（task 行 REQ id 接句號）', () => {
+  assert.deepEqual(S.extractAllReqIds('對應 REQ-E2E-001.'), ['REQ-E2E-001'], '尾點不進 id（否則變幻覺 id）');
+  assert.deepEqual(S.extractAllReqIds('REQ-E2E-001, REQ-PERF-002'), ['REQ-E2E-001', 'REQ-PERF-002']);
+});

@@ -16,7 +16,9 @@ export const meta = {
   ],
 }
 
-// args.wave: [{ id, title, req, conflictZone, ui? }]；args.contractPath / args.reqPath
+// args.wave: [{ id, title, req, reqText?, conflictZone, ui? }]；args.contractPath / args.reqPath
+//   reqText（W3-2）＝orchestrator dispatch 前跑 `flow-state wave --compute`、從 wave-plan.json 取的「逐字 REQ 區塊」——
+//   直接內嵌 worker prompt，取代叫 worker 自讀 requirements.md（堵版本漂移：同 task＋同凍結 spec → 逐 byte 相同規格）。
 // 成本路由＝兩根正交軸（Reasoning Sandwich）：
 //   ① model 軸——平行苦工 worker 走較便宜 model（預設 'sonnet'，args.workerModel 可覆寫），省 token＝同預算 fan-out 更寬的波。
 //   ② effort 軸（同 model 內的 reasoning_effort）——機械性 generate 用中檔（worker），高價值對抗審查（紅軍）維持高檔不降級。
@@ -97,7 +99,10 @@ const results = await pipeline(
     `你是 feature worker，在目前這個 repo 實作「${f.title}」(${f.id})。\n` +
     `**邊界鐵則（同 repo 平行安全靠這個）**：只新增/修改你 conflictZone 內的檔（${(f.conflictZone && JSON.stringify(f.conflictZone)) || '見 tasks.md'}）；\n` +
     `  絕不碰共用檔（全域 router / 共享型別 / package.json / lockfile / DB migration / 中央 config）——那些是序列 foundation 的事。\n` +
-    `契約：import ${args.contractPath} 的共享 type/schema，兩端同一份。需求：${args.reqPath} 對應 ${f.req}。\n` +
+    `契約：import ${args.contractPath} 的共享 type/schema，兩端同一份。\n` +
+    (f.reqText
+      ? `需求（逐字取自凍結 requirements.md，這就是完整規格、別再自行讀檔以免讀到漂移版本）：\n${f.reqText}\n`
+      : `需求：讀 ${args.reqPath} 對應 ${f.req}（未跑 wave --compute 逐字投餵，退回 id 引用）。\n`) +
     `紅軍攻擊面（含 id，逐項對賬）：\n${JSON.stringify(attack && attack.attacks, null, 2)}\n` +
     `  每個攻擊 SHALL 先寫失敗安全測試、再用防禦碼轉綠，並回報 attackCoverage（attackId→testFile）；\n` +
     `  真的不適用才標 skipped+reason——**high severity 不准 skipped**（orchestrator 會驗 testFile 存在、不覆蓋會被擋整合）；\n` +

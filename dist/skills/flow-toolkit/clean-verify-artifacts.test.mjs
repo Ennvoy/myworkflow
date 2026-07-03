@@ -19,9 +19,11 @@ const bases = list => new Set(list.map(x => path.basename(x.path)));
 
 // ── 純判斷函數 ──
 test('isHardArtifact：絕對垃圾命中、source 與 baseline 不中', () => {
-  for (const b of ['x.log', 'console-2026.log', 'a.trace.zip', 'debug-1.png', 'tmp-x.yml', 'scratch.mjs', 'y.tmp', 'm.pyc'])
+  for (const b of ['x.log', 'console-2026.log', 'a.trace.zip', 'debug-1.png', 'tmp-x.yml', 'scratch-tmp.txt', 'y.tmp', 'm.pyc'])
     assert.equal(isHardArtifact(b), true, b);
-  for (const b of ['app.ts', 'README.md', 'api.baseline.log', 'data.golden.json', 'foo.spec.ts', 'scratchpad.mjs'])
+  // 歧義前綴（tmp-/temp-/scratch-/debug-）+ source/設定副檔名＝正常檔非垃圾（finding #7：堵誤刪 src/temp-storage.ts）
+  for (const b of ['app.ts', 'README.md', 'api.baseline.log', 'data.golden.json', 'foo.spec.ts', 'scratchpad.mjs',
+                   'temp-storage.ts', 'scratch-pad.tsx', 'debug-config.json', 'temp-utils.py'])
     assert.equal(isHardArtifact(b), false, b);
 });
 

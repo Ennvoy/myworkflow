@@ -227,6 +227,13 @@ switch (cmd) {
     if (!id || id.startsWith('--')) { console.error('usage: flow-state checkpoint <taskId> --phase <red|green|refactor|integrated> [--note "<一句>"]'); process.exit(1); }
     const phase = flag('--phase');
     if (!phase) { console.error('需給 --phase（這個 task 現在做到第幾步：red|green|refactor|integrated 或自由字串）'); process.exit(1); }
+    // W3-1 早期攔截：dispatch 一波時記 `checkpoint <代表task> --phase dispatched --wave <本波ids>`——
+    // 對賬 wave-plan（本波成員＝某波、manifest 未漂移），比整合前的 scope --wave 更早擋自行併/拆波。無 --wave 就照舊單 task。
+    const dispatchWave = (flag('--wave') || '').split(',').map((s) => s.trim()).filter(Boolean);
+    if (phase === 'dispatched' && dispatchWave.length) {
+      const wmp = S.waveMembershipProblem(await S.readWavePlan(root), await S.readManifest(root), dispatchWave);
+      if (wmp) { console.error('✗ ' + wmp); process.exit(2); }
+    }
     const rid = await resolveIdOrExit(id);
     await S.recordCheckpoint(root, rid, phase, flag('--note') || '');
     console.log(`✓ 已記 checkpoint：${rid} → ${phase}${flag('--note') ? `（${flag('--note')}）` : ''}`);
@@ -252,6 +259,17 @@ switch (cmd) {
       console.error('  先在 specs/tasks.md 標 conflictZone 並同步進 manifest（flow-plan Step 5）。無宣告＝無法強制檔案安全。');
       process.exit(2);
     }
+    // W3-1 增驗：本波成員 SHALL == wave-plan 某一波、且 manifest 未漂移——堵「整合時自行併/拆波或用 plan 後改過的 manifest」（H6）。
+    // 無 wave-plan：單 task scope 向後相容放行；但「多 task 併波整合」缺 wave-plan＝沒算過拓樸依賴序就自行併波 → fail-closed exit 2
+    // （把 flow-build Step 1「起手跑 wave --compute」的散文前置升級成確定性閘門，堵有依賴卻沒算波次就整合）。
+    const wp = await S.readWavePlan(root);
+    if (!wp && wave.length > 1) {
+      console.error('✗ 尚未算波次就要整合多個 task——先跑 flow-state wave --compute（拓樸依賴序＋zone 互斥），再照它算出的波整合。');
+      console.error('  （堵「有依賴卻沒算波次就自行併波整合」；單 task scope 不受此限。）');
+      process.exit(2);
+    }
+    const wmp = S.waveMembershipProblem(wp, manifest, wave);
+    if (wmp) { console.error('✗ ' + wmp); process.exit(2); }
     const r = S.checkScope(gitChangedFiles(root), zonesByFeature);
     if (r.attributed.length) { console.log('檔案歸屬：'); for (const a of r.attributed) console.log(`  ${a.file} → ${a.feature}`); }
     if (r.overlaps.length) {
@@ -265,6 +283,39 @@ switch (cmd) {
       process.exit(2);
     }
     console.log('\n✓ 無檔案越界：本波所有變動都落在宣告的 conflictZone 內。');
+    break;
+  }
+  case 'wave': {
+    // W3-1+W3-2：算波次拓樸（blockedBy 依賴序＋conflictZone 互斥自動拆波）＋逐字抽每 task 承接的 REQ 區塊
+    // → 落 .flow/trace/wave-plan.json（含 manifest hash + reqHash）。dispatch 唯一事實來源，取代模型臨場心算波次。
+    // 用法：flow-state wave --compute
+    if (!argv.includes('--compute')) { console.error('usage: flow-state wave --compute'); process.exit(1); }
+    const manifest = await S.readManifest(root);
+    if (!((manifest.tasks || []).length)) { console.error('✗ manifest 無 task——先 /flow-plan 產計畫（plan-check 綠）再算波次。'); process.exit(2); }
+    const idx = await S.readReqIndex(root);
+    if (!idx) { console.error('✗ 查無 .flow/trace/req-index.json——先 flow-state spec-ready --freeze 凍結需求（逐字投餵的凍結分母）再算波次。'); process.exit(2); }
+    const rp = path.join(root, 'specs', 'requirements.md');
+    const reqMd = existsSync(rp) ? readFileSync(rp, 'utf8') : '';
+    const hp = S.reqHashProblem(idx, reqMd);   // 逐字文字 SHALL 來自凍結版——現行 requirements 漂移即擋（別餵 worker 漂移規格）
+    if (hp) { console.error('✗ ' + hp); process.exit(2); }
+    const tp = path.join(root, 'specs', 'tasks.md');
+    const tasksMd = existsSync(tp) ? readFileSync(tp, 'utf8') : '';
+    // delivered 集合：reconstruct 合併 manifest→state→ledger 的權威狀態（判 blockedBy 是否已滿足）
+    const view = await S.reconstruct(root);
+    const delivered = Object.values(view.tasks).filter((t) => t.state === 'delivered').map((t) => t.id);
+    const plan = S.buildWavePlan(manifest, delivered, tasksMd, reqMd, idx);
+    if (plan.problems && plan.problems.length) {
+      console.error('✗ 波次計算未過：');
+      for (const p of plan.problems) console.error('  - ' + p);
+      process.exit(2);
+    }
+    await S.writeWavePlan(root, { ...plan, head: gitHead(root) });
+    const nTask = plan.waves.reduce((n, w) => n + w.length, 0);
+    console.log(`✓ 波次已算：${plan.waves.length} 波、${nTask} 個未交付 task（已排除 delivered）。落 .flow/trace/wave-plan.json。`);
+    for (let i = 0; i < plan.waves.length; i++) console.log(`  Wave ${i}: ${plan.waves[i].map((t) => t.id).join(', ')}`);
+    if (plan.warnings && plan.warnings.length) { console.log('\n⚠ 並行度提醒（conflictZone 重疊自動拆波）：'); for (const w of plan.warnings) console.log('  · ' + w); }
+    console.log('\n  dispatch 時：worker prompt 直接用 wave-plan 該 task 的逐字 reqText（不叫 worker 自讀 requirements.md，堵版本漂移）；');
+    console.log('  整合前 flow-state scope --wave 會對賬「本波成員＝wave-plan 某波、manifest 未漂移」。manifest 若合法改動 → 重跑本指令。');
     break;
   }
   case 'redteam': {
@@ -541,8 +592,8 @@ switch (cmd) {
     }
     // W2-4 plan-check 對賬：manifest 在 plan-check 後不得被改（scope/wave 事實來源）
     const pc = await S.readPlanCheck(root);
-    if (pc && pc.manifestHash && pc.manifestHash !== S.sha256Text(JSON.stringify(await S.readManifest(root))))
-      { console.error('✗ manifest 在 plan-check 後被改過（scope/wave 的事實來源漂移）——重跑 flow-state plan-check 重新對賬。'); process.exit(2); }
+    if (pc && pc.manifestHash && pc.manifestHash !== S.manifestScopeHash(await S.readManifest(root)))
+      { console.error('✗ manifest 的 blockedBy/conflictZone 在 plan-check 後被改過（scope/wave 的事實來源漂移）——重跑 flow-state plan-check 重新對賬。'); process.exit(2); }
     // C：藍軍 code-review forcing function——ship 出貨 SHALL 過藍軍。缺 code-review 且無明確豁免 → exit 2
     //（與 complete-check 其他項「缺即擋」一致、與 build 端 redteam --wave 對稱；逃生口＝code-review-waiver decision，不 brick）。
     const codeReview = await S.readCodeReview(root);
@@ -870,13 +921,14 @@ switch (cmd) {
     break;
   }
   default:
-    console.log(`flow-state <resume|status|done|checkpoint|mode|project-type|scope|redteam|journey-check|run|verify-e2e|verify-perf|plan-check|review-code|code-resolve|code-check|coverage|lesson|decision|guardrail-check|complete-check|spec-ready|spec-review|review-resolve|review-check|mockup-check> [--root <path>]
+    console.log(`flow-state <resume|status|done|checkpoint|mode|project-type|scope|wave|redteam|journey-check|run|verify-e2e|verify-perf|plan-check|review-code|code-resolve|code-check|coverage|lesson|decision|guardrail-check|complete-check|spec-ready|spec-review|review-resolve|review-check|mockup-check> [--root <path>]
   resume | status        冷啟動：reconstruct 印現況 + 下一步 + mid-task 進度 + 對帳 + 已知死路（換 session/電腦/中斷後接手；平行波看 /workflows）
   done <id> [--commit]   標一個 task 完成：翻 tasks.md [x] + ledger→delivered（自帶 verify 閘門；先標、再 commit）
   checkpoint <id> --phase <red|green|refactor|integrated> [--note]   記 mid-task 進度（開發中當機 → resume 帶出「上次做到第幾步」，只補沒做完的）
   mode <auto|manual>     設推進模式並寫進 git-tracked manifest（換機 clone 後自駕不掉回 manual）
   project-type <type>    落檔專案類型（Step 1 彈窗拍板後跑；--freeze 對賬：web 類 SHALL 有互動原型或 mockup-waiver 豁免檔）
-  scope --wave <ids>     同 repo 平行檔案安全閘門：git 真實變動 vs 各 feature conflictZone，越界 exit 2（整合前跑）
+  scope --wave <ids>     同 repo 平行檔案安全閘門：git 真實變動 vs 各 feature conflictZone，越界 exit 2（整合前跑；另對賬 wave-plan 成員/manifest 未漂移）
+  wave --compute         算波次拓樸（blockedBy 依賴序＋conflictZone 互斥自動拆波）＋逐字抽每 task 承接的 REQ 區塊 → .flow/trace/wave-plan.json（dispatch 事實來源；/flow-build 起手跑）
   redteam --wave <ids>   紅軍對賬閘門：.flow/redteam/<id>.json 攻擊 <3、high 未全 covered、testFile 不實存、或高危關鍵字攻擊無痕 skipped（無 waiver decision）→ exit 2
   journey-check [--dir]  journey 真實性閘門：掃 Playwright 測試（mock/網路攔截、單一 test >1 goto）＋playwright.config（retries 非 0、webServer 用 dev）→ exit 2（web 驗證宣稱綠前跑）
   run --task <id> -- <cmd>   verify runner wrapper：真跑命令、捕真 exit code、綁 taskId 落 journal（done 據此擋「跑過但最後紅卻標 done」）

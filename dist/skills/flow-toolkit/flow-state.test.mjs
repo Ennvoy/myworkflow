@@ -956,3 +956,119 @@ test('resume：ledger delivered 但無 commit → 提示「已交付但沒記 co
     assert.match(r.out, /F-1/);
   });
 });
+
+// ── 第 3 波：wave --compute（W3-1+W3-2）＋ scope/checkpoint 成員對賬 ──
+async function seedWave(root, opts = {}) {
+  const reqMd = '- **REQ-E2E-001** 登入\n  帳密驗證\n- **REQ-E2E-002** 報表\n';
+  const tasksMd = opts.tasksMd || '- [ ] F-1 登入（對應 REQ-E2E-001）\n- [ ] F-2 報表（對應 REQ-E2E-002）\n';
+  await S.init(root, { project: 'p', tasks: opts.tasks || [
+    { id: 'F-1', blockedBy: [], conflictZone: ['a/'] },
+    { id: 'F-2', blockedBy: ['F-1'], conflictZone: ['b/'] },
+  ] });
+  await mkdir(path.join(root, 'specs'), { recursive: true });
+  await writeFile(path.join(root, 'specs', 'requirements.md'), reqMd, 'utf8');
+  await writeFile(path.join(root, 'specs', 'tasks.md'), tasksMd, 'utf8');
+  await S.writeReqIndex(root, reqMd, '');
+  return { reqMd, tasksMd };
+}
+
+test('wave --compute：算波次落 wave-plan.json（逐字 reqText）', async () => {
+  await withRoot(async (root) => {
+    await seedWave(root);
+    const r = run(['wave', '--compute'], root);
+    assert.equal(r.code, 0, r.err);
+    assert.match(r.out, /Wave 0: F-1/);
+    assert.match(r.out, /Wave 1: F-2/);
+    const plan = await S.readWavePlan(root);
+    assert.ok(plan && plan.waves.length === 2);
+    assert.ok(/帳密驗證/.test(plan.waves[0][0].reqText), 'reqText 逐字內嵌');
+  });
+});
+
+test('wave --compute：未凍結（無 req-index）→ exit 2', async () => {
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [{ id: 'F-1', blockedBy: [], conflictZone: ['a/'] }] });
+    const r = run(['wave', '--compute'], root);
+    assert.equal(r.code, 2);
+    assert.match(r.err, /req-index|凍結/);
+  });
+});
+
+test('wave --compute：requirements.md 凍結後被改（hash 漂移）→ exit 2', async () => {
+  await withRoot(async (root) => {
+    await seedWave(root);
+    await writeFile(path.join(root, 'specs', 'requirements.md'), '- **REQ-E2E-001** 改過了\n', 'utf8');
+    const r = run(['wave', '--compute'], root);
+    assert.equal(r.code, 2);
+    assert.match(r.err, /凍結|不符/);
+  });
+});
+
+test('wave --compute：task 承接的 REQ 在 requirements.md 抽不到 → exit 2', async () => {
+  await withRoot(async (root) => {
+    await seedWave(root, { tasksMd: '- [ ] F-1 登入（對應 REQ-E2E-999）\n- [ ] F-2 報表（對應 REQ-E2E-002）\n' });
+    const r = run(['wave', '--compute'], root);
+    assert.equal(r.code, 2);
+    assert.match(r.err, /REQ-E2E-999/);
+  });
+});
+
+test('wave --compute：blockedBy 成環 → exit 2', async () => {
+  await withRoot(async (root) => {
+    await seedWave(root, { tasks: [
+      { id: 'F-1', blockedBy: ['F-2'], conflictZone: ['a/'] },
+      { id: 'F-2', blockedBy: ['F-1'], conflictZone: ['b/'] },
+    ] });
+    const r = run(['wave', '--compute'], root);
+    assert.equal(r.code, 2);
+    assert.match(r.err, /拓樸無解|成環/);
+  });
+});
+
+test('scope --wave：成員不對應 wave-plan 任何一波（自行併波）→ exit 2', async () => {
+  await withRoot(async (root) => {
+    await seedWave(root);
+    run(['wave', '--compute'], root);                 // wave-plan：Wave0=[F-1], Wave1=[F-2]
+    const r = run(['scope', '--wave', 'F-1,F-2'], root);  // 併成一波＝wave-plan 沒有的組合
+    assert.equal(r.code, 2);
+    assert.match(r.err, /wave-plan|併|拆波|成員/);
+  });
+});
+
+test('scope --wave：成員＝wave-plan 某波 → 過成員對賬（無變動檔即無越界）', async () => {
+  await withRoot(async (root) => {
+    await seedWave(root);
+    run(['wave', '--compute'], root);
+    const r = run(['scope', '--wave', 'F-1'], root);   // Wave0=[F-1]，成員相符
+    assert.equal(r.code, 0, r.err);
+    assert.match(r.out, /無檔案越界/);
+  });
+});
+
+test('checkpoint --phase dispatched --wave：成員不符 wave-plan → exit 2', async () => {
+  await withRoot(async (root) => {
+    await seedWave(root);
+    run(['wave', '--compute'], root);
+    const r = run(['checkpoint', 'F-1', '--phase', 'dispatched', '--wave', 'F-1,F-2'], root);
+    assert.equal(r.code, 2);
+    assert.match(r.err, /wave-plan|成員|併/);
+  });
+});
+
+// ── #5：scope --wave 缺 wave-plan 的 fail-closed（多 task 併波）vs 向後相容（單 task）──
+test('#5：scope --wave 多 task 併波但沒跑 wave --compute → fail-closed exit 2', async () => {
+  await withRoot(async (root) => {
+    await seedWave(root);                              // manifest F-1,F-2 有 conflictZone；刻意不跑 wave --compute
+    const r = run(['scope', '--wave', 'F-1,F-2'], root);
+    assert.equal(r.code, 2);
+    assert.match(r.err, /尚未算波次|wave --compute/);
+  });
+});
+
+test('#5：scope --wave 單 task 沒 wave-plan → 向後相容放行（單 task 併波無害）', async () => {
+  await withRoot(async (root) => {
+    await seedWave(root);
+    const r = run(['scope', '--wave', 'F-1'], root);
+    assert.equal(r.code, 0, r.err);
+  });
+});

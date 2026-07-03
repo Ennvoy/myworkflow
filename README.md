@@ -47,7 +47,7 @@ git clone https://github.com/Ennvoy/myworkflow.git flow && cd flow && chmod +x i
 | 指令 | 階段 | 做什麼 |
 |---|---|---|
 | `/flow-spec` | 訪談定版 | 蘇格拉底一次一題彈窗 + grill-me 深挖 + **互異機制 lens 審查矩陣**（spec-redteam／spec-consistency，findings 落機讀 ledger 逐條終局），**收斂迴圈問到 `### 開放問題` 清零＋lens 末輪零新發現**（`flow-state spec-ready`／`--freeze` 逐項對賬）→ 凍結 `requirements.md`(EARS) → 產**零依賴互動原型**（全 journey 可點走查、假資料 CRUD、狀態切換；`mockup-check` 閘門守覆蓋）、開瀏覽器、彈窗定 UI＋`ui-signoff` 留檔 |
-| `/flow-plan` | 設計 | 架構 + **接縫契約釘一處**（編譯期擋發散）+ 垂直切片 + 依賴分波 |
+| `/flow-plan` | 設計 | 架構 + **接縫契約釘一處**（編譯期擋發散）+ 垂直切片 + 依賴分波（`plan-check` 對賬 REQ↔task 覆蓋＋tasks.md↔manifest 一致才凍結） |
 | `/flow-build` | 多工交付 | 波次內 Workflow 腳本 fan-out 同 repo 平行生成 worker，紅軍 → TDD → 序列整合（驗證/commit 一個個）→ per-task commit+push（走 git-tools skill） |
 | `/flow-verify` | 獨立驗證 | 另開 context 的**對抗性 Evaluator** 用 Playwright headed 真點擊、打真 API、查真 DB；效能硬閘門 |
 | `/flow-ship` | 整合出貨 | 跨 feature e2e + 完整效能 + 全 diff `code-reviewer` 審查 + 達成**完成謂詞** → 發 `COMPLETE` |

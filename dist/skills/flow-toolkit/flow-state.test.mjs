@@ -16,6 +16,11 @@ function run(args, root) {
   const r = spawnSync(process.execPath, [CLI, ...args, '--root', root], { encoding: 'utf8' });
   return { code: r.status, out: r.stdout || '', err: r.stderr || '' };
 }
+// run --task 專用：--root 須在 -- 之前（-- 之後全歸 runner 命令），不能用上面會 append --root 的 run()
+function runTask(taskId, cmdArr, root) {
+  const r = spawnSync(process.execPath, [CLI, 'run', '--task', taskId, '--root', root, '--', ...cmdArr], { encoding: 'utf8' });
+  return { code: r.status, out: r.stdout || '', err: r.stderr || '' };
+}
 async function withRoot(fn) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'flowcli-'));
   try { await fn(root); } finally { await rm(root, { recursive: true, force: true }); }
@@ -387,6 +392,155 @@ test('spec-ready --freeze：走原型路須有 ui-signoff 定版記錄，缺檔 
   });
 });
 
+// ── 第 2 波：全鏈路對賬 CLI 端到端 ──
+
+// 凍結一個乾淨 spec（含 lens 收斂＋projectType），回傳 root——W2 各 CLI 測試的共同前置
+async function frozenRoot(root, reqMd = READY_REQ) {
+  await S.init(root, { project: 'p', tasks: [] });
+  await S.writeStateJson(root, { mode: 'manual' });
+  await writeReq(root, reqMd);
+  run(['project-type', 'api'], root);
+  await passLenses(root);
+  const r = run(['spec-ready', '--freeze'], root);
+  assert.equal(r.code, 0, 'frozenRoot 凍結失敗：' + r.err);
+}
+
+test('spec-ready --freeze：落 .flow/trace/req-index.json（REQ 全集＋hash）；凍結後偷改 → 消費閘門 hash 對賬擋（W2-1）', async () => {
+  await withRoot(async (root) => {
+    await frozenRoot(root);
+    const idx = await S.readReqIndex(root);
+    assert.ok(idx, 'req-index 落檔');
+    assert.ok(idx.reqIds.includes('REQ-001') && idx.reqIds.includes('REQ-E2E-001') && idx.reqIds.includes('REQ-PERF-001'), '全型號 REQ');
+    assert.equal(idx.reqHash, S.sha256Text(READY_REQ));
+    // 凍結後偷改 requirements.md → plan-check hash 對賬擋
+    await writeReq(root, READY_REQ + '\nREQ-002：偷加的。');
+    await writeFile(path.join(root, 'specs', 'tasks.md'), '- [ ] F-1（對應 REQ-001 REQ-E2E-001 REQ-PERF-001）\n', 'utf8');
+    const pc = run(['plan-check'], root);
+    assert.equal(pc.code, 2);
+    assert.match(pc.err, /凍結快照不符/);
+  });
+});
+
+test('plan-check：REQ 沒被 task 承接 / manifest 不同步 → exit 2；齊全 → 落 plan-check.json＋phase=plan-done（W2-2）', async () => {
+  await withRoot(async (root) => {
+    await frozenRoot(root);
+    // tasks.md 缺 REQ-PERF-001 承接 → uncovered
+    await writeFile(path.join(root, 'specs', 'tasks.md'), '- [ ] F-1 註冊（對應 REQ-001 REQ-E2E-001）\n      blockedBy: — | conflictZone: api/\n', 'utf8');
+    const r0 = run(['plan-check'], root);
+    assert.equal(r0.code, 2, 'REQ-PERF-001 沒被承接');
+    assert.match(r0.err, /REQ-PERF-001/);
+    // 補齊 REQ 承接，但 manifest 沒同步 F-1 → diff 擋
+    await writeFile(path.join(root, 'specs', 'tasks.md'), '- [ ] F-1 全部（對應 REQ-001 REQ-E2E-001 REQ-PERF-001）\n      blockedBy: — | conflictZone: api/\n', 'utf8');
+    const r1 = run(['plan-check'], root);
+    assert.equal(r1.code, 2, 'manifest 沒有 F-1');
+    assert.match(r1.err, /F-1/);
+    // manifest 同步 → 過，落檔＋phase
+    await S.writeManifest(root, { tasks: [{ id: 'F-1', blockedBy: [], conflictZone: ['api/'] }] });
+    const r2 = run(['plan-check'], root);
+    assert.equal(r2.code, 0, r2.err);
+    assert.ok(await S.readPlanCheck(root), 'plan-check.json 落檔');
+    assert.equal((await S.readStateJson(root)).phase, 'plan-done');
+  });
+});
+
+test('run --task：runner 紅→exit 2 落 journal；done 據此擋「跑過但最後紅」；真跑綠後放行（W2-3）', async () => {
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [{ id: 'F-1' }] });
+    await S.writeStateJson(root, { verify: 'ok:e2e', tdd: 'green' });
+    // npm test 是白名單 runner（避開 node --test 在外層 test runner 內的 NODE_TEST_CONTEXT 衝突）；t.mjs 控制 exit
+    await writeFile(path.join(root, 'package.json'), '{"scripts":{"test":"node t.mjs"}}', 'utf8');
+    await writeFile(path.join(root, 't.mjs'), 'process.exit(1)', 'utf8');
+    // 非 runner 命令（node --version）→ 拒（堵 no-op 洗綠）
+    assert.equal(runTask('F-1', ['node', '--version'], root).code, 1, 'no-op 非 runner 拒');
+    // runner 紅
+    assert.equal(runTask('F-1', ['npm', 'test', '--silent'], root).code, 2, 'runner 紅→exit 2');
+    // 有紅 attempt → done 擋（即使 verify/tdd 綠）
+    const d = run(['done', 'F-1'], root);
+    assert.equal(d.code, 2, '跑過但最後紅→擋 done');
+    assert.match(d.err, /最後一次是紅/);
+    // 同一 bucket 修綠（t.mjs 改成必過）→ done 放行
+    await writeFile(path.join(root, 't.mjs'), 'process.exit(0)', 'utf8');
+    assert.equal(runTask('F-1', ['npm', 'test', '--silent'], root).code, 0, '同 bucket 真跑綠');
+    assert.equal(run(['done', 'F-1'], root).code, 0, '同 bucket 真跑綠後 done 放行');
+  });
+});
+
+test('verify-e2e：n/a 須附實存 --decision（W2-3 堵批量 n/a 洗白）；記錄帶 reqHash', async () => {
+  await withRoot(async (root) => {
+    await frozenRoot(root);
+    assert.equal(run(['verify-e2e', 'REQ-E2E-001', '--status', 'n/a', '--evidence', '無法自動化'], root).code, 1, 'n/a 缺 decision');
+    assert.equal(run(['verify-e2e', 'REQ-E2E-001', '--status', 'n/a', '--evidence', 'x', '--decision', 'ghost'], root).code, 2, 'decision 不存在');
+    run(['decision', 'e2e-na-1', '--choice', '純視覺無法自動化', '--why', 'x'], root);
+    assert.equal(run(['verify-e2e', 'REQ-E2E-001', '--status', 'n/a', '--evidence', 'x', '--decision', 'e2e-na-1'], root).code, 0);
+    const recs = await S.listVerifyRecords(root);
+    assert.equal(recs[0].reqHash, S.sha256Text(READY_REQ), 'pass/na 記錄綁凍結版 hash');
+  });
+});
+
+test('verify-perf：解析 budget、超標拒記、達標落 pass（W2-4）', async () => {
+  await withRoot(async (root) => {
+    await frozenRoot(root);
+    assert.equal(run(['verify-perf', 'REQ-PERF-001', '--value', '5.0', '--evidence', 'x'], root).code, 2, '5s 超標 2.5s');
+    assert.equal(run(['verify-perf', 'REQ-PERF-001', '--value', '2.0', '--evidence', 'lh.json'], root).code, 0, '2s 達標');
+    assert.equal(run(['verify-perf', 'REQ-PERF-999', '--value', '1', '--evidence', 'x'], root).code, 2, 'requirements 查無此 PERF');
+    assert.equal((await S.readPerfRecord(root, 'REQ-PERF-001')).status, 'pass');
+  });
+});
+
+test('verify-perf/complete-check：非量測型 REQ-PERF（無 budget）走 perf-waiver、不死鎖（W2-4 死鎖修）', async () => {
+  const REQ_NM = ['# 需求', 'REQ-001：當 X 時，系統應 Y。', 'REQ-E2E-001：登入 → 首頁 → 操作 → 斷言。',
+    'REQ-PERF-001：系統應不阻塞主線程（設計約束）。', '### 開放問題', '無'].join('\n');
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [] });
+    await S.writeStateJson(root, { mode: 'manual' });
+    await writeReq(root, REQ_NM);
+    run(['project-type', 'api'], root);
+    // 非量測型 → freeze 要 perf-waiver
+    await passLenses(root);
+    assert.equal(run(['spec-ready', '--freeze'], root).code, 2, '非量測型 freeze 前要 perf-waiver');
+    run(['decision', 'perf-waiver', '--choice', 'REQ-PERF 非量測型', '--why', '設計約束'], root);
+    assert.equal(run(['spec-ready', '--freeze'], root).code, 0, '有 waiver 後凍結');
+    // verify-perf 對非量測型 → 指路 perf-waiver、不強記
+    assert.equal(run(['verify-perf', 'REQ-PERF-001', '--value', '1', '--evidence', 'x'], root).code, 2, '非量測型不走 verify-perf');
+    // complete-check：非量測型認 perf-waiver、不死鎖
+    await writeFile(path.join(root, 'specs', 'tasks.md'), '- [x] **F-1**\n', 'utf8');
+    run(['verify-e2e', 'REQ-E2E-001', '--status', 'pass', '--evidence', 'green'], root);
+    assert.equal(run(['complete-check'], root).code, 0, '非量測型有 waiver → complete-check 放行');
+  });
+});
+
+test('plan-check：官方 tasks-template 範例原樣 → 過（W2-2 不擋 golden path）', async () => {
+  const REQ_T = ['# 需求', 'REQ-001：當 X 時，系統應 Y。',
+    'REQ-E2E-001：登入 → 首頁 → 操作 → 斷言。', 'REQ-E2E-002：登入 → 商品 → 下單 → 斷言。', 'REQ-E2E-003：登入 → 搜尋 → 斷言。',
+    'REQ-PERF-001：LCP < 2.5s（p95）。', 'REQ-PERF-002：GET /api p95 < 300ms。', '### 開放問題', '無'].join('\n');
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [] });
+    await S.writeStateJson(root, { mode: 'manual' });
+    await writeReq(root, REQ_T);
+    run(['project-type', 'api'], root);
+    await passLenses(root);
+    assert.equal(run(['spec-ready', '--freeze'], root).code, 0);
+    // 照 tasks-template 格式（含 X-1 用 REQ-PERF-* glob、對應 REQ-E2E 在 checkbox 行）
+    await writeFile(path.join(root, 'specs', 'tasks.md'), [
+      '- [ ] F-1 註冊登入（對應 REQ-E2E-001）',
+      '      blockedBy: — | conflictZone: features/auth',
+      '- [ ] F-2 下單（對應 REQ-E2E-002、REQ-PERF-002）',
+      '      blockedBy: F-1 | conflictZone: features/order',
+      '- [ ] F-3 搜尋（對應 REQ-E2E-003）',
+      '      blockedBy: — | conflictZone: features/search',
+      '- [ ] X-1 效能整體驗收（REQ-PERF-*）',
+    ].join('\n'), 'utf8');
+    await S.writeManifest(root, { tasks: [
+      { id: 'F-1', blockedBy: [], conflictZone: ['features/auth'] },
+      { id: 'F-2', blockedBy: ['F-1'], conflictZone: ['features/order'] },
+      { id: 'F-3', blockedBy: [], conflictZone: ['features/search'] },
+      { id: 'X-1', blockedBy: [], conflictZone: [] },
+    ] });
+    const r = run(['plan-check'], root);
+    assert.equal(r.code, 0, '官方範本格式應過 plan-check：' + r.err);
+  });
+});
+
 test('project-type：非法值 → exit 1；合法值寫進 manifest+state.json（W0-5 正門）', async () => {
   await withRoot(async (root) => {
     await S.init(root, { project: 'p', tasks: [] });
@@ -627,9 +781,12 @@ test('complete-check：tasks 全 [x] 但 REQ-E2E 無驗證記錄 → exit 2（�
     const r = run(['complete-check'], root);
     assert.equal(r.code, 2, 'REQ-E2E 未覆蓋 → 不准 COMPLETE');
     assert.match(r.err, /REQ-E2E-001/);
-    // 記了 pass → 放行
+    // 記了 REQ-E2E pass 但 REQ-PERF 未達標 → 仍 exit 2（W2-4）
     run(['verify-e2e', 'REQ-E2E-001', '--status', 'pass', '--evidence', 'green'], root);
-    assert.equal(run(['complete-check'], root).code, 0, '補齊覆蓋後放行');
+    assert.equal(run(['complete-check'], root).code, 2, 'REQ-PERF 未達標仍擋');
+    // 補 REQ-PERF 達標 → 放行
+    run(['verify-perf', 'REQ-PERF-001', '--value', '2.0', '--evidence', 'lighthouse.json'], root);
+    assert.equal(run(['complete-check'], root).code, 0, '補齊 REQ-E2E＋REQ-PERF 後放行');
   });
 });
 

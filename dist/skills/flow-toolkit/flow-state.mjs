@@ -30,12 +30,17 @@ function testFileProblem(testFile) {
   return null;
 }
 
+// 現行 HEAD sha（best-effort；非 git/無 commit/失敗回 ''，不洩漏 git stderr）——trace 記「凍結/驗證在哪個 commit」的審計錨。
+function gitHead(r) {
+  try { return execSync('git rev-parse HEAD', { cwd: r, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch { return ''; }
+}
+
 // git 真實變動檔（staged + unstaged + untracked）。模型偽造不了——這是 scope 閘門的事實來源。
 function gitChangedFiles(r) {
   let out = '';
   // -uall：展開未追蹤目錄到「個別檔」（預設會把整個未追蹤目錄收合成一行，scope 比對需要檔案層級）。
   // core.quotepath=false：中文/非 ASCII 檔名輸出 UTF-8 原文而非 octal escape（否則 zone 比對必假陽性）。
-  try { out = execSync('git -c core.quotepath=false status --porcelain -uall', { cwd: r, encoding: 'utf8' }); } catch { return []; }
+  try { out = execSync('git -c core.quotepath=false status --porcelain -uall', { cwd: r, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }); } catch { return []; }
   const files = [];
   for (const line of out.split('\n')) {
     if (!line.trim()) continue;
@@ -56,6 +61,18 @@ function walkTestFiles(base, acc = [], depth = 0) {
   for (const e of ents) {
     if (e.isDirectory()) { if (!SKIP_WALK.has(e.name) && !e.name.startsWith('.')) walkTestFiles(path.join(base, e.name), acc, depth + 1); }
     else if (TEST_FILE_RE.test(e.name)) acc.push(path.join(base, e.name));
+  }
+  return acc;
+}
+// journey-check 用：撈 playwright.config.*（retries/webServer 掃描）。同 walkTestFiles 的限深/跳重目錄。
+const CONFIG_FILE_RE = /^playwright\.config\.[mc]?[jt]s$/i;
+function walkConfigFiles(base, acc = [], depth = 0) {
+  if (depth > 8) return acc;
+  let ents;
+  try { ents = readdirSync(base, { withFileTypes: true }); } catch { return acc; }
+  for (const e of ents) {
+    if (e.isDirectory()) { if (!SKIP_WALK.has(e.name) && !e.name.startsWith('.')) walkConfigFiles(path.join(base, e.name), acc, depth + 1); }
+    else if (CONFIG_FILE_RE.test(e.name)) acc.push(path.join(base, e.name));
   }
   return acc;
 }
@@ -343,6 +360,97 @@ switch (cmd) {
     console.log('✓ 自駕護欄在線：stall 斷路器（flow-stall-monitor）已註冊，可啟用自駕。');
     break;
   }
+  case 'run': {
+    // verify runner wrapper（W2-3）：真跑命令、捕真實 exit code、落 journal verify.attempt（綁 taskId）。
+    // 接住 RUNNER_RE 白名單外的跑法（make/docker/自寫 script），且 done 閘門據此擋「跑過但最後一次紅卻標 done」。
+    // 用法：flow-state run [--root <path>] --task <id> -- <runner 命令...>（-- 之後全部當命令，經 shell 跑）
+    //   ⚠ --root/--task 等 flag SHALL 在 -- 之前——`--` 之後一律歸 runner 命令（含被誤放的 flag）。
+    //   適用簡單 runner 命令（npm test / pytest / make test / docker compose run）；含 shell 元字元的
+    //   內聯 code（node -e "…(…)…"）請放腳本檔再跑——argv 用空白重組會丟引號。
+    const dashdash = argv.indexOf('--');
+    const taskId = flag('--task');
+    if (!taskId || dashdash < 0 || dashdash === argv.length - 1) { console.error('usage: flow-state run --task <id> -- <runner 命令...>'); process.exit(1); }
+    const rid = await resolveIdOrExit(taskId);
+    const cmd = argv.slice(dashdash + 1).join(' ');
+    // 只認真正的 test/build runner（沿用 stall-monitor/auto-gate 同一支白名單）——堵「run -- node --version / true / echo ok」
+    // 這類 no-op 綠命令洗掉紅 attempt。非 runner 直接拒、不落 attempt。
+    if (!S.isRunnerCommand(cmd)) { console.error(`✗ 「${cmd}」不是測試 runner（node --version/true/echo 之類不算）——請給真正的 test/build/lint runner（npm test / pytest / make test…）。`); process.exit(1); }
+    const bucket = S.runnerBucket(cmd);
+    let out = '', code = 0;
+    try { out = execSync(cmd, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }); }
+    catch (e) { code = (e.status ?? 1); out = String(e.stdout || '') + String(e.stderr || ''); }
+    process.stdout.write(out);
+    const sig = code === 0 ? 'ok' : S.verifyFailSig(cmd, out);
+    await S.recordVerifyAttempt(root, bucket, sig, code, rid);
+    console.log(code === 0
+      ? `✓ ${rid}：runner 綠（exit 0）——已綁 taskId 落 journal，done 閘門認得。`
+      : `✗ ${rid}：runner 紅（exit ${code}）——已落 journal；done 會擋到你真跑綠。`);
+    process.exit(code === 0 ? 0 : 2);
+    break;
+  }
+  case 'plan-check': {
+    // 計畫出口對賬（W2-2）：REQ↔task 覆蓋＋tasks.md↔manifest 逐欄 diff。通過落 .flow/trace/plan-check.json
+    // （記 manifest hash，complete-check 重算比對）＋寫 phase="plan-done"（flow-spec-gate 擋裸寫繞過）。
+    // 用法：flow-state plan-check —— /flow-plan 出口 SHALL 跑。
+    const idx = await S.readReqIndex(root);
+    if (!idx) { console.error('✗ 查無 .flow/trace/req-index.json——先 flow-state spec-ready --freeze 凍結需求（凍結分母）再做計畫。'); process.exit(2); }
+    const rp = path.join(root, 'specs', 'requirements.md');
+    const hp = S.reqHashProblem(idx, existsSync(rp) ? readFileSync(rp, 'utf8') : '');
+    if (hp) { console.error('✗ ' + hp); process.exit(2); }
+    const tp = path.join(root, 'specs', 'tasks.md');
+    if (!existsSync(tp)) { console.error('✗ 查無 specs/tasks.md——先 /flow-plan 產 tasks.md。'); process.exit(2); }
+    const tasksMd = readFileSync(tp, 'utf8');
+    const cov = S.reqTaskCoverage(idx.reqIds, tasksMd);
+    const manifest = await S.readManifest(root);
+    const diff = S.planManifestDiff(tasksMd, manifest);
+    const problems = [];
+    if (cov.uncovered.length) problems.push('這些 REQ 沒有任何 task 承接（會無聲蒸發到出貨）：\n    · ' + cov.uncovered.join('\n    · '));
+    if (cov.phantom.length) problems.push('tasks.md 引用了 index 沒有的 REQ id（幻覺/打錯）：\n    · ' + cov.phantom.join('\n    · '));
+    problems.push(...diff);
+    if (problems.length) {
+      console.error('✗ 計畫對賬未過（REQ↔task 覆蓋 / tasks.md↔manifest 同步）：');
+      for (const p of problems) console.error('  - ' + p);
+      process.exit(2);
+    }
+    // REQ↔design 對照矩陣：只印表給使用者 plan 定版彈窗掃一眼（design 語意矛盾機器驗不了，不假裝機檢）
+    const dp = path.join(root, 'specs', 'design.md');
+    if (existsSync(dp)) {
+      const dmd = readFileSync(dp, 'utf8').toUpperCase();
+      console.log('\nREQ↔design 對照（人工掃：每條 REQ 在 design.md 有沒有交代）：');
+      for (const id of idx.reqIds) console.log(`  ${dmd.includes(id) ? '✓' : '⚠ design 查無'}  ${id}`);
+    }
+    await S.writePlanCheck(root, manifest, gitHead(root));
+    const st = await S.readStateJson(root);
+    await S.writeStateJson(root, { ...st, phase: 'plan-done' });
+    console.log(`\n✓ 計畫對賬通過：${idx.reqIds.length} 條 REQ 全被 task 承接、tasks.md↔manifest 一致。已落 plan-check.json＋phase="plan-done"。`);
+    break;
+  }
+  case 'verify-perf': {
+    // REQ-PERF 達標記錄（W2-4）：從凍結 index 的 requirements 解析 budget、比對量測值，達標才落 pass。
+    // 用法：flow-state verify-perf <REQ-PERF-id> --value <數字> --evidence "<量測工具輸出 ref>"
+    const id = argv[1];
+    if (!id || id.startsWith('--')) { console.error('usage: flow-state verify-perf <REQ-PERF-id> --value <數字> --evidence "<ref>"'); process.exit(1); }
+    const rp = path.join(root, 'specs', 'requirements.md');
+    if (!existsSync(rp)) { console.error('✗ 查無 specs/requirements.md。'); process.exit(2); }
+    const reqMd0 = readFileSync(rp, 'utf8');
+    const line = S.reqPerfLines(reqMd0)[id.toUpperCase()];
+    if (!line) { console.error(`✗ requirements.md 查無 ${id.toUpperCase()} 定義行。`); process.exit(2); }
+    // 非量測型（無可解析 budget/標 N/A，如「不阻塞主線程」）→ 走 perf-waiver decision，不是 verify-perf。
+    if (S.perfIsNonMeasurable(reqMd0, id)) {
+      console.error(`✗ ${id.toUpperCase()} 是非量測型 REQ-PERF（無可解析 budget）——它走 perf-waiver 豁免，不是 verify-perf：`);
+      console.error('  flow-state decision perf-waiver --choice "REQ-PERF 非量測型/N/A" --why "<拍板原因>"（complete-check 認 perf-waiver）。');
+      process.exit(2);
+    }
+    const value = flag('--value'), evidence = flag('--evidence') || '';
+    if (value === undefined) { console.error('須給 --value <實測數字>（同 budget 單位）。'); process.exit(1); }
+    if (!evidence) { console.error('須給 --evidence（量測工具輸出 ref：k6/autocannon/lighthouse 檔或摘要）——堵空綠。'); process.exit(1); }
+    const budget = S.parsePerfBudget(line);
+    const miss = S.perfMeetsBudget(value, budget);
+    if (miss) { console.error(`✗ ${id.toUpperCase()} 未達標：${miss}——優化到達標再記，別記假綠。`); process.exit(2); }
+    await S.writePerfRecord(root, id.toUpperCase(), { status: 'pass', value: Number(value), budget: budget.budget, unit: budget.unit, lower: !!budget.lower, evidence, head: gitHead(root) });
+    console.log(`✓ ${id.toUpperCase()} 達標：${value}${budget.unit} ${budget.lower ? '≥' : '≤'} ${budget.budget}${budget.unit}（含 5% 容差）。complete-check 會對賬。`);
+    break;
+  }
   case 'complete-check': {
     // 完成謂詞硬閘門（ship 出口）：① tasks.md 全 [x]（無未完成 [ ]）② 所有 REQ-E2E-* 都有 pass/n-a 驗證記錄。
     // /flow-ship Step 5 SHALL 跑；自駕下尤其要（防模型自報全中提早收工）。
@@ -365,7 +473,33 @@ switch (cmd) {
       console.error('  每條 REQ-E2E journey 經 /flow-verify 真跑綠後，用 flow-state verify-e2e <id> --status pass --evidence "<ref>" 記錄；無法自動化的標 --status n/a 並附原因。');
       process.exit(2);
     }
-    console.log(`✓ 所有 ${cov.audit.total} 條 REQ-E2E-* 都有 pass/n-a 驗證記錄。仍須人工確認 REQ-PERF-* 達 budget。`);
+    // W2-1 hash 對賬：現行 requirements.md 須等於凍結 index（凍結後被改過＝完成謂詞對的是舊分母）
+    const idx = await S.readReqIndex(root);
+    const reqMd = readFileSync(path.join(root, 'specs', 'requirements.md'), 'utf8');
+    const hp = S.reqHashProblem(idx, reqMd);
+    if (hp) { console.error('✗ ' + hp); process.exit(2); }
+    // W2-3 n/a 醒目列出（每條都該有 decision 撐著）
+    for (const r of await S.listVerifyRecords(root)) if (String(r.status) === 'n/a') console.log(`  ⚠ ${r.id} 標 n/a（decision=${r.decision || '?'}）——ship 前確認此 journey 真的無法自動化`);
+    // W2-4 REQ-PERF 對賬：量測型 SHALL 有 verify-perf pass；非量測型（無 budget/N/A）SHALL 有 perf-waiver。
+    // 「非量測型」判定與 spec-ready 同源（perfIsNonMeasurable 掃整塊），消除「freeze 認 N/A、ship 卻要 verify-perf」的死鎖。
+    const perfIds = S.extractReqPerf(reqMd);
+    const perfMiss = [];
+    const perfWaived = existsSync(path.join(root, '.flow', 'decisions', 'perf-waiver.json'));
+    for (const pid of perfIds) {
+      if (S.perfIsNonMeasurable(reqMd, pid)) { if (!perfWaived) perfMiss.push(`${pid} 非量測型/N/A 但無 perf-waiver decision（flow-state decision perf-waiver …）`); continue; }
+      const rec = await S.readPerfRecord(root, pid);
+      if (!rec || rec.status !== 'pass') perfMiss.push(`${pid} 缺達標記錄——flow-state verify-perf ${pid} --value <實測> --evidence <ref>`);
+    }
+    if (perfMiss.length) {
+      console.error('✗ 完成謂詞未達：REQ-PERF 未全部達標驗證：');
+      for (const m of perfMiss) console.error('  - ' + m);
+      process.exit(2);
+    }
+    // W2-4 plan-check 對賬：manifest 在 plan-check 後不得被改（scope/wave 事實來源）
+    const pc = await S.readPlanCheck(root);
+    if (pc && pc.manifestHash && pc.manifestHash !== S.sha256Text(JSON.stringify(await S.readManifest(root))))
+      { console.error('✗ manifest 在 plan-check 後被改過（scope/wave 的事實來源漂移）——重跑 flow-state plan-check 重新對賬。'); process.exit(2); }
+    console.log(`✓ 所有 ${cov.audit.total} 條 REQ-E2E-* 驗綠${perfIds.length ? `＋${perfIds.length} 條 REQ-PERF 達標` : ''}。完成謂詞達成。`);
     break;
   }
   case 'coverage': {
@@ -398,7 +532,20 @@ switch (cmd) {
         : 'n/a 須附 --evidence 說明為何此 journey 無法自動化驗證。');
       process.exit(1);
     }
-    try { await S.writeVerifyRecord(root, id.toUpperCase(), { status: norm, evidence, by: 'evaluator' }); }
+    // W2-3 n/a 收緊：n/a 不再是自由逃生口——SHALL 附 --decision 指向實存 decision，且該 decision 不得被別條 REQ-E2E 重用
+    //（堵「一張拋棄式 decision 洗掉全批 n/a」）。
+    const naDecision = flag('--decision');
+    if (norm === 'n/a') {
+      if (!naDecision) { console.error('n/a 須附 --decision <id>（先 flow-state decision <id> --choice "此 journey 無法自動化" --why "<原因>" 留檔）——堵「批量 n/a 洗掉難驗 journey」。'); process.exit(1); }
+      if (/[\/\\]|\.\./.test(naDecision)) { console.error('✗ --decision id 不得含路徑分隔或 ..'); process.exit(1); }
+      if (!existsSync(path.join(root, '.flow', 'decisions', naDecision + '.json'))) { console.error(`✗ 查無 decision「${naDecision}」——先 flow-state decision ${naDecision} --choice … --why … 留檔。`); process.exit(2); }
+      const reused = (await S.listVerifyRecords(root)).find(r => r.decision === naDecision && String(r.id).toUpperCase() !== id.toUpperCase());
+      if (reused) { console.error(`✗ decision「${naDecision}」已被 ${reused.id} 的 n/a 用過——每條難驗 journey 各自表態一次，別一張 decision 洗全批。`); process.exit(2); }
+    }
+    // W2-3 證據綁版本：自動記 HEAD sha＋現行 requirements.md hash——complete-check 據此驗「這條 journey 驗的是凍結那版 spec」。
+    const rpv = path.join(root, 'specs', 'requirements.md');
+    const reqHash = existsSync(rpv) ? S.sha256Text(readFileSync(rpv, 'utf8')) : '';
+    try { await S.writeVerifyRecord(root, id.toUpperCase(), { status: norm, evidence, by: 'evaluator', head: gitHead(root), reqHash, ...(naDecision ? { decision: naDecision } : {}) }); }
     catch (e) { if (e && e.code === 'UNSAFE_ID') { console.error('✗ ' + e.message); process.exit(1); } throw e; }
     console.log(`✓ 已記 REQ-E2E 驗證：${id.toUpperCase()} = ${norm}${evidence ? `（${evidence}）` : ''}`);
     console.log('  ship 出口 flow-state complete-check / coverage 會逐條對賬 requirements.md 的 REQ-E2E-*。');
@@ -420,6 +567,24 @@ switch (cmd) {
       journeyFiles.push(rel);
       for (const p of a.problems) problemsAll.push(`${rel}: ${p}`);
       for (const w of a.warnings) warningsAll.push(`${rel}: ${w}`);
+    }
+    // W2-3 playwright.config 掃描：retries 非 0＝flaky 洗綠（除非 retry-waiver）；webServer 用 dev server＝禁 dev 噪音。
+    const retryWaived = existsSync(path.join(root, '.flow', 'decisions', 'retry-waiver.json'));
+    const DEV_SERVER_RE = /\b(run\s+dev|next\s+dev|vite(\s+dev)?|nuxt\s+dev|ng\s+serve|astro\s+dev|remix\s+dev|start:dev|dev:)\b|['"\`]dev['"\`]/i;
+    for (const cf of walkConfigFiles(base)) {
+      let c = '';
+      try { c = readFileSync(cf, 'utf8'); } catch { continue; }
+      const rel = path.relative(root, cf).replace(/\\/g, '/');
+      const stripped = c.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');   // 去註解，別誤刪 http://
+      const rm = stripped.match(/retries\s*:\s*([^,}\n]+)/);
+      if (rm && !retryWaived) {
+        const val = rm[1].trim();
+        if (/^0\b/.test(val)) { /* retries: 0 → 放行 */ }
+        else if (/^\d+$/.test(val)) problemsAll.push(`${rel}: retries: ${val}（非 0＝flaky 靠重試洗綠；CI 真 flaky 才留，須 flow-state decision retry-waiver 留檔）`);
+        else if (/[1-9]/.test(val)) warningsAll.push(`${rel}: retries: ${val}（條件式含非 0——確認 CI 才重試、非掩蓋 flaky；要擋請留 retry-waiver）`);
+      }
+      const wm = stripped.match(/webServer[\s\S]{0,200}?command\s*:\s*['"\`]([^'"\`]+)['"\`]/);
+      if (wm && DEV_SERVER_RE.test(wm[1])) problemsAll.push(`${rel}: webServer command 疑用 dev server（"${wm[1].trim()}"）——驗證禁 dev 噪音，改 build && preview/start`);
     }
     if (!journeyFiles.length) {
       console.log('⚠ 未找到 Playwright journey 測試檔（*.spec/.test/.e2e 內含 @playwright/test 或 page.goto）。');
@@ -529,9 +694,13 @@ switch (cmd) {
       }
       const st = await S.readStateJson(root);
       await S.writeStateJson(root, { ...st, phase: 'spec-done' });        // read-modify-write，保留 mode/tasks/verify/tdd
-      await S.appendJournal(root, { ev: 'spec.frozen' });
+      // W2-1 凍結分母：落 .flow/trace/req-index.json（REQ 全集＋requirements.md hash＋HEAD）——
+      // 下游 plan-check/verify-e2e/complete-check 一律以此為分母，凍結後偷改文字在下一道就被 hash 對賬抓。
+      const head = gitHead(root);
+      await S.writeReqIndex(root, reqText, head);
+      await S.appendJournal(root, { ev: 'spec.frozen', reqHash: S.sha256Text(reqText), head });
       console.log('✓ 需求已收斂（### 開放問題 清零＋REQ-/REQ-E2E-/REQ-PERF- 齊）且已凍結：phase="spec-done"。');
-      console.log('  下一步：web 類先確認互動原型已彈窗定版，再進 /flow-plan（自駕會自動接續）。');
+      console.log('  凍結分母已落 .flow/trace/req-index.json；下游閘門對賬用。下一步：web 類先確認互動原型已彈窗定版，再進 /flow-plan（自駕會自動接續）。');
     } else {
       console.log('✓ 需求已收斂：### 開放問題 清零、REQ-/REQ-E2E-/REQ-PERF- 齊。可產互動原型 → 凍結（flow-state spec-ready --freeze）。');
     }
@@ -640,7 +809,7 @@ switch (cmd) {
     break;
   }
   default:
-    console.log(`flow-state <resume|status|done|checkpoint|mode|project-type|scope|redteam|journey-check|verify-e2e|coverage|lesson|decision|guardrail-check|complete-check|spec-ready|spec-review|review-resolve|review-check|mockup-check> [--root <path>]
+    console.log(`flow-state <resume|status|done|checkpoint|mode|project-type|scope|redteam|journey-check|run|verify-e2e|verify-perf|plan-check|coverage|lesson|decision|guardrail-check|complete-check|spec-ready|spec-review|review-resolve|review-check|mockup-check> [--root <path>]
   resume | status        冷啟動：reconstruct 印現況 + 下一步 + mid-task 進度 + 對帳 + 已知死路（換 session/電腦/中斷後接手；平行波看 /workflows）
   done <id> [--commit]   標一個 task 完成：翻 tasks.md [x] + ledger→delivered（自帶 verify 閘門；先標、再 commit）
   checkpoint <id> --phase <red|green|refactor|integrated> [--note]   記 mid-task 進度（開發中當機 → resume 帶出「上次做到第幾步」，只補沒做完的）
@@ -648,8 +817,11 @@ switch (cmd) {
   project-type <type>    落檔專案類型（Step 1 彈窗拍板後跑；--freeze 對賬：web 類 SHALL 有互動原型或 mockup-waiver 豁免檔）
   scope --wave <ids>     同 repo 平行檔案安全閘門：git 真實變動 vs 各 feature conflictZone，越界 exit 2（整合前跑）
   redteam --wave <ids>   紅軍對賬閘門：.flow/redteam/<id>.json 攻擊 <3、high 未全 covered、testFile 不實存、或高危關鍵字攻擊無痕 skipped（無 waiver decision）→ exit 2
-  journey-check [--dir]  journey 真實性閘門：掃 Playwright 測試，出現 mock/網路攔截 或 單一 test 內 >1 goto → exit 2（web 驗證宣稱綠前跑）
-  verify-e2e <id> --status <pass|fail|n/a> --evidence "<ref>"   記一條 REQ-E2E journey 驗證結果（Evaluator 真綠後落檔，供 coverage 對賬）
+  journey-check [--dir]  journey 真實性閘門：掃 Playwright 測試（mock/網路攔截、單一 test >1 goto）＋playwright.config（retries 非 0、webServer 用 dev）→ exit 2（web 驗證宣稱綠前跑）
+  run --task <id> -- <cmd>   verify runner wrapper：真跑命令、捕真 exit code、綁 taskId 落 journal（done 據此擋「跑過但最後紅卻標 done」）
+  verify-e2e <id> --status <pass|fail|n/a> --evidence "<ref>" [--decision <id>]   記一條 REQ-E2E 驗證（自動記 HEAD/reqHash；n/a 須附 decision）
+  verify-perf <REQ-PERF-id> --value <數字> --evidence "<ref>"   記 REQ-PERF 達標（從凍結 index 解析 budget、超標拒記；complete-check 對賬）
+  plan-check             計畫出口對賬：REQ↔task 覆蓋＋tasks.md↔manifest 逐欄一致 → 落 plan-check.json＋phase="plan-done"，否則 exit 2（/flow-plan 出口跑）
   coverage               REQ-E2E 覆蓋對賬：requirements.md 的 REQ-E2E-* vs .flow/verify 記錄，缺/未過 exit 2
   lesson <id> --approach "<a>" --why "<w>"   記一條失敗記憶（防再生撞同一面牆；標 BLOCKED/stall 升級時記）
   decision <id> --choice "<c>" --why "<w>" [--by user|auto]   記決策留審計（waiver 類 id 預設 by:user＝使用者拍板；其餘預設 by:auto＝自駕自決）

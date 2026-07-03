@@ -47,11 +47,21 @@ test('正門：flow-state spec-ready --freeze（命令不含 state.json 路徑/s
   });
 });
 
-test('寫別的 phase（plan-done/其他檔）→ 放行', async () => {
+test('寫別的 phase（非受守/其他檔）→ 放行', async () => {
   await withFlow(async (root) => {
-    assert.equal(run(write(root, path.join(root, '.flow', 'state.json'), JSON.stringify({ phase: 'plan-done' }))), 0, '別的 phase 不擋');
+    assert.equal(run(write(root, path.join(root, '.flow', 'state.json'), JSON.stringify({ phase: 'build-done' }))), 0, '非受守 phase 不擋');
     assert.equal(run(write(root, path.join(root, 'specs', 'requirements.md'), '...spec-done...')), 0, '別的檔不擋');
   });
+});
+
+test('裸寫 phase=plan-done → exit 2；plan-check 正門/已是 plan-done 再存 → 放行（W2-2）', async () => {
+  await withFlow(async (root) => {
+    assert.equal(run(write(root, path.join(root, '.flow', 'state.json'), JSON.stringify({ phase: 'plan-done' }))), 2, '裸寫 plan-done 擋');
+    assert.equal(run(bash(root, 'node ~/.claude/skills/flow-toolkit/flow-state.mjs plan-check')), 0, 'plan-check 正門放行');
+  });
+  await withFlow(async (root) => {
+    assert.equal(run(write(root, path.join(root, '.flow', 'state.json'), JSON.stringify({ phase: 'plan-done' }))), 0, '已是 plan-done 再存放行');
+  }, { phase: 'plan-done' });
 });
 
 test('current phase 已是 spec-done → 再存放行（只擋轉移那一刻）', async () => {
@@ -77,6 +87,11 @@ test('spec-review ledger 閘門：Write/Edit 裸寫擋、Bash 寫入/刪除擋�
     assert.equal(run(bash(root, 'git diff HEAD -- .flow/spec-review/')), 0, 'git diff 放行');
     assert.equal(run(bash(root, 'node ~/.claude/skills/flow-toolkit/flow-state.mjs spec-review redteam --file /tmp/f.json')), 0, 'CLI 正門放行（無重導進目錄）');
     assert.equal(run(bash(root, 'cat .flow/spec-review/redteam-r1.json && node flow-state.mjs review-resolve SR-RT-001 --as open')), 0, '讀+CLI 複合放行');
+    // trace/verify 同守（W2）
+    assert.equal(run(write(root, path.join(root, '.flow', 'trace', 'req-index.json'), '{}')), 2, 'Write 裸寫 trace 擋');
+    assert.equal(run(bash(root, `echo '{}' > .flow/verify/REQ-E2E-001.json`)), 2, 'Bash 重導寫 verify 擋');
+    assert.equal(run(bash(root, 'git add .flow/trace .flow/verify')), 0, 'git add trace/verify 放行');
+    assert.equal(run(bash(root, 'cat .flow/trace/req-index.json')), 0, '讀 trace 放行');
   });
 });
 

@@ -778,6 +778,115 @@ test('reviewCheckAudit：未終局/指標失效點名；全終局＝零 problems
   assert.deepEqual(ok, [], JSON.stringify(ok));
 });
 
+// ── 第 2 波：全鏈路對賬純函式 ──
+
+test('extractAllReqIds：抽全型號 REQ id 去重保序大寫（W2-1）', () => {
+  const md = 'REQ-001 REQ-E2E-002\nreq-perf-003 REQ-RBAC-004 REQ-001（重複）';
+  assert.deepEqual(S.extractAllReqIds(md), ['REQ-001', 'REQ-E2E-002', 'REQ-PERF-003', 'REQ-RBAC-004']);
+});
+
+test('reqHashProblem：無 index→null（相容）；hash 相符→null；不符→錯誤（W2-1）', () => {
+  const md = 'REQ-001：x';
+  const idx = { reqHash: S.sha256Text(md), reqIds: ['REQ-001'] };
+  assert.equal(S.reqHashProblem(null, md), null, '無 index 不擋');
+  assert.equal(S.reqHashProblem(idx, md), null, '相符');
+  assert.match(S.reqHashProblem(idx, md + '\nREQ-002：偷改'), /凍結快照不符/);
+  assert.equal(S.reqHashProblem(idx, md.replace('\n', '\r\n')), null, 'CRLF 差異不誤判');
+});
+
+test('parseTasksMd：抽 id/blockedBy/conflictZone；planManifestDiff 抓寬窄不一致（W2-2）', () => {
+  const md = [
+    '- [ ] F-1 訪客註冊（對應 REQ-E2E-001）',
+    '      blockedBy: P-1,P-2 | conflictZone: features/auth, api/auth',
+    '- [x] F-2 建立 item（對應 REQ-E2E-002）',
+    '      blockedBy: — | conflictZone: features/items',
+  ].join('\n');
+  const tasks = S.parseTasksMd(md);
+  assert.deepEqual(tasks.map(t => t.id), ['F-1', 'F-2']);
+  assert.deepEqual(tasks[0].blockedBy, ['P-1', 'P-2']);
+  assert.deepEqual(tasks[0].conflictZone, ['features/auth', 'api/auth']);
+  assert.deepEqual(tasks[1].blockedBy, [], '— 視為空');
+  // manifest 少一個 conflictZone → diff 抓到
+  const manifest = { tasks: [{ id: 'F-1', blockedBy: ['P-1', 'P-2'], conflictZone: ['features/auth'] }, { id: 'F-2', blockedBy: [], conflictZone: ['features/items'] }] };
+  const d = S.planManifestDiff(md, manifest);
+  assert.match(d.join('\n'), /F-1.*conflictZone 不一致/);
+  // 全一致 → 空
+  manifest.tasks[0].conflictZone = ['features/auth', 'api/auth'];
+  assert.deepEqual(S.planManifestDiff(md, manifest), []);
+  // manifest 多一個幽靈 task → 抓到
+  manifest.tasks.push({ id: 'F-9', blockedBy: [], conflictZone: [] });
+  assert.match(S.planManifestDiff(md, manifest).join('\n'), /F-9.*manifest 有、tasks\.md 沒有/);
+});
+
+test('reqTaskCoverage：只要求 REQ-E2E/PERF 承接、功能型 REQ 不強求；註解不算承接；前綴 glob；不前綴碰撞（W2-2 修）', () => {
+  // REQ-E2E-001 被 task 承接、REQ-PERF-001 沒 → uncovered 只列 PERF（功能型 REQ-001 不要求）
+  assert.deepEqual(S.reqTaskCoverage(['REQ-001', 'REQ-E2E-001', 'REQ-PERF-001'], '- [ ] F-1（對應 REQ-E2E-001）').uncovered, ['REQ-PERF-001']);
+  // REQ id 只出現在註解/追溯行（非 checkbox task 行）→ 不算承接
+  const commentOnly = '- [ ] F-1（對應 REQ-E2E-001）\n<!-- 追溯：REQ-PERF-001 效能待後續 -->';
+  assert.deepEqual(S.reqTaskCoverage(['REQ-E2E-001', 'REQ-PERF-001'], commentOnly).uncovered, ['REQ-PERF-001'], '註解不算承接');
+  // 前綴 glob「REQ-PERF-*」覆蓋該前綴全部 id
+  assert.equal(S.reqTaskCoverage(['REQ-PERF-001', 'REQ-PERF-002'], '- [ ] X-1 效能整體驗收（REQ-PERF-*）').ok, true, 'glob 覆蓋');
+  // 前綴碰撞：REQ-E2E-1 不被 REQ-E2E-10 覆蓋（tokenized set，非裸子字串）
+  assert.deepEqual(S.reqTaskCoverage(['REQ-E2E-1'], '- [ ] F-1（對應 REQ-E2E-10）').uncovered, ['REQ-E2E-1'], '不前綴碰撞');
+  // phantom：具體 id 不在 index（glob 殘綴不算幻覺）
+  assert.deepEqual(S.reqTaskCoverage(['REQ-E2E-001'], '- [ ] F-1 做 REQ-E2E-999').phantom, ['REQ-E2E-999']);
+  assert.deepEqual(S.reqTaskCoverage(['REQ-PERF-001'], '- [ ] X-1（REQ-PERF-*）').phantom, [], 'glob 非幻覺');
+});
+
+test('planManifestDiff：conflictZone 尾斜線/大小寫/順序純外觀差異不誤判（覆核 W2 誤殺）', () => {
+  const md = '- [ ] F-1 標題\n      conflictZone: Api/, features/x | blockedBy: —';
+  const manifest = { tasks: [{ id: 'F-1', blockedBy: [], conflictZone: ['api', 'features/x/'] }] };
+  assert.deepEqual(S.planManifestDiff(md, manifest), [], '尾斜線/大小寫/順序都不算不一致');
+});
+
+test('isValidVerify：ok:<ref>（含冒號後空白）過；裸 ok/passed/none 擋（覆核 W2 誤殺 + 對齊 gate）', () => {
+  assert.equal(S.isValidVerify('ok:e2e'), true);
+  assert.equal(S.isValidVerify('ok: dashboard e2e green'), true, '冒號後空白不誤殺');
+  assert.equal(S.isValidVerify('ok'), false);
+  assert.equal(S.isValidVerify('passed'), false);
+  assert.equal(S.isValidVerify('none'), false);
+});
+
+test('parsePerfBudget / perfMeetsBudget：上界/下界/單位錨定/條件句不誤抓（W2-4 修正）', () => {
+  assert.deepEqual(S.parsePerfBudget('REQ-PERF-001：dashboard LCP < 2.5s（p95）'), { op: '<', budget: 2.5, unit: 's', lower: false });
+  assert.deepEqual(S.parsePerfBudget('p95 <= 400ms @ POST /api/items'), { op: '<=', budget: 400, unit: 'ms', lower: false });
+  // 條件句「資料量 < 5000 筆時 p95 <= 400ms」：錨定帶單位的 400ms、不誤抓 5000（覆核 bypass finding）
+  assert.deepEqual(S.parsePerfBudget('查詢在資料量 < 5000 筆時，p95 <= 400ms'), { op: '<=', budget: 400, unit: 'ms', lower: false });
+  // 下界（吞吐量）：>= 1000 rps
+  assert.deepEqual(S.parsePerfBudget('吞吐量 >= 1000 rps'), { op: '>=', budget: 1000, unit: 'rps', lower: true });
+  assert.equal(S.parsePerfBudget('無數字'), null);
+  const up = { budget: 400, unit: 'ms', op: '<=', lower: false };
+  assert.equal(S.perfMeetsBudget(420, up), null, '上界 5% 容差內');
+  assert.match(S.perfMeetsBudget(500, up), /超標/);
+  const lo = { budget: 1000, unit: 'rps', op: '>=', lower: true };
+  assert.equal(S.perfMeetsBudget(1500, lo), null, '下界達標');
+  assert.match(S.perfMeetsBudget(500, lo), /未達下限/);
+});
+
+test('perfIsNonMeasurable：無 budget/N/A 的 REQ-PERF → true（走 perf-waiver 不是 verify-perf）（W2-4 死鎖修）', () => {
+  const md = ['REQ-PERF-001：p95 <= 400ms。', 'REQ-PERF-002：不阻塞主線程（設計約束）。', 'REQ-PERF-003：N/A（內部工具）。'].join('\n');
+  assert.equal(S.perfIsNonMeasurable(md, 'REQ-PERF-001'), false, '有 budget＝量測型');
+  assert.equal(S.perfIsNonMeasurable(md, 'REQ-PERF-002'), true, '無數字＝非量測型');
+  assert.equal(S.perfIsNonMeasurable(md, 'REQ-PERF-003'), true, 'N/A');
+});
+
+test('taskRunnerRed：canonical 嚴格相等（不跨 task 污染）＋逐 bucket 最後一次（換命令洗綠不算）（W2-3 修）', () => {
+  // 同 task 同 bucket 先紅後綠 → 該 bucket 已綠、null
+  assert.equal(S.taskRunnerRed([
+    { ev: 'verify.attempt', id: 'make test', sig: 'abc', taskId: 'F-1' },
+    { ev: 'verify.attempt', id: 'make test', sig: 'ok', taskId: 'F-1' },
+  ], 'F-1'), null);
+  // 換 bucket 跑綠洗不掉原 failing runner 的紅
+  assert.equal(S.taskRunnerRed([
+    { ev: 'verify.attempt', id: 'npm test', sig: 'red1', taskId: 'F-1' },
+    { ev: 'verify.attempt', id: 'node', sig: 'ok', taskId: 'F-1' },
+  ], 'F-1'), 'npm test', '原 npm test 仍紅');
+  // 跨 task 不污染：F-1 的紅不擋 F-2（嚴格相等，不用 idMatches）
+  assert.equal(S.taskRunnerRed([{ ev: 'verify.attempt', id: 'x', sig: 'red', taskId: 'Admin-F-1' }], 'F-1'), null);
+  // 沒走 run → null（不表態）
+  assert.equal(S.taskRunnerRed([{ ev: 'verify.attempt', id: 'npm test', sig: 'ok' }], 'F-1'), null);
+});
+
 test('sha256Text：行尾正規化——CRLF/LF/CR 同文字同 hash（覆核 W1 docHash 對 autocrlf 不敏感）', () => {
   assert.equal(S.sha256Text('a\r\nb'), S.sha256Text('a\nb'));
   assert.equal(S.sha256Text('a\rb'), S.sha256Text('a\nb'));

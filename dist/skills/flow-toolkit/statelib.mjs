@@ -50,7 +50,7 @@ async function writeJSON(p, obj) { await writeFileAtomic(p, JSON.stringify(obj, 
 // 把「耐久證據進 git、瞬時/衍生檔忽略」從散文鐵則釘成確定性檔，放在 .flow/ 內＝self-contained、隨目錄走、
 // 不必動專案根 .gitignore（那支由 clean-verify-artifacts 管另一塊）。清單為相對 .flow/ 的瞬時檔：
 //   state.json（當前 task 衍生指標、每動一次重寫）/ state.json.mode / monitor.port / *.log / *-reminded（ctx/size 提醒旗標）。
-// 耐久證據（manifest.json / ledger/ / redteam/ / verify/ / decisions/ / spec-review/ / journal.ndjson / lessons.ndjson / 本 .gitignore）
+// 耐久證據（manifest.json / ledger/ / redteam/ / verify/ / decisions/ / spec-review/ / trace/ / journal.ndjson / lessons.ndjson / 本 .gitignore）
 // 不在清單 → 照常 track（換機 clone 即 reconstruct、ship 審查讀紅軍清單）。冪等 managed block：只換自己區塊、保留使用者自訂行。
 const FLOW_GITIGNORE_BLOCK = [
   '# >>> flow-state (managed by flow-toolkit) >>>',
@@ -114,7 +114,8 @@ export async function listVerifyRecords(root) {
   const d = verifyDir(root);
   if (!existsSync(d)) return [];
   const out = [];
-  for (const f of await readdir(d)) if (f.endsWith('.json')) out.push(await readJSON(path.join(d, f), {}));
+  // 排除 perf-*.json（perf 走 readPerfRecord 專徑）——否則污染 coverageAudit 的 orphan 警告。
+  for (const f of await readdir(d)) if (f.endsWith('.json') && !f.startsWith('perf-')) out.push(await readJSON(path.join(d, f), {}));
   return out;
 }
 
@@ -176,9 +177,25 @@ export function stallCount(journal, id) {
   for (let i = sigs.length - 1; i >= 0 && sigs[i] === last; i--) n++;
   return n;
 }
-export async function recordVerifyAttempt(root, id, sig, exit) {
-  await appendJournal(root, { ev: 'verify.attempt', id, sig, exit });
+// taskId（選填）：flow-state run --task 走這條——把 attempt 綁到 task，done 閘門據此對賬「這個 task 真跑綠了」。
+// stall-monitor 不帶 taskId（生產不寫 state.task），故其 stallCount 只吃 bucket 相符的；兩用途分流不互擾。
+export async function recordVerifyAttempt(root, id, sig, exit, taskId) {
+  await appendJournal(root, { ev: 'verify.attempt', id, sig, exit, ...(taskId ? { taskId } : {}) });
 }
+// done 閘門：某 task 是否有「曾經跑紅、且該 runner（bucket）最後一次仍非綠」的 attempt（純函式）。
+// 回 <bucket 字串>（還紅的那條 runner）／null（沒走 run，或每條跑過的 runner 最後都綠）。
+//   ① taskId **canonical 嚴格相等**（不用 idMatches——尾段容錯會讓別 task 的紅 runner 誤擋，與 verifyTaskId 同源理由）；
+//   ② 逐 bucket 取「最後一筆」——換一條 no-op 命令跑綠不會清掉原 failing runner 的紅（bucket 不同），
+//      也擋「npm test 紅 → 改跑 npm run typecheck 綠」的無意洗綠（原 test suite 從沒重跑綠）。
+export function taskRunnerRed(journal, taskId) {
+  const byBucket = new Map();
+  for (const e of (journal || [])) if (e && e.ev === 'verify.attempt' && e.taskId && e.taskId === taskId) byBucket.set(e.id, e.sig);
+  for (const [bucket, sig] of byBucket) if (sig !== 'ok') return bucket;
+  return null;
+}
+// verify 欄位格式（done 閘門＋flow-verify-gate 共用單一事實來源）：SHALL 是 ok:<ref>（冒號後可空白，帶真證據 ref）。
+// 擋裸 'ok'/'passed'/'done' 無 ref 的自報字串；容忍 'ok: <ref>' 自然寫法（原 /^ok:\S/ 誤殺冒號後空格）。
+export function isValidVerify(v) { return /^ok:\s*\S/i.test(String(v ?? '').trim()); }
 
 // ── 失敗記憶（防計畫再生撞同一面牆）：append-only、硬上限 N 筆丟最舊；──
 // delivered task 的死路由 reconstruct 自動濾掉（不再相關），不需手動標 stale。
@@ -546,6 +563,175 @@ export async function writeSpecResolution(root, findingId, resObj) {
   await appendJournal(root, { ev: 'spec.review.resolve', id: String(findingId).toUpperCase(), as: resObj.as });
 }
 
+// ── 第 2 波：全鏈路機器對賬（REQ→design→task→test→verify，.flow/trace/ ledger）──
+// 凍結分母：freeze 通過瞬間落 REQ 全集＋requirements.md hash＋HEAD sha。下游閘門一律以此為分母，
+// 不再各自臨場重掃——凍結後偷改 requirements.md 在「下一個消費閘門」就被 hash 對賬抓到（不拖到 ship）。
+const traceDir = root => path.join(dir(root), 'trace');
+const reqIndexPath = root => path.join(traceDir(root), 'req-index.json');
+const planCheckPath = root => path.join(traceDir(root), 'plan-check.json');
+
+// 全型號 REQ id（REQ-*/REQ-E2E-*/REQ-PERF-*/REQ-RBAC-*…）——去重保序大寫。
+export function extractAllReqIds(md) {
+  const out = [], seen = new Set();
+  for (const m of String(md || '').matchAll(/\bREQ-[A-Za-z0-9._-]+/gi)) {
+    const id = m[0].toUpperCase();
+    if (!seen.has(id)) { seen.add(id); out.push(id); }
+  }
+  return out;
+}
+export async function writeReqIndex(root, reqMd, head) {
+  await writeJSON(reqIndexPath(root), { reqIds: extractAllReqIds(reqMd), reqHash: sha256Text(reqMd), head: head || '', at: nowISO() });
+}
+export async function readReqIndex(root) { return readJSON(reqIndexPath(root), null); }
+// 現行 requirements.md hash vs 凍結 index：回 null＝相符或無 index（向後相容）；否則錯誤訊息。
+// 消費閘門（plan-check/verify-e2e/complete-check）先跑這個——凍結後偷改文字，下一道就擋。
+export function reqHashProblem(index, currentReqMd) {
+  if (!index || !index.reqHash) return null;                      // 無 index（舊專案/尚未凍結）→ 不擋
+  if (index.reqHash === sha256Text(currentReqMd)) return null;
+  return 'requirements.md 已與凍結快照不符（凍結後被改過）——要嘛還原，要嘛重跑 flow-state spec-ready --freeze 重新凍結（會走過收斂閘門並更新快照）。';
+}
+
+// tasks.md 解析（純函式）：抽 task id＋blockedBy＋conflictZone，供 plan-check 對賬 manifest。
+// 格式（tasks-template）：「- [ ] F-1 標題（對應 REQ-E2E-001）」下一行「blockedBy: A,B | conflictZone: x/, y/」。
+const splitDecl = s => s.split(/[,，]/).map(x => x.trim()).filter(x => x && x !== '—' && x !== '-' && x !== '–');
+export function parseTasksMd(md) {
+  const lines = String(md || '').split(/\r?\n/);
+  const tasks = [];
+  let cur = null;
+  const scanDecl = (raw) => {                                      // 同行或續行的 blockedBy/conflictZone 都吃
+    if (!cur) return;
+    const bb = raw.match(/blockedBy\s*[:：]\s*([^|]*)/i);
+    if (bb) cur.blockedBy = splitDecl(bb[1]);
+    const cz = raw.match(/conflictZone\s*[:：]\s*([^|]*)/i);        // 到 | 為止（與 blockedBy 對稱，欄位順序無關）
+    if (cz) cur.conflictZone = splitDecl(cz[1]);
+  };
+  for (const raw of lines) {
+    const m = raw.match(LINE_RE);
+    if (m) {
+      const id = lineId(m[4]);
+      if (id) { cur = { id, blockedBy: [], conflictZone: [] }; tasks.push(cur); scanDecl(raw); } else cur = null;   // 承接 inline 宣告
+      continue;
+    }
+    scanDecl(raw);
+  }
+  return tasks;
+}
+
+// tasks.md 裡「checkbox task 行」的文字（REQ id 在標題「（對應 REQ-E2E-001）」上）——
+// 只掃 task 行、排除追溯註解/backlog 散文，避免「REQ id 出現在註解就算被承接」的假覆蓋。
+function taskLinesText(md) {
+  return String(md || '').split(/\r?\n/).filter(l => { const m = l.match(LINE_RE); return m && lineId(m[4]); }).join('\n');
+}
+// REQ↔task 覆蓋（純函式）：只要求 REQ-E2E-*／REQ-PERF-* 被 task 承接——功能型 REQ-* 由 REQ-E2E 承接、
+// 走 plan-check 的 REQ↔design 對照表人工掃（對齊 ears-cheatsheet 方法論；強求功能型逐條進 tasks.md 會擋死官方範本）。
+// 覆蓋＝該 id 出現在某 task 行，或有「前綴 glob」（tasks.md 寫「REQ-PERF-*」→ token「REQ-PERF-」覆蓋該前綴全部 id）。
+// 成員判定用 tokenized set（word-boundary），不用裸子字串——防 REQ-1 誤配 REQ-10 的前綴碰撞。
+export function reqTaskCoverage(reqIds, tasksMd) {
+  const need = (reqIds || []).map(x => x.toUpperCase()).filter(id => /^REQ-(E2E|PERF)-/.test(id));
+  const taskText = taskLinesText(tasksMd);
+  const referenced = extractAllReqIds(taskText);
+  const concrete = new Set(referenced.filter(id => !id.endsWith('-')));   // 具體 id（非殘綴）
+  const prefixes = referenced.filter(id => id.endsWith('-'));             // 「REQ-PERF-*」→「REQ-PERF-」前綴 glob
+  const covered = id => concrete.has(id) || prefixes.some(p => id.startsWith(p));
+  const uncovered = need.filter(id => !covered(id));
+  const idSet = new Set((reqIds || []).map(x => x.toUpperCase()));
+  const phantom = [...concrete].filter(id => !idSet.has(id));             // 具體 id 卻不在 index＝幻覺/打錯（glob 不算幻覺）
+  return { uncovered, phantom, ok: uncovered.length === 0 && phantom.length === 0 };
+}
+
+// tasks.md ↔ manifest 逐欄 diff（純函式）：task 集合／blockedBy／conflictZone 不一致就回問題列。
+// 堵「manifest 寫得比 tasks.md 寬＝scope/wave 閘門的事實來源被靜默調鬆」。
+// conflictZone 比對前套 scope 閘門同款 normPath（去尾斜線/./前綴/反斜線）＋大小寫不敏感，純外觀差異不誤判；
+// 集合比對故排序，欄位順序（conflictZone 寫在 blockedBy 前後）不影響。
+const normZone = z => normPath(z).toLowerCase();
+const sortedEq = (a, b) => { const x = [...(a || [])].sort(), y = [...(b || [])].sort(); return x.length === y.length && x.every((v, i) => v === y[i]); };
+const sortedEqZone = (a, b) => sortedEq((a || []).map(normZone), (b || []).map(normZone));
+export function planManifestDiff(tasksMd, manifest) {
+  const parsed = parseTasksMd(tasksMd);
+  const mTasks = (manifest && manifest.tasks) || [];
+  const problems = [];
+  const pIds = new Set(parsed.map(t => t.id)), mIds = new Set(mTasks.map(t => t.id));
+  for (const id of pIds) if (!mIds.has(id)) problems.push(`task「${id}」在 tasks.md 有、manifest 沒有——同步進 manifest（/flow-plan Step 5）`);
+  for (const id of mIds) if (!pIds.has(id)) problems.push(`task「${id}」在 manifest 有、tasks.md 沒有——manifest 比 tasks.md 寬，scope/wave 閘門會據此放行幽靈 task`);
+  const mById = Object.fromEntries(mTasks.map(t => [t.id, t]));
+  for (const t of parsed) {
+    const mt = mById[t.id];
+    if (!mt) continue;
+    if (!sortedEq(t.blockedBy, mt.blockedBy || [])) problems.push(`「${t.id}」blockedBy 不一致：tasks.md=[${t.blockedBy}] vs manifest=[${mt.blockedBy || []}]`);
+    if (!sortedEqZone(t.conflictZone, mt.conflictZone || [])) problems.push(`「${t.id}」conflictZone 不一致：tasks.md=[${t.conflictZone}] vs manifest=[${mt.conflictZone || []}]（scope 閘門讀 manifest，寫寬＝檔案安全被鬆綁）`);
+  }
+  return problems;
+}
+
+export async function writePlanCheck(root, manifest, head) {
+  await writeJSON(planCheckPath(root), { manifestHash: sha256Text(JSON.stringify(manifest || {})), head: head || '', at: nowISO() });
+}
+export async function readPlanCheck(root) { return readJSON(planCheckPath(root), null); }
+
+// ── REQ-PERF budget 解析＋達標判定（純函式）：verify-perf 用 ──
+// 抽「比較運算子＋數字＋單位」，回 { op, budget, unit, lower } 或 null。要點：
+//   ① 支援上界（<=/</≤，延遲/尺寸）與下界（>=/>/≥，吞吐量/可用率）——lower 記方向；
+//   ② 錨定「帶單位」的比較式優先（延遲/尺寸 budget 一定帶單位；資料量/並發條件如「資料量 < 5000 筆」不帶）——
+//      堵條件句「查詢在資料量 < 5000 筆時 p95 <= 400ms」把 5000 抓成 budget 的靜默失效；全行無單位才 fallback 首個。
+const PERF_UNIT = 'ms|s|sec|MB|KB|GB|%|rps|qps|tps|fps';
+export function parsePerfBudget(line) {
+  const s = String(line || '');
+  const all = [...s.matchAll(new RegExp(`(<=|<|≤|>=|>|≥)\\s*([\\d.]+)\\s*(${PERF_UNIT})?`, 'gi'))]
+    .map(m => ({ op: m[1], budget: Number(m[2]), unit: (m[3] || '').toLowerCase() }));
+  if (!all.length) return null;
+  const chosen = all.find(x => x.unit) || all[0];
+  return { ...chosen, lower: /^(>=|>|≥)/.test(chosen.op) };
+}
+// value（同單位）是否達標。回 null＝達標，否則訊息。容差 5%（量測噪音；budget 建議自留 20% 餘裕）。
+// 上界：value <= budget*1.05；下界（吞吐量/可用率）：value >= budget*0.95。
+export function perfMeetsBudget(value, budget) {
+  const v = Number(value);
+  if (!Number.isFinite(v)) return 'value 不是數字';
+  if (budget.lower) return v >= budget.budget * 0.95 ? null : `實測 ${v}${budget.unit} 未達下限（budget ${budget.op} ${budget.budget}${budget.unit}，含 5% 容差）`;
+  return v <= budget.budget * 1.05 ? null : `實測 ${v}${budget.unit} 超標（budget ${budget.op} ${budget.budget}${budget.unit}，含 5% 容差）`;
+}
+export function extractReqPerf(md) {
+  const out = [], seen = new Set();
+  for (const m of String(md || '').matchAll(/\bREQ-PERF-[A-Za-z0-9._-]+/gi)) {
+    const id = m[0].toUpperCase();
+    if (!seen.has(id)) { seen.add(id); out.push(id); }
+  }
+  return out;
+}
+// REQ-PERF 定義行（供 verify-perf 解析 budget）。回 { [id]: line }
+export function reqPerfLines(md) {
+  const out = {};
+  for (const raw of String(md || '').split(/\r?\n/)) {
+    const m = raw.match(REQ_DEF_RE);
+    if (m && /^REQ-PERF-/i.test(m[1])) out[m[1].toUpperCase()] = raw;
+  }
+  return out;
+}
+// 某 REQ-PERF id 的「定義塊」文字（定義行殘句＋後續至下個 REQ/標題）——與 specReadiness 掃 N/A 同源，
+// 讓 spec-ready 與 complete-check 對「非量測型/N-A」判定一致（堵「freeze 認 N/A、ship 卻要 verify-perf」死鎖）。
+export function reqPerfBlock(md, id) {
+  const lines = String(md || '').split(/\r?\n/);
+  const target = String(id).toUpperCase();
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(REQ_DEF_RE);
+    if (!m || m[1].toUpperCase() !== target) continue;
+    let j = i + 1;
+    while (j < lines.length && !/^#{1,6}\s/.test(lines[j]) && !REQ_DEF_RE.test(lines[j])) j++;
+    return [lines[i].slice(m[0].length), ...lines.slice(i + 1, j)].join('\n');
+  }
+  return '';
+}
+// 此 REQ-PERF 是否「非量測型」（無可解析 budget，或明標 N/A）——需 perf-waiver 而非 verify-perf。
+export function perfIsNonMeasurable(md, id) {
+  const block = reqPerfBlock(md, id);
+  return !parsePerfBudget(block) || /\bN\/A\b|Ｎ／Ａ|不適用/i.test(block);
+}
+// perf 驗證記錄（.flow/verify/perf-<id>.json）——與 REQ-E2E 記錄同目錄但 perf- 前綴，listVerifyRecords 排除它、不污染 coverage orphan。
+export async function writePerfRecord(root, id, rec) {
+  await writeJSON(path.join(verifyDir(root), 'perf-' + safeId(id) + '.json'), { id, ...rec, at: rec.at || nowISO() });
+}
+export async function readPerfRecord(root, id) { return readJSON(path.join(verifyDir(root), 'perf-' + safeId(id) + '.json'), null); }
+
 // ── tasks.md 同步：把「task 完成」收成一個可被 hook/CLI 共用的原子操作 ──
 // 修根因：原本「翻 tasks.md [x]」「寫 ledger」「TaskUpdate」是三條各自會被漏掉的散文步驟。
 // 這裡把「翻 [x] + ledger→delivered」綁成一次呼叫，flow-state done 與 commit gate 都走它。
@@ -609,6 +795,23 @@ export async function markTaskDone(root, rawId, patch = {}) {
         isNoneVal(st.tdd) ? '  - .flow/state.json "tdd" 空/none → TDD 紅→綠，或例外時寫 "n/a"/"skipped:<reason>"。' : '',
         '  別手改 state.json 假填過閘門（系統性違規）；驗證真的綠了再 done。',
       ].filter(Boolean).join('\n'));
+      e.code = 'VERIFY_GATE';
+      throw e;
+    }
+    // verify 欄位格式（W2-3）：SHALL 是 ok:<ref>（帶證據 ref），堵「verify=x 隨便填非空字串就過」。
+    if (!isValidVerify(st.verify)) {
+      const e = new Error(`Flow done gate：「${id}」verify="${st.verify}" 格式不對——SHALL 是 "ok:<證據ref>"（trace 路徑/測試名/verify-e2e id），不是隨手填的字串。`);
+      e.code = 'VERIFY_GATE';
+      throw e;
+    }
+    // run --task 對賬（W2-3）：若此 task 走過 flow-state run --task 且某條 runner 最後一次仍紅 → 擋
+    // 「用 runner 跑過、最後一次紅卻硬標 done」（含換命令洗綠）。沒走 run 的不表態（退回 verify/tdd 閘門，不誤擋 MCP 真點擊）。
+    const redBucket = taskRunnerRed(await readJournal(root), id);
+    if (redBucket) {
+      const e = new Error([
+        `Flow done gate：「${id}」的 runner「${redBucket}」最後一次是紅，不能標 delivered。`,
+        `  先讓它真跑綠（flow-state run --task ${id} -- ${redBucket}），再 done——換別的命令跑綠不算數。`,
+      ].join('\n'));
       e.code = 'VERIFY_GATE';
       throw e;
     }

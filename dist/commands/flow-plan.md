@@ -57,10 +57,20 @@ requirements 含 LLM / 雲端 / 支付 / 行動 / 前端框架關鍵字 → **We
 
 **護欄（別過度拆，對齊 Karpathy Simplicity First）**：只拆「本來就該屬於各 feature、彼此獨立」的東西；天生該集中統一看的（全域 middleware 順序、設計 token、共用型別契約、全域 config）留在 Prelude 序列做、不拆。界線一句話 = 「**這東西需不需要被統一看著**」。需另加「自動聚合」機制（框架掃描/runner）才能拆的，要評估膠水成本與「忘了註冊」風險。專案小、並行需求低時，結論可以是「不用拆」——那就別拆，在 design.md 記一句理由即可。
 
-## Step 5：凍結閘門
+## Step 5：計畫對賬閘門 + 凍結
 
-`AskUserQuestion` 白話問：「設計＋任務分波完成，是否進 `/flow-build` 開始多工交付？」使用者拍板才推進。寫 `.flow/state.json`：`phase="plan-done"`，並把 tasks 寫入機讀版（TaskCreate / `.flow/manifest.json`）與人讀版 `tasks.md` 雙軌同步。
-- **機讀版每個 task SHALL 帶 `blockedBy` + `conflictZone`**：`/flow-build` 據此算波次，且 `flow-state scope --wave`（同 repo 平行的檔案安全閘門）會讀 `manifest.json` 的 `conflictZone` 來擋 worker 越界。**沒宣告 conflictZone 的 task 會被 scope 閘門擋下無法整合**——這把「標 conflictZone」從散文紀律升級成硬要求。
+先把 tasks 寫入機讀版（TaskCreate / `.flow/manifest.json`）與人讀版 `tasks.md` 雙軌同步，然後 SHALL 跑計畫出口對賬（**唯一正門**，取代裸寫 `phase=plan-done`）：
+
+```
+flow-state plan-check
+```
+
+它機檢（全數確定性、模型偽造不了）：① **REQ↔task 覆蓋**——凍結 index（`.flow/trace/req-index.json`）的每條 REQ id 都要在 tasks.md 出現（被某 task 承接），tasks.md 引用的 REQ id 都要實存於 index（防幻覺）；② **tasks.md↔manifest 逐欄一致**——task 集合／`blockedBy`／`conflictZone` 不一致就 exit 2（堵「manifest 比 tasks.md 寬＝scope/wave 閘門被靜默調鬆」）；③ requirements.md hash 對賬凍結分母（凍結後偷改在這裡就被抓）。通過才落 `.flow/trace/plan-check.json`（記 manifest hash，complete-check 對賬）＋寫 `phase="plan-done"`。它也順手印一張 **REQ↔design 對照表**給你在凍結彈窗掃一眼（design 語意矛盾機器驗不了、留人工）。
+
+- **機讀版每個 task SHALL 帶 `blockedBy` + `conflictZone`**：`/flow-build` 據此算波次，且 `flow-state scope --wave` 會讀 `manifest.json` 的 `conflictZone` 擋 worker 越界。**tasks.md 與 manifest 對不上、或有 REQ 沒被任何 task 承接，plan-check 直接 exit 2**——把「計畫完整承接需求」從散文升級成硬閘門。
+- 別手改 state.json 裸寫 `phase=plan-done` 繞過——`flow-spec-gate` hook 會 exit 2 擋（與 spec-done 同構）。
+
+`AskUserQuestion` 白話問：「設計＋任務分波完成、plan-check 綠，是否進 `/flow-build`？」使用者拍板才推進。
 
 ## 完成判準（self-check）
 - [ ] architecture.md + design.md + tasks.md 三檔齊全
@@ -68,4 +78,4 @@ requirements 含 LLM / 雲端 / 支付 / 行動 / 前端框架關鍵字 → **We
 - [ ] tasks 有 P-*/F-*/X-* 分組 + 每個 task 標了 blockedBy / conflictZone
 - [ ] 已做並行度自檢（Step 4.5）：中央檔 conflictZone 重疊評估過可否拆、型別型 blockedBy 評估過可否靠提早釘契約消解（過度拆有護欄）
 - [ ] REQ-PERF-* 有對應到能驗的 task
-- [ ] 凍結閘門已問、state.json + TaskCreate 已更新
+- [ ] **`flow-state plan-check` 綠**（REQ↔task 全覆蓋＋tasks.md↔manifest 一致）、state.json + TaskCreate 已更新

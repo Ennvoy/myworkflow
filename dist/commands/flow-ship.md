@@ -29,9 +29,11 @@ description: Flow Phase 5 — 出貨收束。跨 feature 整合 e2e + 完整效�
 
 ## Step 5：完成謂詞（收束的終點，確定性閘門守）
 
-**發 COMPLETE 前 SHALL 跑 `flow-state complete-check`**（mac/linux `node ~/.claude/skills/flow-toolkit/flow-state.mjs complete-check`、Windows PS 對應路徑）——它確定性守**三件事**：① 掃 `specs/tasks.md` 任一未完成 `[ ]` 即 exit 2；② `specs/requirements.md` 缺檔或查無任何 `REQ-E2E-*`（被歸檔/收束成殼）即 exit 2——完成謂詞不能被靜默關閉，從 `specs/archive/` 還原完整版再對賬；③ **逐條對賬 `requirements.md` 的 `REQ-E2E-*` vs `.flow/verify/` 記錄，任一缺 pass/n-a 記錄即 exit 2**（升級自舊版的散文提示——把「所有 REQ-E2E 真綠了」釘成機讀節點）。自駕無人盯著時尤其要，防模型自報全中提早收工。
+**發 COMPLETE 前 SHALL 跑 `flow-state complete-check`**（mac/linux `node ~/.claude/skills/flow-toolkit/flow-state.mjs complete-check`、Windows PS 對應路徑）——它確定性守**全鏈**：① 掃 `specs/tasks.md` 任一未完成 `[ ]` 即 exit 2；② `requirements.md` 缺檔/查無任何 `REQ-E2E-*`（被歸檔/收束成殼）即 exit 2；③ **現行 `requirements.md` hash == 凍結 index**（凍結後被偷改即 exit 2，還原或重跑 `spec-ready --freeze`）；④ **逐條對賬 `REQ-E2E-*` vs `.flow/verify/` pass/n-a 記錄**（n/a 醒目列出）；⑤ **逐條對賬 `REQ-PERF-*` vs `flow-state verify-perf` 達標記錄**（把「仍須人工確認 REQ-PERF」的死散文換成機讀謂詞——每條 REQ-PERF 要嘛有達標記錄、要嘛標 N/A＋perf-waiver decision）；⑥ **`plan-check.json` 的 manifest hash == 現行 manifest**（plan 後 manifest 被改＝scope/wave 事實來源漂移，重跑 plan-check）。任一未過 exit 2。自駕無人盯著時尤其要，防模型自報全中提早收工。
 
-通過後再人工核對謂詞全集：**所有 `tasks.md` F-*/P-* `[x]`（complete-check 守）∧ 所有 `REQ-E2E-*` 有 pass/n-a 驗證記錄（complete-check 逐條對賬）∧ 所有 `REQ-PERF-*` 達 budget ∧ X-* 清空**。全中 → 寫 state.json `phase="shipped"`、發 `<promise>COMPLETE</promise>`，**停止迭代**（滿足謂詞就收，不再打磨）。任一未中 → 回對應階段，**不准出通過報告**。
+**REQ-PERF 達標記錄怎麼來**：`/flow-verify` 或本階段量到 p50/p95 後，`flow-state verify-perf <REQ-PERF-id> --value <實測數字> --evidence "<k6/autocannon/lighthouse 輸出 ref>"`——CLI 從凍結 index 解析 budget、**超標拒記**（含 5% 容差），達標才落 pass。
+
+通過後：寫 state.json `phase="shipped"`、發 `<promise>COMPLETE</promise>`，**停止迭代**（滿足謂詞就收，不再打磨）。任一未中 → 回對應階段，**不准出通過報告**。
 
 ## Step 6：全系統垃圾兜底 + 出貨準備
 

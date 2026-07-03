@@ -40,7 +40,8 @@ process.stdin.on('end', () => {
   const verify = String(state.verify ?? '').trim();
   const tdd = String(state.tdd ?? '').trim();
   const isNone = (v) => v === '' || /^none$/i.test(v);
-  const verifyOk = !isNone(verify); // "ok:<ref>" etc.
+  // verify SHALL be "ok:<ref>"（冒號後可空白）——與 markTaskDone 的 isValidVerify 同判準（消除「TaskUpdate 放行但 done 擋」的分歧）。
+  const verifyOk = /^ok:\s*\S/i.test(verify);
   // tdd acceptable when it carries a real value: green / refactored / red:<ref> / n/a / skipped:<reason>
   const tddOk = !isNone(tdd);
 

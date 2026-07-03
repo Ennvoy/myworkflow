@@ -505,7 +505,64 @@ test('verify-perf/complete-check：非量測型 REQ-PERF（無 budget）走 perf
     // complete-check：非量測型認 perf-waiver、不死鎖
     await writeFile(path.join(root, 'specs', 'tasks.md'), '- [x] **F-1**\n', 'utf8');
     run(['verify-e2e', 'REQ-E2E-001', '--status', 'pass', '--evidence', 'green'], root);
+    run(['decision', 'code-review-waiver', '--choice', '本測不驗藍軍', '--why', 'x'], root);
     assert.equal(run(['complete-check'], root).code, 0, '非量測型有 waiver → complete-check 放行');
+  });
+});
+
+test('review-code / code-resolve / complete-check：forcing function＋red flag 終局＋重跑防蒸發（C 修正）', async () => {
+  await withRoot(async (root) => {
+    await frozenRoot(root);
+    await writeFile(path.join(root, 'specs', 'tasks.md'), '- [x] **F-1**\n', 'utf8');
+    run(['verify-e2e', 'REQ-E2E-001', '--status', 'pass', '--evidence', 'green'], root);
+    run(['verify-perf', 'REQ-PERF-001', '--value', '2.0', '--evidence', 'lh.json'], root);
+    // C-fix#1 forcing function：沒跑 code-review 且無 waiver → 擋（不再放行）
+    const noReview = run(['complete-check'], root);
+    assert.equal(noReview.code, 2, '沒跑藍軍 code-review → 擋 ship');
+    assert.match(noReview.err, /code-review/);
+    // 落 code-review：1 red + 1 yellow
+    const fp = path.join(root, 'cr.json');
+    await writeFile(fp, JSON.stringify({ findings: [
+      { id: 'CR-001', severity: 'red', file: 'src/x.ts:42', claim: 'SQLi 字串拼接' },
+      { id: 'CR-002', severity: 'yellow', file: 'src/y.ts:1', claim: '神奇數字' },
+    ] }), 'utf8');
+    assert.equal(run(['review-code', '--file', fp], root).code, 0);
+    const r = run(['complete-check'], root);
+    assert.equal(r.code, 2, 'red flag 未終局擋 ship');
+    assert.match(r.err, /CR-001/);
+    assert.equal(run(['code-resolve', 'CR-999', '--as', 'fixed:x'], root).code, 1, '不存在的 CR');
+    assert.equal(run(['code-resolve', 'CR-001', '--as', 'fixed:'], root).code, 2, 'fixed 缺證據');
+    assert.equal(run(['code-resolve', 'CR-001', '--as', 'waiver:ghost'], root).code, 2, 'decision 不存在');
+    assert.equal(run(['code-resolve', 'CR-001', '--as', 'fixed:src/x.ts:42 改 parameterized'], root).code, 0);
+    assert.equal(run(['complete-check'], root).code, 0, 'red 全終局後放行（yellow 不管）');
+  });
+});
+
+test('review-code 重跑：同號但內容全新的 red 不繼承舊終局；未終局舊 red 不因覆寫蒸發（C 修 B+C 洞）', async () => {
+  await withRoot(async (root) => {
+    await frozenRoot(root);
+    await writeFile(path.join(root, 'specs', 'tasks.md'), '- [x] **F-1**\n', 'utf8');
+    run(['verify-e2e', 'REQ-E2E-001', '--status', 'pass', '--evidence', 'green'], root);
+    run(['verify-perf', 'REQ-PERF-001', '--value', '2.0', '--evidence', 'lh.json'], root);
+    const fp = path.join(root, 'cr.json');
+    // Review1：CR-001 SQLi（終局）＋CR-002 auth bypass（未終局）
+    await writeFile(fp, JSON.stringify({ findings: [
+      { id: 'CR-001', severity: 'red', file: 'src/a.ts:1', claim: 'SQLi' },
+      { id: 'CR-002', severity: 'red', file: 'src/b.ts:2', claim: 'auth bypass 未修' },
+    ] }), 'utf8');
+    run(['review-code', '--file', fp], root);
+    run(['code-resolve', 'CR-001', '--as', 'fixed:src/a.ts parameterized'], root);
+    // Review2：獨立 reviewer 重跑，只回一條「同號 CR-001 但內容全新（XSS）」
+    await writeFile(fp, JSON.stringify({ findings: [{ id: 'CR-001', severity: 'red', file: 'src/c.ts:3', claim: 'XSS 全新未審' }] }), 'utf8');
+    const re = run(['review-code', '--file', fp], root);
+    assert.match(re.out, /保留 1 條/, 'CR-002 未終局 → 覆寫時保留');
+    const r = run(['complete-check'], root);
+    assert.equal(r.code, 2, '新 XSS 不繼承舊 CR-001 的 fixed、且 CR-002 未蒸發 → 擋');
+    // 兩條都終局才放行
+    run(['code-resolve', 'CR-001', '--as', 'fixed:src/c.ts XSS escape'], root);   // 新 CR-001（XSS）
+    run(['decision', 'cr-002-wv', '--choice', '不修', '--why', '既有 middleware 已擋'], root);
+    run(['code-resolve', 'CR-002', '--as', 'waiver:cr-002-wv'], root);            // 保留的舊 CR-002
+    assert.equal(run(['complete-check'], root).code, 0, '兩條都終局後放行');
   });
 });
 
@@ -784,8 +841,9 @@ test('complete-check：tasks 全 [x] 但 REQ-E2E 無驗證記錄 → exit 2（�
     // 記了 REQ-E2E pass 但 REQ-PERF 未達標 → 仍 exit 2（W2-4）
     run(['verify-e2e', 'REQ-E2E-001', '--status', 'pass', '--evidence', 'green'], root);
     assert.equal(run(['complete-check'], root).code, 2, 'REQ-PERF 未達標仍擋');
-    // 補 REQ-PERF 達標 → 放行
+    // 補 REQ-PERF 達標 → 放行（本測不驗藍軍，補 code-review-waiver）
     run(['verify-perf', 'REQ-PERF-001', '--value', '2.0', '--evidence', 'lighthouse.json'], root);
+    run(['decision', 'code-review-waiver', '--choice', '本測不驗藍軍', '--why', 'x'], root);
     assert.equal(run(['complete-check'], root).code, 0, '補齊 REQ-E2E＋REQ-PERF 後放行');
   });
 });

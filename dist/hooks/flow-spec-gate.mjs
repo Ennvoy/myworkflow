@@ -22,9 +22,9 @@ const setsGatedPhase = s => { const m = String(s || '').match(/["']?phase["']?\s
 // 目標是否為 .flow/state.json（含 Bash/PS 命令字串內嵌路徑：可在重導/空白/引號後出現）。
 // 先把反斜線正規化成正斜線，再要求 .flow 落在路徑邊界（開頭 / 斜線 / 空白 / 引號）。
 const targetsState = s => /(^|[\s'"/])\.flow\/state\.json\b/.test(String(s || '').replace(/\\/g, '/'));
-// 目標是否落在 CLI-only ledger 目錄（spec-review/trace/verify，含目錄本體無尾斜線——rm -rf 要擋）：
-// hash 由 CLI 自算——裸寫/覆寫/刪除＝偽造或蒸發對賬證據，只准走 flow-state 正門。
-const targetsLedger = s => /(^|[\s'"/])\.flow\/(spec-review|trace|verify)(\/|\b)/.test(String(s || '').replace(/\\/g, '/'));
+// 目標是否落在 CLI-only ledger 目錄（spec-review/trace/verify/code-review，含目錄本體無尾斜線——rm -rf 要擋）：
+// hash/終局由 CLI 自算——裸寫/覆寫/刪除＝偽造或蒸發對賬證據，只准走 flow-state 正門。
+const targetsLedger = s => /(^|[\s'"/])\.flow\/(spec-review|trace|verify|code-review)(\/|\b)/.test(String(s || '').replace(/\\/g, '/'));
 // Bash/PowerShell 命令是否對檔案有「寫入/建立/刪除」意圖（唯讀 cat/ls/jq/git add/diff/commit 不算——
 // 裸寫防的是竄改檔案內容，讀與 staging 動不了內容；CLI 正門走 fs 內部寫、命令字串不含重導進該目錄）。
 const hasWriteIntent = s => /(^|[^0-9])>>?|\btee\b|\bSet-Content\b|\bOut-File\b|\bAdd-Content\b|\bNew-Item\b|\b(cp|mv|rm|rmdir|touch)\b|\b(Copy-Item|Move-Item|Remove-Item)\b|\bdel\b|\bsed\s+-i/i.test(String(s || ''));
@@ -51,10 +51,11 @@ function main() {
     const isCmd = tool === 'Bash' || tool === 'PowerShell';
     if (isCmd && !hasWriteIntent(content)) process.exit(0);        // 純讀取/staging → 放行
     process.stderr.write([
-      'Flow ledger 閘門：禁止裸寫/刪除 .flow/{spec-review,trace,verify}/（hash 由 CLI 自算，裸改＝偽造或蒸發對賬證據）。',
+      'Flow ledger 閘門：禁止裸寫/刪除 .flow/{spec-review,trace,verify,code-review}/（hash/終局由 CLI 自算，裸改＝偽造或蒸發對賬證據）。',
       '  → 收 lens findings：flow-state spec-review …／終局：flow-state review-resolve …',
       '  → 凍結分母：flow-state spec-ready --freeze／計畫對賬：flow-state plan-check',
       '  → REQ-E2E 驗證：flow-state verify-e2e …／效能：flow-state verify-perf …',
+      '  → 藍軍 code-review：flow-state review-code …／終局：flow-state code-resolve …',
       '  （唯讀請用 Read 工具；staging 用 git add——它們不動內容，不會被擋。）',
     ].join('\n') + '\n');
     process.exit(2);

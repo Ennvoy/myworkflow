@@ -451,6 +451,50 @@ switch (cmd) {
     console.log(`✓ ${id.toUpperCase()} 達標：${value}${budget.unit} ${budget.lower ? '≥' : '≤'} ${budget.budget}${budget.unit}（含 5% 容差）。complete-check 會對賬。`);
     break;
   }
+  case 'review-code': {
+    // 藍軍 code-review 落機讀檔（/flow-ship Step 1）：code-reviewer subagent 回結構化 findings → 這裡落檔＋記 review 當時 HEAD。
+    // 用法：flow-state review-code --file <findings.json>
+    //   findings.json：{ "findings": [{ "id":"CR-001", "severity":"red|yellow", "file":"src/x.ts:42", "claim":"…", "suggest":"…" }] }；零 red flag 給空陣列。
+    const fp = flag('--file');
+    if (!fp) { console.error('需給 --file <findings.json>（code-reviewer 回傳的結構化 findings）'); process.exit(1); }
+    let obj;
+    try { const s = readFileSync(path.resolve(root, fp), 'utf8'); obj = JSON.parse(s.charCodeAt(0) === 0xfeff ? s.slice(1) : s); }
+    catch (e) { console.error(`✗ findings 檔讀取/解析失敗：${e.message}`); process.exit(1); }
+    const problems = S.validateCodeFindings(obj);
+    if (problems.length) { console.error('✗ findings 檔形狀不合法：'); for (const p of problems) console.error('  - ' + p); process.exit(1); }
+    const decExists = (did) => existsSync(path.join(root, '.flow', 'decisions', did + '.json'));
+    const { carried } = await S.writeCodeReview(root, obj.findings, gitHead(root), decExists);
+    const red = obj.findings.filter(f => String(f.severity).toLowerCase() === 'red').length;
+    console.log(`✓ code-review 已落檔（${red} 條 red flag、${obj.findings.length - red} 條 yellow${carried ? `；另保留 ${carried} 條上一輪未終局 red` : ''}）。`);
+    console.log((red + carried) ? '  下一步：逐條 flow-state code-resolve <CR-id> --as <fixed:<evidence>|waiver:<decisionId>>——red flag 不能無聲蒸發，complete-check 會擋。'
+      : '  零 red flag——complete-check 對賬會過。');
+    break;
+  }
+  case 'code-resolve': {
+    // 把一條 red flag 走終局（fixed:<evidence> 或 waiver:<decisionId>）。用法：flow-state code-resolve <CR-id> --as <…>
+    // 終局綁 finding 內容 hash（非裸 id）——重跑換編號時舊終局不會誤套到內容全新的同號 red。
+    const cid = argv[1], asStr = flag('--as');
+    if (!cid || cid.startsWith('--') || !asStr) { console.error('usage: flow-state code-resolve <CR-id> --as <fixed:<evidence>|waiver:<decisionId>>'); process.exit(1); }
+    const review = await S.readCodeReview(root);
+    const idU = cid.toUpperCase();
+    const finding = (review && (review.findings || []).find(f => String(f.id || '').toUpperCase() === idU));
+    if (!finding) { console.error(`✗ 查無 red flag「${cid}」——它不在 .flow/code-review/findings.json（先 review-code 落檔）。`); process.exit(1); }
+    const prob = S.codeResolutionProblem(asStr, (did) => existsSync(path.join(root, '.flow', 'decisions', did + '.json')));
+    if (prob) { console.error('✗ ' + prob); process.exit(2); }
+    await S.writeCodeResolution(root, S.codeFindingHash(finding), { as: asStr, id: idU });
+    console.log(`✓ ${idU} → ${asStr}（complete-check 會對賬）。`);
+    break;
+  }
+  case 'code-check': {
+    // code-review red flag 終局化對賬（可單獨跑；complete-check 內含同一檢查）。
+    const review = await S.readCodeReview(root);
+    if (!review) { console.log('⚠ 查無 .flow/code-review/findings.json——藍軍 code-review 還沒落檔（/flow-ship Step 1 SHALL 跑 review-code）。'); break; }
+    const problems = S.codeReviewAudit(review, await S.readCodeResolutions(root), (did) => existsSync(path.join(root, '.flow', 'decisions', did + '.json')));
+    if (problems.length) { console.error('✗ code-review red flag 未全終局（red flag 不能無聲蒸發）：'); for (const p of problems) console.error('  - ' + p); process.exit(2); }
+    const red = (review.findings || []).filter(f => String(f.severity).toLowerCase() === 'red').length;
+    console.log(`✓ ${red} 條 red flag 全數終局（fixed/waiver）。`);
+    break;
+  }
   case 'complete-check': {
     // 完成謂詞硬閘門（ship 出口）：① tasks.md 全 [x]（無未完成 [ ]）② 所有 REQ-E2E-* 都有 pass/n-a 驗證記錄。
     // /flow-ship Step 5 SHALL 跑；自駕下尤其要（防模型自報全中提早收工）。
@@ -499,7 +543,24 @@ switch (cmd) {
     const pc = await S.readPlanCheck(root);
     if (pc && pc.manifestHash && pc.manifestHash !== S.sha256Text(JSON.stringify(await S.readManifest(root))))
       { console.error('✗ manifest 在 plan-check 後被改過（scope/wave 的事實來源漂移）——重跑 flow-state plan-check 重新對賬。'); process.exit(2); }
-    console.log(`✓ 所有 ${cov.audit.total} 條 REQ-E2E-* 驗綠${perfIds.length ? `＋${perfIds.length} 條 REQ-PERF 達標` : ''}。完成謂詞達成。`);
+    // C：藍軍 code-review forcing function——ship 出貨 SHALL 過藍軍。缺 code-review 且無明確豁免 → exit 2
+    //（與 complete-check 其他項「缺即擋」一致、與 build 端 redteam --wave 對稱；逃生口＝code-review-waiver decision，不 brick）。
+    const codeReview = await S.readCodeReview(root);
+    const codeWaived = existsSync(path.join(root, '.flow', 'decisions', 'code-review-waiver.json'));
+    if (!codeReview && !codeWaived) {
+      console.error('✗ 完成謂詞未達：未跑藍軍 code-review。ship 前 SHALL 過藍軍（/flow-ship Step 1）：');
+      console.error('  跑 code-reviewer subagent → flow-state review-code --file <findings.json>（零 red flag 也落空陣列＝證明審過）；');
+      console.error('  真要跳過藍軍 → flow-state decision code-review-waiver --choice "跳過 code-review" --why "<原因>" 留一筆可稽核豁免。');
+      process.exit(2);
+    }
+    const codeProblems = S.codeReviewAudit(codeReview, await S.readCodeResolutions(root),
+      (did) => existsSync(path.join(root, '.flow', 'decisions', did + '.json')));
+    if (codeProblems.length) {
+      console.error('✗ 完成謂詞未達：藍軍 code-review red flag 未全終局：');
+      for (const p of codeProblems) console.error('  - ' + p);
+      process.exit(2);
+    }
+    console.log(`✓ 所有 ${cov.audit.total} 條 REQ-E2E-* 驗綠${perfIds.length ? `＋${perfIds.length} 條 REQ-PERF 達標` : ''}＋${codeReview ? 'code-review red flag 全終局' : 'code-review 已豁免'}。完成謂詞達成。`);
     break;
   }
   case 'coverage': {
@@ -809,7 +870,7 @@ switch (cmd) {
     break;
   }
   default:
-    console.log(`flow-state <resume|status|done|checkpoint|mode|project-type|scope|redteam|journey-check|run|verify-e2e|verify-perf|plan-check|coverage|lesson|decision|guardrail-check|complete-check|spec-ready|spec-review|review-resolve|review-check|mockup-check> [--root <path>]
+    console.log(`flow-state <resume|status|done|checkpoint|mode|project-type|scope|redteam|journey-check|run|verify-e2e|verify-perf|plan-check|review-code|code-resolve|code-check|coverage|lesson|decision|guardrail-check|complete-check|spec-ready|spec-review|review-resolve|review-check|mockup-check> [--root <path>]
   resume | status        冷啟動：reconstruct 印現況 + 下一步 + mid-task 進度 + 對帳 + 已知死路（換 session/電腦/中斷後接手；平行波看 /workflows）
   done <id> [--commit]   標一個 task 完成：翻 tasks.md [x] + ledger→delivered（自帶 verify 閘門；先標、再 commit）
   checkpoint <id> --phase <red|green|refactor|integrated> [--note]   記 mid-task 進度（開發中當機 → resume 帶出「上次做到第幾步」，只補沒做完的）
@@ -822,6 +883,9 @@ switch (cmd) {
   verify-e2e <id> --status <pass|fail|n/a> --evidence "<ref>" [--decision <id>]   記一條 REQ-E2E 驗證（自動記 HEAD/reqHash；n/a 須附 decision）
   verify-perf <REQ-PERF-id> --value <數字> --evidence "<ref>"   記 REQ-PERF 達標（從凍結 index 解析 budget、超標拒記；complete-check 對賬）
   plan-check             計畫出口對賬：REQ↔task 覆蓋＋tasks.md↔manifest 逐欄一致 → 落 plan-check.json＋phase="plan-done"，否則 exit 2（/flow-plan 出口跑）
+  review-code --file <findings.json>   藍軍 code-review 落機讀檔（/flow-ship Step 1；red flag 進完成謂詞）
+  code-resolve <CR-id> --as <fixed:<evidence>|waiver:<decisionId>>   把一條 red flag 走終局（沒處理完 complete-check 擋 ship）
+  code-check             code-review red flag 終局化對賬：任一 red flag 未終局 → exit 2（complete-check 內含同一檢查）
   coverage               REQ-E2E 覆蓋對賬：requirements.md 的 REQ-E2E-* vs .flow/verify 記錄，缺/未過 exit 2
   lesson <id> --approach "<a>" --why "<w>"   記一條失敗記憶（防再生撞同一面牆；標 BLOCKED/stall 升級時記）
   decision <id> --choice "<c>" --why "<w>" [--by user|auto]   記決策留審計（waiver 類 id 預設 by:user＝使用者拍板；其餘預設 by:auto＝自駕自決）

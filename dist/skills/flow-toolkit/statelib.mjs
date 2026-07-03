@@ -50,7 +50,7 @@ async function writeJSON(p, obj) { await writeFileAtomic(p, JSON.stringify(obj, 
 // 把「耐久證據進 git、瞬時/衍生檔忽略」從散文鐵則釘成確定性檔，放在 .flow/ 內＝self-contained、隨目錄走、
 // 不必動專案根 .gitignore（那支由 clean-verify-artifacts 管另一塊）。清單為相對 .flow/ 的瞬時檔：
 //   state.json（當前 task 衍生指標、每動一次重寫）/ state.json.mode / monitor.port / *.log / *-reminded（ctx/size 提醒旗標）。
-// 耐久證據（manifest.json / ledger/ / redteam/ / verify/ / decisions/ / spec-review/ / trace/ / journal.ndjson / lessons.ndjson / 本 .gitignore）
+// 耐久證據（manifest.json / ledger/ / redteam/ / verify/ / decisions/ / spec-review/ / trace/ / code-review/ / journal.ndjson / lessons.ndjson / 本 .gitignore）
 // 不在清單 → 照常 track（換機 clone 即 reconstruct、ship 審查讀紅軍清單）。冪等 managed block：只換自己區塊、保留使用者自訂行。
 const FLOW_GITIGNORE_BLOCK = [
   '# >>> flow-state (managed by flow-toolkit) >>>',
@@ -731,6 +731,93 @@ export async function writePerfRecord(root, id, rec) {
   await writeJSON(path.join(verifyDir(root), 'perf-' + safeId(id) + '.json'), { id, ...rec, at: rec.at || nowISO() });
 }
 export async function readPerfRecord(root, id) { return readJSON(path.join(verifyDir(root), 'perf-' + safeId(id) + '.json'), null); }
+
+// ── 藍軍 code-review 機讀落檔＋終局化（.flow/code-review/）：把 code-reviewer 的 red flag 從散文升級成閘門 ──
+// /flow-ship Step 1 的 code-reviewer subagent 回結構化 findings → flow-state review-code 落檔（記 review 當時 HEAD）；
+// 每條 red flag（必修）SHALL 走終局（fixed:<evidence>／waiver:<decisionId>），沒處理完的 complete-check 擋 ship。
+// yellow flag（建議）記錄但不進閘門。誠實邊界：機器驗的是「red flag 不能無聲蒸發＋各有終局標記」，
+// 不驗「fixed 是否真的修對」（evidence 自報）——防懶不防蓄意，與 spec-review 同分層。
+const codeReviewDir = root => path.join(dir(root), 'code-review');
+const codeFindingsPath = root => path.join(codeReviewDir(root), 'findings.json');
+const codeResolutionsPath = root => path.join(codeReviewDir(root), 'resolutions.json');
+
+export function validateCodeFindings(obj) {
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return ['不是 JSON 物件'];
+  if (!Array.isArray(obj.findings)) return ['缺 findings 陣列（零 red flag 也給空陣列 []——「沒審」與「審過且乾淨」要可分）'];
+  const problems = [], seen = new Set();
+  obj.findings.forEach((f, i) => {
+    const at = `findings[${i}]`;
+    if (!f || typeof f !== 'object') { problems.push(`${at} 不是物件`); return; }
+    const id = String(f.id || '').toUpperCase();
+    if (!/^CR-[A-Za-z0-9._-]+$/i.test(id)) problems.push(`${at} id 須為 CR-<流水號>（如 CR-001）`);
+    else if (seen.has(id)) problems.push(`${at} id 重複：${f.id}`);
+    else seen.add(id);
+    if (!['red', 'yellow'].includes(String(f.severity || '').toLowerCase())) problems.push(`${at} severity 須為 red（必修）/yellow（建議）`);
+    if (!String(f.claim || '').trim()) problems.push(`${at} 缺 claim（具體問題，含 file:line）`);
+  });
+  return problems;
+}
+// finding 內容 hash（id 無關；resolution 綁它、不綁裸 id）——重跑 review 換編號/覆寫時，
+// 「同號但內容全新的 red」不會繼承舊 id 的終局（堵撞號蒸發），與 spec-review 的 docHash 同構。
+export function codeFindingHash(f) {
+  return sha256Text([String(f.file || ''), String(f.severity || '').toLowerCase(), String(f.claim || '')].join('|')).slice(0, 16);
+}
+// 落一輪 code-review：覆寫 findings.json，但**保留「舊 red 中仍未終局的」**（合併進來，去重按 hash）——
+// 重跑報少了/聚焦別處，未解的 red 不因覆寫而蒸發。needs decisionExists 判「舊 red 是否已終局」。
+export async function writeCodeReview(root, findings, head, decisionExists) {
+  const res = await readCodeResolutions(root);
+  const prev = await readCodeReview(root);
+  const newHashes = new Set(findings.map(codeFindingHash));
+  const carried = [];
+  if (prev) for (const f of (prev.findings || [])) {
+    if (String(f.severity).toLowerCase() !== 'red') continue;
+    const h = codeFindingHash(f);
+    if (newHashes.has(h)) continue;                                // 新輪也報了同一問題 → 用新的
+    const r = res[h];
+    const terminal = r && !codeResolutionProblem(r.as, decisionExists);
+    if (!terminal) carried.push({ ...f, carried: true });          // 舊未終局 red → 帶進來繼續要求終局
+  }
+  const merged = [...findings, ...carried];
+  await writeJSON(codeFindingsPath(root), { findings: merged, head: head || '', at: nowISO() });
+  await appendJournal(root, { ev: 'code.review', red: merged.filter(f => String(f.severity).toLowerCase() === 'red').length, total: merged.length, carried: carried.length });
+  return { carried: carried.length };
+}
+export async function readCodeReview(root) { return readJSON(codeFindingsPath(root), null); }
+export async function readCodeResolutions(root) { return readJSON(codeResolutionsPath(root), {}); }
+// resolution key ＝ finding 內容 hash（非裸 id）。
+export async function writeCodeResolution(root, findingHash, resObj) {
+  const cur = await readCodeResolutions(root);
+  cur[findingHash] = { ...resObj, at: nowISO() };
+  await writeJSON(codeResolutionsPath(root), cur);
+  await appendJournal(root, { ev: 'code.review.resolve', hash: findingHash, as: resObj.as });
+}
+// 單筆終局驗證（純函式；decisionExists 注入）：fixed 須附非空 evidence；waiver 須 decision 檔實存。回 null＝合法。
+export function codeResolutionProblem(asStr, decisionExists) {
+  const s = String(asStr || '').trim();
+  let m;
+  if ((m = s.match(/^fixed:(.*)$/i))) return m[1].trim() ? null : 'fixed 須附證據 ref（fixed:<file:line/commit/測試名>）——空證據不算修';
+  if ((m = s.match(/^waiver:(.+)$/i))) {
+    const did = m[1].trim();
+    if (/[\/\\]|\.\./.test(did)) return 'waiver 的 decisionId 不得含路徑分隔或 ..';
+    return decisionExists(did) ? null : `waiver 指向的 decision「${did}」不存在——先 flow-state decision ${did} --choice … --why … 留檔（使用者拍板不修）`;
+  }
+  return `不合法的終局「${s}」——須為 fixed:<evidence> / waiver:<decisionId>`;
+}
+// code-review 終局化對賬（純函式）：每條 red flag（按內容 hash 查 resolution）都要終局——red flag 不能無聲蒸發。yellow 不進閘門。
+export function codeReviewAudit(review, resolutions, decisionExists) {
+  if (!review) return [];                                          // 沒跑 code-review → 這函式不擋（forcing function 在 complete-check 端）
+  const res = resolutions || {};
+  const problems = [];
+  for (const f of (review.findings || [])) {
+    if (String(f.severity).toLowerCase() !== 'red') continue;
+    const id = String(f.id || '').toUpperCase();
+    const r = res[codeFindingHash(f)];                             // 綁內容 hash，不綁裸 id
+    if (!r) { problems.push(`${id}（red）未終局：${String(f.claim || '').slice(0, 60)}——flow-state code-resolve ${id} --as <fixed:<evidence>|waiver:<decisionId>>`); continue; }
+    const p = codeResolutionProblem(r.as, decisionExists);
+    if (p) problems.push(`${id}：${p}`);
+  }
+  return problems;
+}
 
 // ── tasks.md 同步：把「task 完成」收成一個可被 hook/CLI 共用的原子操作 ──
 // 修根因：原本「翻 tasks.md [x]」「寫 ledger」「TaskUpdate」是三條各自會被漏掉的散文步驟。

@@ -847,6 +847,51 @@ test('isValidVerify：ok:<ref>（含冒號後空白）過；裸 ok/passed/none �
   assert.equal(S.isValidVerify('none'), false);
 });
 
+// ── C：藍軍 code-review 機讀落檔＋終局化 ──
+
+test('validateCodeFindings：合法（含空陣列）過；壞 id/severity/缺 claim/重複逐項點名', () => {
+  assert.deepEqual(S.validateCodeFindings({ findings: [] }), []);
+  assert.deepEqual(S.validateCodeFindings({ findings: [{ id: 'CR-001', severity: 'red', file: 'a.ts:1', claim: 'SQLi' }] }), []);
+  assert.match(S.validateCodeFindings({}).join('\n'), /findings 陣列/);
+  const bad = S.validateCodeFindings({ findings: [{ id: 'X1', severity: 'high', claim: '' }, { id: 'CR-1', severity: 'red', claim: 'x' }, { id: 'cr-1', severity: 'yellow', claim: 'y' }] });
+  assert.match(bad.join('\n'), /CR-/);
+  assert.match(bad.join('\n'), /severity/);
+  assert.match(bad.join('\n'), /claim/);
+  assert.match(bad.join('\n'), /重複/);
+});
+
+test('codeResolutionProblem：fixed 須附證據、waiver 須 decision 實存、擋 .. 與亂寫（C）', () => {
+  const dec = id => id === 'D-1';
+  assert.equal(S.codeResolutionProblem('fixed:src/x.ts:42 parameterized', dec), null);
+  assert.match(S.codeResolutionProblem('fixed:', dec), /須附證據/);
+  assert.match(S.codeResolutionProblem('fixed: ', dec), /須附證據/);
+  assert.equal(S.codeResolutionProblem('waiver:D-1', dec), null);
+  assert.match(S.codeResolutionProblem('waiver:D-404', dec), /不存在/);
+  assert.match(S.codeResolutionProblem('waiver:../secret', dec), /路徑分隔或 \.\./);
+  assert.match(S.codeResolutionProblem('算了', dec), /不合法/);
+});
+
+test('codeReviewAudit：resolution 綁內容 hash（非裸 id）；yellow 不進閘門；同號內容變不繼承終局（C 修）', () => {
+  const dec = () => false;
+  assert.deepEqual(S.codeReviewAudit(null, {}, dec), [], 'codeReviewAudit 本身不擋沒跑（forcing 在 complete-check）');
+  const red = { id: 'CR-001', severity: 'red', file: 'a.ts:1', claim: 'SQLi' };
+  const review = { findings: [red, { id: 'CR-002', severity: 'yellow', claim: '神奇數字' }] };
+  assert.equal(S.codeReviewAudit(review, {}, dec).length, 1, '只 red 未終局進閘門');
+  // 綁 hash 終局 → 過
+  const ok = S.codeReviewAudit(review, { [S.codeFindingHash(red)]: { as: 'fixed:src/a.ts:1' } }, dec);
+  assert.deepEqual(ok, [], 'hash 終局＝過');
+  // 同號 CR-001 但內容全新 → hash 不同 → 舊終局不算，仍未終局
+  const review2 = { findings: [{ id: 'CR-001', severity: 'red', file: 'c.ts:3', claim: 'XSS 全新' }] };
+  assert.equal(S.codeReviewAudit(review2, { [S.codeFindingHash(red)]: { as: 'fixed:x' } }, dec).length, 1, '內容變＝不繼承舊終局');
+});
+
+test('codeFindingHash：內容相同→同 hash（id 無關）；內容變→不同 hash（C）', () => {
+  const a = { id: 'CR-001', severity: 'red', file: 'a.ts:1', claim: 'SQLi' };
+  const b = { id: 'CR-099', severity: 'red', file: 'a.ts:1', claim: 'SQLi' };   // 只差 id
+  assert.equal(S.codeFindingHash(a), S.codeFindingHash(b), 'id 無關');
+  assert.notEqual(S.codeFindingHash(a), S.codeFindingHash({ ...a, claim: '別的問題' }));
+});
+
 test('parsePerfBudget / perfMeetsBudget：上界/下界/單位錨定/條件句不誤抓（W2-4 修正）', () => {
   assert.deepEqual(S.parsePerfBudget('REQ-PERF-001：dashboard LCP < 2.5s（p95）'), { op: '<', budget: 2.5, unit: 's', lower: false });
   assert.deepEqual(S.parsePerfBudget('p95 <= 400ms @ POST /api/items'), { op: '<=', budget: 400, unit: 'ms', lower: false });

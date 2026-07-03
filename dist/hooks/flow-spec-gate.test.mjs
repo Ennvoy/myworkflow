@@ -92,6 +92,9 @@ test('spec-review ledger 閘門：Write/Edit 裸寫擋、Bash 寫入/刪除擋�
     assert.equal(run(bash(root, `echo '{}' > .flow/verify/REQ-E2E-001.json`)), 2, 'Bash 重導寫 verify 擋');
     assert.equal(run(bash(root, 'git add .flow/trace .flow/verify')), 0, 'git add trace/verify 放行');
     assert.equal(run(bash(root, 'cat .flow/trace/req-index.json')), 0, '讀 trace 放行');
+    // code-review 同守（C）
+    assert.equal(run(write(root, path.join(root, '.flow', 'code-review', 'findings.json'), '{}')), 2, 'Write 裸寫 code-review 擋');
+    assert.equal(run(bash(root, 'node flow-state.mjs review-code --file cr.json')), 0, 'review-code 正門放行');
   });
 });
 

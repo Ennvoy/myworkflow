@@ -4,7 +4,7 @@
 // 全部出貨完 → 靜默不打擾。完整進度（計數/checkpoint/對帳/下一步）一律只有打 /flow-resume 才印。
 // 純讀檔、不靠記憶；非 flow 專案一律 no-op；reconstruct/import 失敗退回 phase 粗判一行（絕不 brick session）。
 
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -36,10 +36,20 @@ process.stdin.on('end', async () => {
     if (existsSync(sp)) state = JSON.parse(stripBom(readFileSync(sp, 'utf8')));
   } catch { state = {}; }
 
-  // 非阻擋：安裝來源漂移提醒（已裝版本 ≠ 來源 dist VERSION → 多半是改了 dist 沒重裝）。全程 fail-silent，永不影響 session。
-  let driftLine = '';
+  // statelib 提前載入（reconstruct 與各項自檢共用）；載入失敗各消費點自行退回，絕不 brick。
+  const claudeHome = join(dirname(fileURLToPath(import.meta.url)), '..');
+  let S = null;
   try {
-    const provPath = join(dirname(fileURLToPath(import.meta.url)), '..', '.flow-version.json');
+    const libUrl = pathToFileURL(join(claudeHome, 'skills', 'flow-toolkit', 'statelib.mjs')).href;
+    S = await import(libUrl);                              // Windows 絕對路徑 dynamic import 須走 file:// URL
+  } catch { S = null; }
+
+  // 非阻擋：安裝來源漂移提醒（已裝版本 ≠ 來源 dist VERSION → 多半是改了 dist 沒重裝）。全程 fail-silent，永不影響 session。
+  // W0-5 加碼：VERSION 相同也可能內容漂移（安裝區被熱修沒回寫 dist 的實證）→ 雙向內容對賬，附方向提示。
+  let driftLine = '';
+  let syncLine = '';
+  try {
+    const provPath = join(claudeHome, '.flow-version.json');
     if (existsSync(provPath)) {
       const prov = JSON.parse(stripBom(readFileSync(provPath, 'utf8')));
       const srcVerPath = prov && prov.source ? join(prov.source, 'VERSION') : '';
@@ -49,9 +59,34 @@ process.stdin.on('end', async () => {
         if (srcVer && instVer && srcVer !== instVer) {
           driftLine = `- ⚠️ Flow 安裝漂移：已裝 v${instVer}，來源 ${prov.source} 已是 v${srcVer} → 改了 dist 沒重裝？跑 install 或精準複製改動檔到 ~/.claude。`;
         }
+        if (S) {
+          const d = await S.syncDrift(join(prov.source, 'dist'), claudeHome);
+          if (d.differing.length || d.missing.length) {
+            const eg = d.differing[0];
+            const hint = eg ? `如 ${eg.rel}（${eg.newer === 'installed' ? '安裝區較新→回寫 dist' : 'dist 較新→重裝'}）` : '';
+            syncLine = `- ⚠️ Flow 同步漂移：${d.differing.length} 檔 dist↔安裝區內容不一致${hint ? '，' + hint : ''}${d.missing.length ? `；另 ${d.missing.length} 檔 dist 有、安裝區沒有` : ''}。`;
+          }
+        }
       }
     }
   } catch { /* fail-silent，漂移提醒非關鍵、永不影響 session */ }
+
+  // W0-2：hook 接線對賬——hooks 目錄實存的 flow-*.mjs 沒被 settings.json 註冊＝閘門形同虛設（auto-gate 漏接線實證）。
+  let wiringLine = '';
+  try {
+    if (S) {
+      const missing = S.hookWiringProblems(
+        readdirSync(join(claudeHome, 'hooks')),
+        readFileSync(join(claudeHome, 'settings.json'), 'utf8'),
+      );
+      if (missing.length) wiringLine = `- 🚨 Flow hook 接線缺失：settings.json 沒掛 ${missing.join('、')}——對應閘門完全不會觸發。重跑 install 或手動補回註冊。`;
+    }
+  } catch { /* fail-silent */ }
+
+  // W0-4：CLAUDE_CODE_SUBAGENT_MODEL 優先權最高，被設會靜默蓋掉 Flow 全套 subagent 模型路由。
+  const envLine = process.env.CLAUDE_CODE_SUBAGENT_MODEL
+    ? `- ⚠️ 偵測到 CLAUDE_CODE_SUBAGENT_MODEL=${process.env.CLAUDE_CODE_SUBAGENT_MODEL}：此環境變數優先權高於 frontmatter/per-invocation model，Flow 的「Opus 審查/Sonnet 苦工」路由已被整套覆蓋。非刻意請 unset。`
+    : '';
 
   // W3-3：冪等安裝 git 原生 pre-commit 兜底（使用者已選「自動放」）。首裝醒目告知一行（狀態變更）；
   // 已裝/非 git/husky 改向/既有非 sh hook（advisory skip）→ 靜默不每 session 重複打擾；只有「寫入失敗」才提醒。全程 fail-silent、永不影響 session。
@@ -68,10 +103,7 @@ process.stdin.on('end', async () => {
   // 完整進度（含 mid-task checkpoint）留給 /flow-resume 的 summarizeView。任何錯都退回 phase 粗判一行，絕不 brick。
   let body = '';
   try {
-    const libUrl = pathToFileURL(
-      join(dirname(fileURLToPath(import.meta.url)), '..', 'skills', 'flow-toolkit', 'statelib.mjs')
-    ).href;                                            // Windows 絕對路徑 dynamic import 須走 file:// URL
-    const S = await import(libUrl);
+    if (!S) throw new Error('statelib unavailable');
     // 自動補 .flow/.gitignore（既有專案初次升級也生效）：瞬時檔忽略、耐久證據照常 track。冪等、只在缺/異動時寫、fail-silent。
     try { await S.ensureFlowGitignore(cwd); } catch { /* 政策檔非關鍵、永不影響 session */ }
     const view = await S.reconstruct(cwd);
@@ -95,7 +127,7 @@ process.stdin.on('end', async () => {
       : '';
   }
 
-  const additionalContext = [body, driftLine, precommitLine].filter(Boolean).join('\n');
+  const additionalContext = [body, wiringLine, driftLine, syncLine, envLine, precommitLine].filter(Boolean).join('\n');
   if (!additionalContext) process.exit(0);   // 全部完成出貨、無漂移、pre-commit 已裝（無首裝告知）→ 真靜默、不打擾
   const out = {
     hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext },

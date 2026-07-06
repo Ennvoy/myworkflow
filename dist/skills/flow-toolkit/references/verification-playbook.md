@@ -61,13 +61,17 @@
 - 把偽紅當 Red 證據
 - mock 假綠標 completed（見 `playwright-real-data-template.md`）
 
-## 七、commit 前清掃（驗證垃圾，雙軌，build/ship 每次 commit 前 SHALL 做）
+## 七、commit 前清掃（驗證垃圾，雙軌＋週邊資源，build/ship 每次 commit 前 SHALL 做）
 
-驗證/測試會生出一堆**不該進 repo 的東西**；混進 commit 會污染交付 diff、脹大 repo、害 review 失焦。commit 前依**雙軌**清掉——兩軌互補，缺一不可：
+驗證/測試會生出一堆**不該進 repo 的東西**；混進 commit 會污染交付 diff、脹大 repo、害 review 失焦。**全綠才清、失敗一律保留 artifact 供 debug**。commit 前依**雙軌**清掉——兩軌互補，缺一不可：
 
 - **軌一：檔案型產物（確定性 script ＋ commit-gate 硬擋，不靠模型判斷）** — 跑 `clean-verify-artifacts.mjs --apply --gitignore`（路徑：mac/linux `~/.claude/skills/flow-toolkit/`、Windows `$env:USERPROFILE\.claude\skills\flow-toolkit\`）。白名單整刪：**Playwright MCP `.playwright-mcp/`／`playwright-mcp-output/`（console-*.log／page-*.yml a11y snapshot／截圖）**、Playwright `test-results/`/`playwright-report/`/`.playwright/`/`.last-run.json`/`*.trace.zip`、覆蓋率 `coverage/`/`.nyc_output/`/`htmlcov/`、`.pytest_cache/`/`__pycache__/`/`*.pyc`、各種 `*.log`（含 `.flow/*.log`）、一次性 `debug-*`/`tmp-*`/`*.tmp`（**Tier A：無條件清**）；散落截圖 `screenshot-*`/`snap-*`/`page-*.png`、錄影 `*.webm`（**Tier B：僅 git untracked 才清**，不誤殺 tracked 資產／設計稿），並把 pattern 補進專案 `.gitignore`（冪等 managed block）。省 `--apply` = dry-run 預覽（有東西沒清 exit 3）。**沒清就 commit → `flow-commit-gate` 閘門一 exit 2 擋下**（staged 含 Tier A／產物目錄即擋，判斷與本 script 共用同一白名單）。
 - **軌二：語意型殘留（靠 review，script 碰不到）** — 看本次 `git diff`，刪掉混在 **source** 裡的一次性 debug 殘留：`console.log`/`print`/`dump`、暫時註解掉的程式塊、為跑驗證臨時寫的 scratch 腳本。
 
-**絕不清（交付物 / 耐久狀態，script 已硬擋，review 也別誤刪）**：source 測試檔（`*.test.*`/`*.spec.*`/`*_test.*`/`conftest.py`）、`specs/`、`.flow/` 的 `ledger`/`journal.ndjson`/`manifest.json`、`legacy/`/`archive/`/`vendor/`/`node_modules/`。
+**週邊資源一併收（script 管不到，靠自覺）**：自起的 process（PID 辨識，外來/不明 process 禁盲殺）、拋棄式驗證用 DB/container 用完即收。
 
-**範圍邊界**：本節只清「驗證產物 + 一次性 debug 殘留」。**mock/stub/寫死 fixture 假綠**屬 §六 反作弊，是「改回真實鏈路」不是「清垃圾」，另案處理、不在 clean script 職責內。
+**C-data 測試資料分層**（清驗證用「資料」，不是清「檔案」，script 管不到）：L0 可拋棄 DB → 整個 drop；L1 持久 local 可精準識別 → DELETE 帶**精確 WHERE**（先列預估筆數，差異即停手問）；L2 無法精準識別 → 列清單問使用者；L3 remote/共用/prod → 一律問，不自行動手。
+
+**絕不清／絕不碰（交付物 / 耐久狀態，script 已硬擋，review 也別誤刪）**：source 測試檔（`*.test.*`/`*.spec.*`/`*_test.*`/`conftest.py`）、`specs/`、`.flow/` 的 `ledger`/`journal.ndjson`/`manifest.json`（狀態檔）、`legacy/`/`archive/`/`vendor/`/`node_modules/`、**無精確 WHERE 的 DB 刪除**、**失敗時的 artifact**（留供 debug，只在全綠後才清）。
+
+**範圍邊界**：本節只清「驗證產物 + 一次性 debug 殘留 + 週邊資源 + 驗證用資料」。**mock/stub/寫死 fixture 假綠**屬 §六 反作弊，是「改回真實鏈路」不是「清垃圾」，另案處理、不在 clean script 職責內。

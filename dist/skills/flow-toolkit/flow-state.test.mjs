@@ -2,7 +2,7 @@
 // 釘住兩個確定性閘門的 fail 方向：done（verify 空 → exit 2）、redteam（high 未 covered / testFile 不實存 → exit 2）。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawnSync, execSync } from 'node:child_process';
 import { mkdtemp, rm, mkdir, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -179,16 +179,21 @@ test('redteam：高危關鍵字攻擊（非 high）skipped 無豁免 → exit 2�
   });
 });
 
-test('guardrail-check：settings 缺 stall 斷路器 → exit 2；含則 0', async () => {
+test('guardrail-check：settings 缺 stall 斷路器或 auto-gate → exit 2；兩者齊才 0（W0-3 雙要件）', async () => {
   await withRoot(async (root) => {
     await S.init(root, { project: 'p', tasks: [] });
     const home = path.join(root, 'fakehome');
     await mkdir(home, { recursive: true });
     await writeFile(path.join(home, 'settings.json'), JSON.stringify({ hooks: {} }), 'utf8');
-    assert.equal(run(['guardrail-check', '--claude-home', home], root).code, 2, '缺斷路器');
+    assert.equal(run(['guardrail-check', '--claude-home', home], root).code, 2, '全缺');
     await writeFile(path.join(home, 'settings.json'),
       JSON.stringify({ hooks: { PostToolUse: [{ matcher: 'Bash', hooks: [{ command: 'node hooks/flow-stall-monitor.mjs' }] }] } }), 'utf8');
-    assert.equal(run(['guardrail-check', '--claude-home', home], root).code, 0, '含斷路器放行');
+    const r = run(['guardrail-check', '--claude-home', home], root);
+    assert.equal(r.code, 2, '只有斷路器、缺 auto-gate 仍擋（漏接線＝三道硬擋形同虛設）');
+    assert.match(r.err, /flow-auto-gate/);
+    await writeFile(path.join(home, 'settings.json'),
+      JSON.stringify({ hooks: { PreToolUse: [{ matcher: 'Bash|PowerShell', hooks: [{ command: 'node hooks/flow-auto-gate.mjs' }] }], PostToolUse: [{ matcher: 'Bash', hooks: [{ command: 'node hooks/flow-stall-monitor.mjs' }] }] } }), 'utf8');
+    assert.equal(run(['guardrail-check', '--claude-home', home], root).code, 0, '兩者齊放行');
   });
 });
 
@@ -232,6 +237,18 @@ async function passLenses(root) {
     const r = run(['spec-review', lens, '--file', fp], root);
     assert.equal(r.code, 0, r.err);
   }
+}
+
+// W3-2 證據驗真後：pass 證據 SHALL 指向實存非空檔——測試統一用這支造真檔。
+async function evid(root, name = 'evidence.txt') {
+  await writeFile(path.join(root, name), 'evidence: runner output / trace ref（測試用真檔）', 'utf8');
+  return name;
+}
+// W3-3① scope fail-closed 後：scope 測試需要真 git repo 且 working tree 乾淨（git 不可用/失敗＝擋，不再當零變動）。
+function gitClean(root) {
+  execSync('git init -q', { cwd: root });
+  execSync('git add -A', { cwd: root });
+  execSync('git -c user.email=t@t -c user.name=t -c commit.gpgsign=false commit -q -m x', { cwd: root });
 }
 
 test('spec-ready：查無 requirements.md → exit 2', async () => {
@@ -480,9 +497,11 @@ test('verify-e2e：n/a 須附實存 --decision（W2-3 堵批量 n/a 洗白）；
 test('verify-perf：解析 budget、超標拒記、達標落 pass（W2-4）', async () => {
   await withRoot(async (root) => {
     await frozenRoot(root);
-    assert.equal(run(['verify-perf', 'REQ-PERF-001', '--value', '5.0', '--evidence', 'x'], root).code, 2, '5s 超標 2.5s');
-    assert.equal(run(['verify-perf', 'REQ-PERF-001', '--value', '2.0', '--evidence', 'lh.json'], root).code, 0, '2s 達標');
-    assert.equal(run(['verify-perf', 'REQ-PERF-999', '--value', '1', '--evidence', 'x'], root).code, 2, 'requirements 查無此 PERF');
+    const ev = await evid(root, 'lh.json');
+    assert.equal(run(['verify-perf', 'REQ-PERF-001', '--value', '5.0', '--evidence', ev], root).code, 2, '5s 超標 2.5s');
+    assert.equal(run(['verify-perf', 'REQ-PERF-001', '--value', '2.0', '--evidence', 'ghost.json'], root).code, 2, 'W3-2 證據不是實存檔 → 擋');
+    assert.equal(run(['verify-perf', 'REQ-PERF-001', '--value', '2.0', '--evidence', ev], root).code, 0, '2s 達標');
+    assert.equal(run(['verify-perf', 'REQ-PERF-999', '--value', '1', '--evidence', ev], root).code, 2, 'requirements 查無此 PERF');
     assert.equal((await S.readPerfRecord(root, 'REQ-PERF-001')).status, 'pass');
   });
 });
@@ -504,7 +523,7 @@ test('verify-perf/complete-check：非量測型 REQ-PERF（無 budget）走 perf
     assert.equal(run(['verify-perf', 'REQ-PERF-001', '--value', '1', '--evidence', 'x'], root).code, 2, '非量測型不走 verify-perf');
     // complete-check：非量測型認 perf-waiver、不死鎖
     await writeFile(path.join(root, 'specs', 'tasks.md'), '- [x] **F-1**\n', 'utf8');
-    run(['verify-e2e', 'REQ-E2E-001', '--status', 'pass', '--evidence', 'green'], root);
+    run(['verify-e2e', 'REQ-E2E-001', '--status', 'pass', '--evidence', await evid(root)], root);
     run(['decision', 'code-review-waiver', '--choice', '本測不驗藍軍', '--why', 'x'], root);
     assert.equal(run(['complete-check'], root).code, 0, '非量測型有 waiver → complete-check 放行');
   });
@@ -514,8 +533,8 @@ test('review-code / code-resolve / complete-check：forcing function＋red flag 
   await withRoot(async (root) => {
     await frozenRoot(root);
     await writeFile(path.join(root, 'specs', 'tasks.md'), '- [x] **F-1**\n', 'utf8');
-    run(['verify-e2e', 'REQ-E2E-001', '--status', 'pass', '--evidence', 'green'], root);
-    run(['verify-perf', 'REQ-PERF-001', '--value', '2.0', '--evidence', 'lh.json'], root);
+    run(['verify-e2e', 'REQ-E2E-001', '--status', 'pass', '--evidence', await evid(root)], root);
+    run(['verify-perf', 'REQ-PERF-001', '--value', '2.0', '--evidence', await evid(root, 'lh.json')], root);
     // C-fix#1 forcing function：沒跑 code-review 且無 waiver → 擋（不再放行）
     const noReview = run(['complete-check'], root);
     assert.equal(noReview.code, 2, '沒跑藍軍 code-review → 擋 ship');
@@ -542,8 +561,8 @@ test('review-code 重跑：同號但內容全新的 red 不繼承舊終局；未
   await withRoot(async (root) => {
     await frozenRoot(root);
     await writeFile(path.join(root, 'specs', 'tasks.md'), '- [x] **F-1**\n', 'utf8');
-    run(['verify-e2e', 'REQ-E2E-001', '--status', 'pass', '--evidence', 'green'], root);
-    run(['verify-perf', 'REQ-PERF-001', '--value', '2.0', '--evidence', 'lh.json'], root);
+    run(['verify-e2e', 'REQ-E2E-001', '--status', 'pass', '--evidence', await evid(root)], root);
+    run(['verify-perf', 'REQ-PERF-001', '--value', '2.0', '--evidence', await evid(root, 'lh.json')], root);
     const fp = path.join(root, 'cr.json');
     // Review1：CR-001 SQLi（終局）＋CR-002 auth bypass（未終局）
     await writeFile(fp, JSON.stringify({ findings: [
@@ -800,7 +819,8 @@ test('verify-e2e：pass 缺 --evidence → exit 1（堵空綠）；附 evidence 
   await withRoot(async (root) => {
     await S.init(root, { project: 'p', tasks: [] });
     assert.equal(run(['verify-e2e', 'REQ-E2E-001', '--status', 'pass'], root).code, 1, 'pass 須附證據');
-    const r = run(['verify-e2e', 'REQ-E2E-001', '--status', 'pass', '--evidence', 'trace.zip'], root);
+    assert.equal(run(['verify-e2e', 'REQ-E2E-001', '--status', 'pass', '--evidence', '我保證通過'], root).code, 2, 'W3-2 純敘述不算證據（須實存檔）');
+    const r = run(['verify-e2e', 'REQ-E2E-001', '--status', 'pass', '--evidence', await evid(root, 'trace.zip')], root);
     assert.equal(r.code, 0, r.err);
     const recs = await S.listVerifyRecords(root);
     assert.equal(recs.length, 1);
@@ -816,7 +836,7 @@ test('coverage：spec 有 REQ-E2E 但無記錄 → exit 2 列 missing；補齊 p
     const miss = run(['coverage'], root);
     assert.equal(miss.code, 2);
     assert.match(miss.err, /REQ-E2E-001/);
-    run(['verify-e2e', 'REQ-E2E-001', '--status', 'pass', '--evidence', 'e2e green'], root);
+    run(['verify-e2e', 'REQ-E2E-001', '--status', 'pass', '--evidence', await evid(root)], root);
     const ok = run(['coverage'], root);
     assert.equal(ok.code, 0, ok.err);
   });
@@ -832,17 +852,21 @@ test('coverage：查無 requirements.md → exit 2', async () => {
 test('complete-check：tasks 全 [x] 但 REQ-E2E 無驗證記錄 → exit 2（升級後逐條對賬）', async () => {
   await withRoot(async (root) => {
     await S.init(root, { project: 'p', tasks: [] });
+    await S.writeStateJson(root, { mode: 'manual' });
     await mkdir(path.join(root, 'specs'), { recursive: true });
     await writeFile(path.join(root, 'specs', 'tasks.md'), '- [x] **F-1**\n', 'utf8');
     await writeReq(root, READY_REQ);   // REQ-E2E-001 無記錄
+    run(['project-type', 'api'], root);
+    await passLenses(root);
+    assert.equal(run(['spec-ready', '--freeze'], root).code, 0, 'W3-3③ 後 complete-check 需凍結分母（req-index）');
     const r = run(['complete-check'], root);
     assert.equal(r.code, 2, 'REQ-E2E 未覆蓋 → 不准 COMPLETE');
     assert.match(r.err, /REQ-E2E-001/);
     // 記了 REQ-E2E pass 但 REQ-PERF 未達標 → 仍 exit 2（W2-4）
-    run(['verify-e2e', 'REQ-E2E-001', '--status', 'pass', '--evidence', 'green'], root);
+    run(['verify-e2e', 'REQ-E2E-001', '--status', 'pass', '--evidence', await evid(root)], root);
     assert.equal(run(['complete-check'], root).code, 2, 'REQ-PERF 未達標仍擋');
     // 補 REQ-PERF 達標 → 放行（本測不驗藍軍，補 code-review-waiver）
-    run(['verify-perf', 'REQ-PERF-001', '--value', '2.0', '--evidence', 'lighthouse.json'], root);
+    run(['verify-perf', 'REQ-PERF-001', '--value', '2.0', '--evidence', await evid(root, 'lighthouse.json')], root);
     run(['decision', 'code-review-waiver', '--choice', '本測不驗藍軍', '--why', 'x'], root);
     assert.equal(run(['complete-check'], root).code, 0, '補齊 REQ-E2E＋REQ-PERF 後放行');
   });
@@ -898,6 +922,56 @@ test('journey-check：找不到 journey 測試 → exit 0（非 web 專案不誤
   });
 });
 
+test('journey-check：通過後落 .flow/trace/journey-check.json（含 head 欄位，W3-1）', async () => {
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [] });
+    await writeSpec(root, 'tests/e2e/good.spec.ts',
+      "import {test, expect} from '@playwright/test'\ntest('x', async ({page}) => { await page.goto('/login'); await page.getByRole('button',{name:/登入/}).click(); await expect(page).toHaveURL(/home/) })");
+    const r = run(['journey-check'], root);
+    assert.equal(r.code, 0, r.err);
+    const jc = await S.readJourneyCheck(root);
+    assert.ok(jc, 'journey-check.json 落檔');
+    assert.ok('head' in jc, '含 head 欄位（非 git 目錄下可為空字串，但欄位須存在）');
+  });
+});
+
+test('journey-check：page.route 測試無 waiver → exit 2；journey-waiver 決策後 → exit 0（降級為警告，stdout 含「豁免」，W3-4）', async () => {
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [] });
+    await writeSpec(root, 'tests/e2e/mocked.spec.ts',
+      "import {test} from '@playwright/test'\ntest('x', async ({page}) => { await page.route('**/api/**', r=>r.fulfill({body:'{}'})); await page.goto('/') })");
+    const r0 = run(['journey-check'], root);
+    assert.equal(r0.code, 2, '無 waiver 仍擋');
+    const d = run(['decision', 'journey-waiver', '--choice', '外部金流 sandbox', '--why', 'x'], root);
+    assert.equal(d.code, 0, d.err);
+    const r1 = run(['journey-check'], root);
+    assert.equal(r1.code, 0, '有 journey-waiver → 降級為警告');
+    assert.match(r1.out, /豁免/);
+  });
+});
+
+test('complete-check（web 類）：全綠但缺 journey-check 記錄 → exit 2 且 stderr 含 journey；補 journey-waiver → exit 0', async () => {
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [] });
+    await S.writeStateJson(root, { mode: 'manual' });
+    await writeReq(root, READY_REQ);
+    run(['project-type', 'web-app'], root);
+    await passLenses(root);
+    // web 類凍結需要互動原型或 mockup-waiver 豁免；本測不做原型，走豁免路徑
+    run(['decision', 'mockup-waiver', '--choice', '跳過原型', '--why', '測試'], root);
+    assert.equal(run(['spec-ready', '--freeze'], root).code, 0, 'web 類走 mockup-waiver 豁免路徑凍結');
+    await writeFile(path.join(root, 'specs', 'tasks.md'), '- [x] **F-1**\n', 'utf8');
+    run(['verify-e2e', 'REQ-E2E-001', '--status', 'pass', '--evidence', await evid(root)], root);
+    run(['verify-perf', 'REQ-PERF-001', '--value', '2.0', '--evidence', await evid(root, 'lh.json')], root);
+    run(['decision', 'code-review-waiver', '--choice', '本測不驗藍軍', '--why', 'x'], root);
+    const r = run(['complete-check'], root);
+    assert.equal(r.code, 2, 'web 類缺 journey-check 記錄 → 擋');
+    assert.match(r.err, /journey/);
+    run(['decision', 'journey-waiver', '--choice', '跳過 journey-check', '--why', '本測不驗真實瀏覽器'], root);
+    assert.equal(run(['complete-check'], root).code, 0, '補 journey-waiver 後放行');
+  });
+});
+
 // ── checkpoint 子命令 + resume 的 mid-task 進度／對帳輸出（B 崩潰接續）──
 
 test('checkpoint：記一筆後 resume 帶出「上次做到第幾步」', async () => {
@@ -932,15 +1006,26 @@ test('resume：tasks.md 與 ledger 對不上 → 印對帳提示（ledger 唯一
   });
 });
 
-test('mode：寫進 manifest + state.json，reconstruct 讀得到；非法值 exit 1', async () => {
+test('mode：寫進 manifest + state.json，reconstruct 讀得到；非法值 exit 1；auto 未過 guardrail 拒寫（W0-3）', async () => {
   await withRoot(async (root) => {
     await S.init(root, { project: 'p', tasks: [] });
-    const r = run(['mode', 'auto'], root);
+    const home = path.join(root, 'fakehome');
+    await mkdir(home, { recursive: true });
+    // 護欄缺 → mode auto exit 2 且不落檔（啟動前提是機器擋、不是提醒）
+    await writeFile(path.join(home, 'settings.json'), JSON.stringify({ hooks: {} }), 'utf8');
+    const bad = run(['mode', 'auto', '--claude-home', home], root);
+    assert.equal(bad.code, 2, '護欄缺 → 拒寫 mode=auto');
+    assert.notEqual((await S.readManifest(root)).mode, 'auto', '未過 guardrail 不得落檔');
+    // 護欄齊 → 照常落檔
+    await writeFile(path.join(home, 'settings.json'),
+      JSON.stringify({ hooks: { PreToolUse: [{ hooks: [{ command: 'node hooks/flow-auto-gate.mjs' }] }], PostToolUse: [{ hooks: [{ command: 'node hooks/flow-stall-monitor.mjs' }] }] } }), 'utf8');
+    const r = run(['mode', 'auto', '--claude-home', home], root);
     assert.equal(r.code, 0, r.err);
     assert.equal((await S.readManifest(root)).mode, 'auto', 'manifest 有 mode（進 git）');
     assert.equal((await S.readStateJson(root)).mode, 'auto', 'state.json 同步（相容）');
     assert.equal((await S.reconstruct(root)).mode, 'auto');
     assert.equal(run(['mode', 'bad'], root).code, 1, '非法值擋下');
+    assert.equal(run(['mode', 'manual'], root).code, 0, 'manual 不需護欄');
   });
 });
 
@@ -1039,6 +1124,7 @@ test('scope --wave：成員＝wave-plan 某波 → 過成員對賬（無變動�
   await withRoot(async (root) => {
     await seedWave(root);
     run(['wave', '--compute'], root);
+    gitClean(root);                                    // W3-3①：scope 需真 git repo；乾淨 tree＝無變動
     const r = run(['scope', '--wave', 'F-1'], root);   // Wave0=[F-1]，成員相符
     assert.equal(r.code, 0, r.err);
     assert.match(r.out, /無檔案越界/);
@@ -1068,7 +1154,17 @@ test('#5：scope --wave 多 task 併波但沒跑 wave --compute → fail-closed 
 test('#5：scope --wave 單 task 沒 wave-plan → 向後相容放行（單 task 併波無害）', async () => {
   await withRoot(async (root) => {
     await seedWave(root);
+    gitClean(root);
     const r = run(['scope', '--wave', 'F-1'], root);
     assert.equal(r.code, 0, r.err);
+  });
+});
+
+test('W3-3①：scope --wave 在非 git 目錄 → fail-closed exit 2（查不到 ≠ 零變動）', async () => {
+  await withRoot(async (root) => {
+    await seedWave(root);                              // 不 git init
+    const r = run(['scope', '--wave', 'F-1'], root);
+    assert.equal(r.code, 2);
+    assert.match(r.err, /git 不可用|fail-closed/);
   });
 });

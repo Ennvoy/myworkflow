@@ -26,7 +26,7 @@
 
 ## lens 輸入鐵則（防死循環）
 
-spawn L2/L3 時 SHALL 附上**前輪 findings＋終局狀態**，並在 prompt 明示：**按錨點去重、禁重提已 rejected 的發現、id 流水號接續前輪**。沒有這條，lens 第 2 輪會把被 rejected 的毛病再找出來一次 → 末輪永不為空。
+spawn L2/L3 時 SHALL 附上**前輪 findings＋終局狀態**。完整紀律見 `references/finding-discipline.md`——沒有這條，lens 第 2 輪會把被 rejected 的毛病再找出來一次 → 末輪永不為空。
 
 ## Fail 時回哪一步
 

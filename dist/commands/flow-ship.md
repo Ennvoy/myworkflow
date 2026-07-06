@@ -17,13 +17,15 @@ description: Flow Phase 5 — 出貨收束。跨 feature 整合 e2e + 完整效�
 跑 `references/playwright-real-data-template.md` 三鐵則，對象是**單 feature 驗不到的**：
 - `REQ-E2E-*` 跨 feature workflow（feature A 的輸出餵進 feature C 的串接）
 - **auth / role 橫切矩陣**（不同角色看到/做得到不同的事，驗 scope 正確）
-- 真實資料鏈路（真後端真 DB、禁 mock），headed 序列跑（headed 無法多開）
+- 真實資料鏈路（真後端真 DB、禁 mock），headed 序列跑（headed 無法多開，此限制不因用 recipe/subagent 而解除）
 
-宣稱整合 e2e 綠前 SHALL 跑 `flow-state journey-check`（掃 mock/網路攔截＋單一入口 goto，exit 2 擋假綠）。每條跨 feature `REQ-E2E-*` 真綠後同樣 `flow-state verify-e2e <id> --status pass --evidence "<ref>"` 記錄，供 Step 5 對賬。
+**SHALL 用 `references/recipes/parallel-verify.js` 或另開 evaluator subagent（另開 context）執行**，不在主迴圈直接跑——高噪音 Playwright 輸出留在子 context，主迴圈只收 PASS/FAIL + 數字證據摘要（1-2k 蒸餾，對齊 `references/orchestration-guide.md` §6 context firewall）。宣稱整合 e2e 綠前 SHALL 跑 `flow-state journey-check`（掃 mock/網路攔截＋單一入口 goto，exit 2 擋假綠）。每條跨 feature `REQ-E2E-*` 真綠後同樣 `flow-state verify-e2e <id> --status pass --evidence "<ref>"` 記錄，供 Step 5 對賬。
 
 ## Step 3：完整效能 budget（僅 REQ-PERF-*）
 
 對所有 `REQ-PERF-*` 跑完整效能驗收（`references/perf-budget.md`）：load + render + API 延遲，p50 + p95，**任一維度不達標 = FAIL**（硬閘門不准平均）。讀取/渲染太慢一律不放行。
+
+**SHALL 用 `references/recipes/parallel-verify.js` 或另開 evaluator subagent（另開 context）執行**，同 Step 2 理由——k6/autocannon/lighthouse 等高噪音輸出不得灌進主迴圈，主迴圈只收每個 `REQ-PERF-*` 的 PASS/FAIL + p50/p95 數字摘要。
 
 ## Step 4：Cross-cutting 必清檢查
 
@@ -39,7 +41,7 @@ description: Flow Phase 5 — 出貨收束。跨 feature 整合 e2e + 完整效�
 
 ## Step 6：全系統垃圾兜底 + 出貨準備
 
-- **全系統清驗證垃圾（commit 前 SHALL 做，雙軌，同 `/flow-build` Step 5 / `references/verification-playbook.md` §七）**：① 跑 `clean-verify-artifacts.mjs --apply --gitignore` 清檔案型產物（整合 e2e／效能驗收會生最多 **`.playwright-mcp/` MCP 殘留**、trace/screenshot/report/log，ship 前尤其多）；② review 全 diff 刪掉 source 內 debug 殘留。clean script 白名單式、保 source 測試檔／specs／.flow ledger／baseline 等 reference data。**沒清就 commit 會被 `flow-commit-gate` 閘門一 exit 2 擋**。
+- **全系統清驗證垃圾（commit 前 SHALL 做）**：跑 `clean-verify-artifacts.mjs --apply --gitignore`（整合 e2e／效能驗收會生最多 **`.playwright-mcp/` MCP 殘留**，ship 前尤其多）。**沒清就 commit 會被 `flow-commit-gate` 閘門一 exit 2 擋**。細節見 `references/verification-playbook.md` §七。
 - D-source 改動 commit 前精準單點 revert（禁 `git checkout .`/`reset --hard`）。
 - 出貨準備：**呼叫 `git-tools` skill** 做智慧 commit+push（push 失敗回報、不擅自 `--force`）+ PR description（對應 REQ、列驗證證據與效能數字）。merge 衝突 / `.env` 等敏感檔才問使用者。
 

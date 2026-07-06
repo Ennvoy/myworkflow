@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, readdir, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -51,6 +51,35 @@ test('mode:auto — 軟 STALL 連續被忽略到 hardThreshold → 下次同 run
     assert.equal(run(bash(root, cmd)), 2, '連 6 輪同失敗 → 硬擋');
     // 不同 runner 不受影響
     assert.equal(run(bash(root, 'pytest tests/test_y.py')), 0, '別條 runner 放行');
+  });
+});
+
+test('mode:auto — W4-2 .flow/policy.json 預核准放行：無 policy → 仍硬擋；allowlist 命中放行且留審計 decision', async () => {
+  await withAuto(async (root) => {
+    const policyPath = path.join(root, '.flow', 'policy.json');
+    assert.equal(run(bash(root, 'npm install lodash')), 2, '無 .flow/policy.json → 維持硬擋');
+    await writeFile(policyPath, JSON.stringify({ deps: { allow: ['lodash'] } }), 'utf8');
+    assert.equal(run(bash(root, 'npm install lodash')), 0, 'allowlist 命中 → 放行');
+    const decisions = await readdir(path.join(root, '.flow', 'decisions'));
+    assert.ok(decisions.some(f => /^dep-auto-.*\.json$/.test(f)), '放行留審計 decision（dep-auto-*.json）');
+  });
+});
+
+test('mode:auto — W4-2 allowlist 尾 * 前綴＋去版本後綴；命令內全部套件都命中才放行', async () => {
+  await withAuto(async (root) => {
+    const policyPath = path.join(root, '.flow', 'policy.json');
+    await writeFile(policyPath, JSON.stringify({ deps: { allow: ['@types/*'] } }), 'utf8');
+    assert.equal(run(bash(root, 'pnpm add @types/node@20')), 0, '尾 * 前綴＋去版本後綴命中 → 放行');
+    assert.equal(run(bash(root, 'pnpm add left-pad')), 2, '不在清單 → 仍擋');
+    await writeFile(policyPath, JSON.stringify({ deps: { allow: ['lodash'] } }), 'utf8');
+    assert.equal(run(bash(root, 'npm install lodash left-pad')), 2, 'left-pad 不在清單 → 全部命中才放行，整體仍擋');
+  });
+});
+
+test('mode:auto — W4-2 policy.json 壞 JSON → 讀不到＝無白名單，仍硬擋', async () => {
+  await withAuto(async (root) => {
+    await writeFile(path.join(root, '.flow', 'policy.json'), '{bad json', 'utf8');
+    assert.equal(run(bash(root, 'npm install lodash')), 2, '壞 JSON 讀不到 policy → 視同無白名單');
   });
 });
 

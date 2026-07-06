@@ -3,7 +3,7 @@
 // 全域裝一次（~/.claude/skills/flow-toolkit），對「當前專案」生效（讀 cwd 或 --root 的 .flow/）。
 // 決策/討論一律回 Claude（彈窗）；狀態都在各專案的 .flow/。進度看這支的文字輸出；平行波看 /workflows。
 import path from 'node:path';
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import * as S from './statelib.mjs';
 
@@ -30,17 +30,34 @@ function testFileProblem(testFile) {
   return null;
 }
 
+// W3-2 pass 證據驗真：證據 SHALL 指向實存非空檔/目錄（trace/測試檔/報告），拉到與紅軍 testFileProblem 同強度——
+// 「我保證通過」這種純敘述不算證據；人工驗證請把輸出存檔（如 .flow/verify/evidence-<id>.txt）再指過來。
+// 相容 file:line 寫法（tests/auth.spec.ts:12 → 驗 tests/auth.spec.ts）。
+function evidenceProblem(evidence, evidenceFile) {
+  const cand = String(evidenceFile || evidence || '').trim().replace(/:\d+(?:[-:]\d+)?$/, '');
+  if (!cand) return '缺證據';
+  const abs = path.resolve(root, cand);
+  if (!existsSync(abs)) return `證據不是實存檔（${cand}）——pass 證據 SHALL 指向實存的 trace/測試檔/量測報告；純敘述請先存檔再用 --evidence-file 指過來`;
+  try {
+    const st = statSync(abs);
+    if (st.isDirectory()) return readdirSync(abs).length ? null : `證據目錄是空的（${cand}）`;
+    if (st.size < 10) return `證據檔形同空檔（${cand}）——touch 空檔不算證據`;
+  } catch { return `證據讀不到（${cand}）`; }
+  return null;
+}
+
 // 現行 HEAD sha（best-effort；非 git/無 commit/失敗回 ''，不洩漏 git stderr）——trace 記「凍結/驗證在哪個 commit」的審計錨。
 function gitHead(r) {
   try { return execSync('git rev-parse HEAD', { cwd: r, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch { return ''; }
 }
 
 // git 真實變動檔（staged + unstaged + untracked）。模型偽造不了——這是 scope 閘門的事實來源。
+// W3-3①：git 失敗回 null（非 []）——「查不到」不等於「零變動」，scope 閘門對 null fail-closed。
 function gitChangedFiles(r) {
   let out = '';
   // -uall：展開未追蹤目錄到「個別檔」（預設會把整個未追蹤目錄收合成一行，scope 比對需要檔案層級）。
   // core.quotepath=false：中文/非 ASCII 檔名輸出 UTF-8 原文而非 octal escape（否則 zone 比對必假陽性）。
-  try { out = execSync('git -c core.quotepath=false status --porcelain -uall', { cwd: r, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }); } catch { return []; }
+  try { out = execSync('git -c core.quotepath=false status --porcelain -uall', { cwd: r, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }); } catch { return null; }
   const files = [];
   for (const line of out.split('\n')) {
     if (!line.trim()) continue;
@@ -49,6 +66,23 @@ function gitChangedFiles(r) {
     files.push(p.replace(/^"(.*)"$/, '$1'));         // 去掉 git 對特殊字元加的引號
   }
   return files;
+}
+
+// 自駕護欄判定（mode auto 與 guardrail-check 共用）：settings.json 須同時掛 stall 斷路器＋auto-gate 三道硬擋。
+// W0-3：mode auto 落檔前直接呼叫，未過 exit 2——「啟動前提」是機器擋、不是散文提醒（auto-gate 曾漏接線形同虛設的教訓）。
+function claudeHomeDir() {
+  return flag('--claude-home') || process.env.CLAUDE_HOME ||
+    path.join(process.env.USERPROFILE || process.env.HOME || '', '.claude');
+}
+function guardrailProblem(home) {
+  let raw = '';
+  try { raw = readFileSync(path.join(home, 'settings.json'), 'utf8'); }
+  catch { return `找不到 ${path.join(home, 'settings.json')}——無法確認護欄在線。先跑 install 裝 Flow hooks 再啟用自駕。`; }
+  const missing = [];
+  if (!/flow-stall-monitor\.mjs/.test(raw)) missing.push('flow-stall-monitor（doom-loop 斷路器）');
+  if (!/flow-auto-gate\.mjs/.test(raw)) missing.push('flow-auto-gate（自駕三道硬擋：裝新相依/破壞性 DB/doom-loop 天花板）');
+  if (!missing.length) return null;
+  return `自駕護欄缺失：settings.json 沒有 ${missing.join('、')}。無花費上限下這是唯一剎車——重跑 install 裝齊 hooks 再啟用自駕，或本次走「每階段停」。`;
 }
 
 // journey-check 用：遞迴撈測試檔（*.spec/.test/.e2e），跳過 node_modules 等重目錄與 dot 目錄、限深防失控。
@@ -185,6 +219,13 @@ switch (cmd) {
       if (existsSync(tp)) execSync('git add -- "specs/tasks.md"', { cwd: root, stdio: 'ignore' });
       staged = true;
     } catch { /* 非 git / git 失敗 → 略過，交付不受影響（下次 commit 前 smart-commit 會再收） */ }
+    // W4-4：交付即順手歸檔已終局 task 的 journal 事件（歸檔不刪、防長程 O(全史) 重讀單調變慢）。fail-silent。
+    try {
+      const view2 = await S.reconstruct(root);
+      const deliveredIds = Object.values(view2.tasks).filter((t) => t.state === 'delivered').map((t) => t.id);
+      const a = await S.archiveJournal(root, deliveredIds);
+      if (a.archived) console.log(`  🧹 journal 歸檔：${a.archived} 筆已終局事件 → .flow/archive/journal.ndjson（主檔剩 ${a.kept} 筆，可回溯）。`);
+    } catch { /* 歸檔非關鍵，失敗不影響交付 */ }
     const md = r.tasksMd.changed ? 'tasks.md [x] 已翻' : (r.tasksMd.found ? 'tasks.md 本已 [x]' : '⚠ tasks.md 無對應行（id 對不上？）');
     const lg = r.alreadyDelivered ? 'ledger 本已 delivered' : 'ledger→delivered';
     console.log(`✓ ${r.id}：${md}；${lg}${commit ? `；commit=${commit}` : ''}`);
@@ -193,15 +234,30 @@ switch (cmd) {
   }
   case 'mode': {
     // 設定推進模式，寫進 git-tracked manifest（換機 clone 後自駕不掉回 manual）+ state.json（相容既有讀取）。
-    // 用法：flow-state mode <auto|manual>
+    // 用法：flow-state mode <auto|manual> [--claude-home <dir>]
+    // W0-3：auto 內建 guardrail——護欄（stall 斷路器＋auto-gate）不在線就 exit 2 拒寫，不再只印提醒。
     const m = argv[1];
     if (m !== 'auto' && m !== 'manual') { console.error('usage: flow-state mode <auto|manual>'); process.exit(1); }
+    if (m === 'auto') {
+      const gp = guardrailProblem(claudeHomeDir());
+      if (gp) { console.error('✗ ' + gp); console.error('  未過 guardrail → 拒絕寫入 mode=auto（啟動前提是機器擋、不是提醒）。'); process.exit(2); }
+    }
     const manifest = await S.readManifest(root);
     await S.writeManifest(root, { ...manifest, mode: m });
     const st = await S.readStateJson(root);
     await S.writeStateJson(root, { ...st, mode: m });
     console.log(`✓ 推進模式設為 ${m}：寫進 .flow/manifest.json（進 git、換機 clone 後保留）+ state.json。`);
-    if (m === 'auto') console.log('  提醒：啟用自駕前 SHALL 先過 flow-state guardrail-check（stall 斷路器在線）。');
+    if (m === 'auto') console.log('  ✓ guardrail 已過：stall 斷路器＋auto-gate 在線。');
+    break;
+  }
+  case 'journal-archive': {
+    // W4-4 手動觸發（/flow-compact 收束時跑；done 交付時也會自動順手做）：歸檔不刪、可回溯。
+    const view = await S.reconstruct(root);
+    const deliveredIds = Object.values(view.tasks).filter((t) => t.state === 'delivered').map((t) => t.id);
+    const a = await S.archiveJournal(root, deliveredIds);
+    console.log(a.archived
+      ? `✓ journal 歸檔：搬 ${a.archived} 筆已終局事件 → .flow/archive/journal.ndjson；主檔剩 ${a.kept} 筆。`
+      : `✓ 無可歸檔事件（主檔 ${a.kept} 筆，皆未終局或全域事件）。`);
     break;
   }
   case 'project-type': {
@@ -270,7 +326,12 @@ switch (cmd) {
     }
     const wmp = S.waveMembershipProblem(wp, manifest, wave);
     if (wmp) { console.error('✗ ' + wmp); process.exit(2); }
-    const r = S.checkScope(gitChangedFiles(root), zonesByFeature);
+    const changed = gitChangedFiles(root);
+    if (changed === null) {
+      console.error('✗ git 不可用/查詢失敗——無法確認真實檔案變動，scope fail-closed 暫停整合（別把「查不到」當「零變動」放行）。');
+      process.exit(2);
+    }
+    const r = S.checkScope(changed, zonesByFeature);
     if (r.attributed.length) { console.log('檔案歸屬：'); for (const a of r.attributed) console.log(`  ${a.file} → ${a.feature}`); }
     if (r.overlaps.length) {
       console.log('\n⚠ conflictZone 重疊（規劃問題，本應互斥；同波兩 feature 改同檔有覆寫風險）：');
@@ -396,19 +457,11 @@ switch (cmd) {
     break;
   }
   case 'guardrail-check': {
-    // 自駕前置硬閘門：確認 stall 斷路器在線（settings.json PostToolUse 含 flow-stall-monitor）。
+    // 自駕前置硬閘門：確認護欄在線（stall 斷路器＋auto-gate 三道硬擋，判定與 mode auto 共用 guardrailProblem）。
     // /flow 寫 mode:auto 前 SHALL 跑；缺則 exit 2，退回每階段停、不假裝自駕（無花費上限下唯一剎車不能缺）。
-    const home = flag('--claude-home') || process.env.CLAUDE_HOME ||
-      path.join(process.env.USERPROFILE || process.env.HOME || '', '.claude');
-    let raw = '';
-    try { raw = readFileSync(path.join(home, 'settings.json'), 'utf8'); }
-    catch { console.error(`✗ 找不到 ${path.join(home, 'settings.json')}——無法確認護欄在線。先跑 install 裝 Flow hooks 再啟用自駕。`); process.exit(2); }
-    if (!/flow-stall-monitor\.mjs/.test(raw)) {
-      console.error('✗ 自駕護欄缺失：settings.json 沒有 flow-stall-monitor（doom-loop 斷路器）。');
-      console.error('  無花費上限下這是唯一剎車。重跑 install 裝齊 hooks 再啟用自駕，或本次走「每階段停」。');
-      process.exit(2);
-    }
-    console.log('✓ 自駕護欄在線：stall 斷路器（flow-stall-monitor）已註冊，可啟用自駕。');
+    const gp = guardrailProblem(claudeHomeDir());
+    if (gp) { console.error('✗ ' + gp); process.exit(2); }
+    console.log('✓ 自駕護欄在線：stall 斷路器（flow-stall-monitor）＋自駕硬擋（flow-auto-gate）皆已註冊，可啟用自駕。');
     break;
   }
   case 'run': {
@@ -495,6 +548,9 @@ switch (cmd) {
     const value = flag('--value'), evidence = flag('--evidence') || '';
     if (value === undefined) { console.error('須給 --value <實測數字>（同 budget 單位）。'); process.exit(1); }
     if (!evidence) { console.error('須給 --evidence（量測工具輸出 ref：k6/autocannon/lighthouse 檔或摘要）——堵空綠。'); process.exit(1); }
+    // W3-2：達標記錄的證據驗真（與 verify-e2e pass 同強度）——量測工具輸出 SHALL 是實存檔。
+    const perfEp = evidenceProblem(evidence, flag('--evidence-file'));
+    if (perfEp) { console.error('✗ ' + perfEp); process.exit(2); }
     const budget = S.parsePerfBudget(line);
     const miss = S.perfMeetsBudget(value, budget);
     if (miss) { console.error(`✗ ${id.toUpperCase()} 未達標：${miss}——優化到達標再記，別記假綠。`); process.exit(2); }
@@ -569,7 +625,9 @@ switch (cmd) {
       process.exit(2);
     }
     // W2-1 hash 對賬：現行 requirements.md 須等於凍結 index（凍結後被改過＝完成謂詞對的是舊分母）
+    // W3-3③：凍結分母 SHALL 實存——快照被誤刪時 reqHashProblem(null) 會靜默放行，這裡 fail-closed 補死。
     const idx = await S.readReqIndex(root);
+    if (!idx) { console.error('✗ 查無 .flow/trace/req-index.json（凍結分母）——凍結後被刪，或從未走 spec-ready --freeze 正門。重跑 flow-state spec-ready --freeze 重建分母再對賬。'); process.exit(2); }
     const reqMd = readFileSync(path.join(root, 'specs', 'requirements.md'), 'utf8');
     const hp = S.reqHashProblem(idx, reqMd);
     if (hp) { console.error('✗ ' + hp); process.exit(2); }
@@ -611,6 +669,25 @@ switch (cmd) {
       for (const p of codeProblems) console.error('  - ' + p);
       process.exit(2);
     }
+    // W3-1 journey 真實性納完成謂詞：web 類 projectType SHALL 有「當前 HEAD」的 journey-check 通過記錄
+    //（靜態掃描秒級，ship 前重跑即可）；逃生口＝journey-waiver decision（可稽核、不 brick）。
+    const cm = await S.readManifest(root);
+    const journeyWaivedCC = existsSync(path.join(root, '.flow', 'decisions', 'journey-waiver.json'));
+    if (S.WEB_PROJECT_TYPES.includes(cm.projectType) && !journeyWaivedCC) {
+      const jc = await S.readJourneyCheck(root);
+      if (!jc) {
+        console.error('✗ 完成謂詞未達：web 專案未過 journey 真實性閘門（防 mock 假綠）——跑 flow-state journey-check（通過會落 .flow/trace/journey-check.json）；');
+        console.error('  真有合法理由跳過 → flow-state decision journey-waiver --choice "跳過 journey-check" --why "<原因>" 留可稽核豁免。');
+        process.exit(2);
+      }
+      const headNow = gitHead(root);
+      if (jc.head && headNow && jc.head !== headNow) {
+        console.error('✗ journey-check 記錄不是當前 HEAD（驗的是舊 code）——重跑 flow-state journey-check（靜態掃描、秒級）再 complete-check。');
+        process.exit(2);
+      }
+    }
+    // Stop hook（W3-5）據此判「收工前完成謂詞真的過了」——成功即落機讀記錄（綁 HEAD）。
+    await S.writeCompleteCheck(root, { head: gitHead(root) });
     console.log(`✓ 所有 ${cov.audit.total} 條 REQ-E2E-* 驗綠${perfIds.length ? `＋${perfIds.length} 條 REQ-PERF 達標` : ''}＋${codeReview ? 'code-review red flag 全終局' : 'code-review 已豁免'}。完成謂詞達成。`);
     break;
   }
@@ -644,6 +721,11 @@ switch (cmd) {
         : 'n/a 須附 --evidence 說明為何此 journey 無法自動化驗證。');
       process.exit(1);
     }
+    // W3-2 pass 證據驗真：evidence（或 --evidence-file）SHALL 指向實存非空檔——堵「寫一句『我保證通過』就算證據」。
+    if (norm === 'pass') {
+      const ep = evidenceProblem(evidence, flag('--evidence-file'));
+      if (ep) { console.error('✗ ' + ep); process.exit(2); }
+    }
     // W2-3 n/a 收緊：n/a 不再是自由逃生口——SHALL 附 --decision 指向實存 decision，且該 decision 不得被別條 REQ-E2E 重用
     //（堵「一張拋棄式 decision 洗掉全批 n/a」）。
     const naDecision = flag('--decision');
@@ -669,7 +751,7 @@ switch (cmd) {
     // 用法：flow-state journey-check [--dir <測試根目錄，預設掃整個 repo>]
     const givenDir = flag('--dir');
     const base = givenDir ? path.resolve(root, givenDir) : root;
-    const journeyFiles = [], problemsAll = [], warningsAll = [];
+    const journeyFiles = [], fileProblems = [], configProblems = [], warningsAll = [];
     for (const f of walkTestFiles(base)) {
       let content = '';
       try { content = readFileSync(f, 'utf8'); } catch { continue; }
@@ -677,7 +759,7 @@ switch (cmd) {
       if (!a.isJourney) continue;
       const rel = path.relative(root, f).replace(/\\/g, '/');
       journeyFiles.push(rel);
-      for (const p of a.problems) problemsAll.push(`${rel}: ${p}`);
+      for (const p of a.problems) fileProblems.push(`${rel}: ${p}`);
       for (const w of a.warnings) warningsAll.push(`${rel}: ${w}`);
     }
     // W2-3 playwright.config 掃描：retries 非 0＝flaky 洗綠（除非 retry-waiver）；webServer 用 dev server＝禁 dev 噪音。
@@ -692,12 +774,20 @@ switch (cmd) {
       if (rm && !retryWaived) {
         const val = rm[1].trim();
         if (/^0\b/.test(val)) { /* retries: 0 → 放行 */ }
-        else if (/^\d+$/.test(val)) problemsAll.push(`${rel}: retries: ${val}（非 0＝flaky 靠重試洗綠；CI 真 flaky 才留，須 flow-state decision retry-waiver 留檔）`);
+        else if (/^\d+$/.test(val)) configProblems.push(`${rel}: retries: ${val}（非 0＝flaky 靠重試洗綠；CI 真 flaky 才留，須 flow-state decision retry-waiver 留檔）`);
         else if (/[1-9]/.test(val)) warningsAll.push(`${rel}: retries: ${val}（條件式含非 0——確認 CI 才重試、非掩蓋 flaky；要擋請留 retry-waiver）`);
       }
       const wm = stripped.match(/webServer[\s\S]{0,200}?command\s*:\s*['"\`]([^'"\`]+)['"\`]/);
-      if (wm && DEV_SERVER_RE.test(wm[1])) problemsAll.push(`${rel}: webServer command 疑用 dev server（"${wm[1].trim()}"）——驗證禁 dev 噪音，改 build && preview/start`);
+      if (wm && DEV_SERVER_RE.test(wm[1])) configProblems.push(`${rel}: webServer command 疑用 dev server（"${wm[1].trim()}"）——驗證禁 dev 噪音，改 build && preview/start`);
     }
+    // W3-4 journey-waiver 逃生口（限測試檔內 mock/多 goto 命中；config 的 retries/dev-server 各有既有處理）：
+    // 合法 mock（如攔第三方 analytics/金流 sandbox）經使用者拍板留檔後降級為警告——沒豁免照擋，防「誤殺疲勞→整個閘門被關」。
+    const journeyWaived = existsSync(path.join(root, '.flow', 'decisions', 'journey-waiver.json'));
+    if (journeyWaived && fileProblems.length) {
+      for (const p of fileProblems) warningsAll.push(`${p}（journey-waiver 已豁免——確認豁免理由仍涵蓋此檔）`);
+      fileProblems.length = 0;
+    }
+    const problemsAll = [...fileProblems, ...configProblems];
     if (!journeyFiles.length) {
       console.log('⚠ 未找到 Playwright journey 測試檔（*.spec/.test/.e2e 內含 @playwright/test 或 page.goto）。');
       console.log('  若本專案有 web 前端，代表還沒有「從入口真實點擊」的端到端驗證——請補 playwright-real-data-template 的 journey 測試。');
@@ -713,7 +803,10 @@ switch (cmd) {
       console.error('  修正：拆掉 mock/網路攔截改走真 API/真 DB；每個 test 只留一個入口 goto、其後用 getByRole().click() 真實點擊串接。別繞過本閘門。');
       process.exit(2);
     }
+    // W3-1：通過即落機讀記錄（綁 HEAD）——complete-check 對 web 專案據此對賬「防假綠檢查真的跑過且是當前 code」。
+    await S.writeJourneyCheck(root, { head: gitHead(root), files: journeyFiles.length, waived: journeyWaived });
     console.log('\n✓ journey 真實性通過：無 mock/網路攔截、每個 test 單一入口 goto。');
+    console.log('  已落 .flow/trace/journey-check.json（綁 HEAD）——ship 出口 complete-check 會對賬。');
     break;
   }
   case 'spec-ready': {

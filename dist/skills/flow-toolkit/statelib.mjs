@@ -2,7 +2,7 @@
 // 設計：write-ahead journal（先記再做）+ 冷啟動 reconstruct（只讀磁碟即重建現場）。
 // append-only journal（用 id|action 當 key）讓 N 個並行 worker 各自的 dangling 都留得住——
 // 修掉「單檔 state.json 多 worker 互蓋」硬傷。state.json 保留為當前 task 衍生指標（相容既有 hook）。
-import { mkdir, readFile, writeFile, appendFile, readdir, rename, unlink } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, appendFile, readdir, rename, unlink, stat } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
@@ -127,6 +127,42 @@ export async function readJournal(root) {
   if (!existsSync(journalPath(root))) return [];
   const raw = await readFile(journalPath(root), 'utf8');
   return raw.split('\n').filter(Boolean).map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
+}
+
+// ── journal 歸檔（W4-4「歸檔不刪」）：append-only 流水帳無上限成長會讓 stall/done/reconstruct 每次 O(全史) 重讀，
+// 長程自駕單調變慢。把「已 delivered task 的任務域事件」搬 .flow/archive/journal.ndjson（append、可回溯），
+// 主檔只留未終局＋全域事件（spec.*/code.*/decision 一律留）。另對「無 taskId 的 verify.attempt」（stall-monitor 桶）
+// 保尾 cap——stallCount 只看尾端連續段，保最近 400 筆綽綽有餘。先落歸檔再原子重寫主檔（當機頂多重複、不丟）。
+const TASK_SCOPED_EVS = new Set(['verify.attempt', 'task.transition', 'action.start', 'action.done', 'checkpoint', 'lesson']);
+const JOURNAL_ATTEMPT_CAP = 400;
+export async function archiveJournal(root, deliveredIds) {
+  const delivered = new Set((deliveredIds || []).map(String));
+  const p = journalPath(root);
+  if (!existsSync(p)) return { archived: 0, kept: 0 };
+  const lines = (await readFile(p, 'utf8')).split('\n').filter(Boolean);
+  const keep = [], move = [];
+  for (const l of lines) {
+    let e = null;
+    try { e = JSON.parse(l); } catch { keep.push(l); continue; }               // 壞行保守留主檔
+    const taskKey = e && (e.taskId || e.id);
+    if (e && TASK_SCOPED_EVS.has(e.ev) && taskKey && delivered.has(String(taskKey))) move.push(l);
+    else keep.push(l);
+  }
+  // 桶型 verify.attempt（無 taskId）保尾 cap：只留最近 N 筆，更舊的搬歸檔。
+  const bucketIdx = [];
+  for (let i = 0; i < keep.length; i++) {
+    try { const e = JSON.parse(keep[i]); if (e.ev === 'verify.attempt' && !e.taskId) bucketIdx.push(i); } catch { /* keep */ }
+  }
+  if (bucketIdx.length > JOURNAL_ATTEMPT_CAP) {
+    const drop = new Set(bucketIdx.slice(0, bucketIdx.length - JOURNAL_ATTEMPT_CAP));
+    for (const i of drop) move.push(keep[i]);
+    for (let i = keep.length - 1; i >= 0; i--) if (drop.has(i)) keep.splice(i, 1);
+  }
+  if (!move.length) return { archived: 0, kept: keep.length };
+  await mkdir(path.join(dir(root), 'archive'), { recursive: true });
+  await appendFile(path.join(dir(root), 'archive', 'journal.ndjson'), move.join('\n') + '\n', 'utf8');
+  await writeFileAtomic(p, keep.length ? keep.join('\n') + '\n' : '');
+  return { archived: move.length, kept: keep.length };
 }
 
 // ── stall 偵測（doom-loop 斷路器）：runner 辨識 + 失敗指紋 + 連續計數 ──
@@ -292,6 +328,13 @@ function e2eStructureOk(lines, id) {
   }
   return false;
 }
+// 從 REQ 定義行 index i 掃到下一個 REQ 定義行/標題（不含）為止，回區塊結束 index j
+// （specReadiness 的 PERF 未量化偵測/規範動詞偵測、extractReqBlock、reqPerfBlock 三處同款切界，共用同一掃描邏輯）。
+function reqBlockEnd(lines, i) {
+  let j = i + 1;
+  while (j < lines.length && !/^#{1,6}\s/.test(lines[j]) && !REQ_DEF_RE.test(lines[j])) j++;
+  return j;
+}
 export function specReadiness(md) {
   const text = String(md || '');
   const lines = text.split(/\r?\n/);
@@ -340,11 +383,10 @@ export function specReadiness(md) {
   // REQ-PERF 未量化偵測（逐定義行區塊）：整塊無任何數字（budget 沒量化，含 N/A/不適用/同義洗白），
   // 或定義塊明寫 N/A（限斜線/全形形；裸 NA 可能是區域縮寫不誤中）→ perfNA=true，CLI 端要求 perf-waiver。
   let perfNA = false;
-  const blockEnd = (i) => { let j = i + 1; while (j < lines.length && !/^#{1,6}\s/.test(lines[j]) && !REQ_DEF_RE.test(lines[j])) j++; return j; };
   for (let i = 0; i < lines.length; i++) {
     const m = lines[i].match(REQ_DEF_RE);
     if (!m || !/^REQ-PERF-/i.test(m[1])) continue;
-    const block = [lines[i].slice(m[0].length), ...lines.slice(i + 1, blockEnd(i))].join('\n');
+    const block = [lines[i].slice(m[0].length), ...lines.slice(i + 1, reqBlockEnd(lines, i))].join('\n');
     if (!/\d/.test(block) || /\bN\/A\b|Ｎ／Ａ|不適用/i.test(block)) perfNA = true;
   }
   // 表述品質提醒（僅 warning）：規範動詞看「定義行＋其後內文區塊」任一行即可（標題行式 REQ 不誤殺）；
@@ -363,7 +405,7 @@ export function specReadiness(md) {
       warnings.push(`${i + 1} 行 ${id} 含含糊詞「${vague[0]}」且無量化數字——建議補可驗的數字/單位`);
     }
     if (!isE2E && !isPerf && !warned.has(id + '|verb')) {
-      const blockLines = [rest, ...lines.slice(i + 1, blockEnd(i))];
+      const blockLines = [rest, ...lines.slice(i + 1, reqBlockEnd(lines, i))];
       if (!blockLines.some(l => /應|須|SHALL|MUST/i.test(l))) {
         warned.add(id + '|verb');
         warnings.push(`${i + 1} 行 ${id} 缺規範動詞（應/須/SHALL/MUST，含其後內文）——不像可驗收的 EARS 句`);
@@ -570,16 +612,18 @@ const traceDir = root => path.join(dir(root), 'trace');
 const reqIndexPath = root => path.join(traceDir(root), 'req-index.json');
 const planCheckPath = root => path.join(traceDir(root), 'plan-check.json');
 
-// 全型號 REQ id（REQ-*/REQ-E2E-*/REQ-PERF-*/REQ-RBAC-*…）——去重保序大寫。
-export function extractAllReqIds(md) {
+// 共用：跑 regex 掃 md，逐個 match 大寫化＋去重＋保序（extractAllReqIds/extractReqPerf/extractReqE2E 同款迴圈，只差 regex 本身）。
+function extractIdsByRegex(md, re) {
   const out = [], seen = new Set();
-  // 字元類不含「.」——真實 REQ id 無中綴點；含點會讓「對應 REQ-E2E-001.」句尾把尾點吞進 id 變幻覺 id（plan-check/wave 誤 exit 2）。
-  for (const m of String(md || '').matchAll(/\bREQ-[A-Za-z0-9_-]+/gi)) {
+  for (const m of String(md || '').matchAll(re)) {
     const id = m[0].toUpperCase();
     if (!seen.has(id)) { seen.add(id); out.push(id); }
   }
   return out;
 }
+// 全型號 REQ id（REQ-*/REQ-E2E-*/REQ-PERF-*/REQ-RBAC-*…）——去重保序大寫。
+// 字元類不含「.」——真實 REQ id 無中綴點；含點會讓「對應 REQ-E2E-001.」句尾把尾點吞進 id 變幻覺 id（plan-check/wave 誤 exit 2）。
+export function extractAllReqIds(md) { return extractIdsByRegex(md, /\bREQ-[A-Za-z0-9_-]+/gi); }
 export async function writeReqIndex(root, reqMd, head) {
   await writeJSON(reqIndexPath(root), { reqIds: extractAllReqIds(reqMd), reqHash: sha256Text(reqMd), head: head || '', at: nowISO() });
 }
@@ -749,9 +793,7 @@ export function extractReqBlock(reqMd, id) {
   for (let i = 0; i < lines.length; i++) {
     const m = lines[i].match(REQ_DEF_RE);
     if (!m || m[1].toUpperCase() !== target) continue;
-    let j = i + 1;
-    while (j < lines.length && !/^#{1,6}\s/.test(lines[j]) && !REQ_DEF_RE.test(lines[j])) j++;
-    return lines.slice(i, j).join('\n').replace(/\s+$/, '');   // 含定義行、逐字、去尾空白
+    return lines.slice(i, reqBlockEnd(lines, i)).join('\n').replace(/\s+$/, '');   // 含定義行、逐字、去尾空白
   }
   return null;
 }
@@ -775,6 +817,10 @@ export function buildWavePlan(manifest, deliveredSet, tasksMd, reqMd, reqIndex) 
     return { id, reqIds, reqText: blocks.join('\n\n') };
   }));
   if (missing.length) return { problems: missing, warnings };
+  // W3-3②：函式自身防禦——reqIndex 存在但與傳入 reqMd 不一致＝呼叫端漏跑 reqHashProblem。
+  // 別靜默組出「reqText 對不上凍結版」的 wave-plan 給 worker 逐字投餵（防線放在最終輸出契約裡，不只靠呼叫端自律）。
+  if (reqIndex && reqIndex.reqHash && sha256Text(reqMd || '') !== reqIndex.reqHash)
+    return { problems: ['requirements.md 與凍結分母 req-index.json 不一致（呼叫端漏跑 reqHashProblem？）——逐字投餵只准用凍結版，先對賬再算波次'], warnings };
   return {
     manifestHash: manifestScopeHash(manifest),
     reqHash: sha256Text(reqMd || ''),
@@ -785,6 +831,14 @@ export function buildWavePlan(manifest, deliveredSet, tasksMd, reqMd, reqIndex) 
 
 export async function writeWavePlan(root, plan) { await writeJSON(wavePlanPath(root), { ...plan, at: nowISO() }); }
 export async function readWavePlan(root) { return readJSON(wavePlanPath(root), null); }
+
+// W3-1/W3-5 trace 記錄（journey-check 通過、complete-check 達成）——各綁 HEAD，供 complete-check / Stop hook 對賬。
+const journeyCheckPath  = root => path.join(dir(root), 'trace', 'journey-check.json');
+const completeCheckPath = root => path.join(dir(root), 'trace', 'complete-check.json');
+export async function writeJourneyCheck(root, obj) { await writeJSON(journeyCheckPath(root), { ...obj, at: nowISO() }); }
+export async function readJourneyCheck(root) { return readJSON(journeyCheckPath(root), null); }
+export async function writeCompleteCheck(root, obj) { await writeJSON(completeCheckPath(root), { ...obj, at: nowISO() }); }
+export async function readCompleteCheck(root) { return readJSON(completeCheckPath(root), null); }
 
 // 純函式：--wave 傳入的一組 id 是否對應 wave-plan 的「某一波」（成員集合相等，順序無關）＋ manifest hash 一致。
 // scope --wave / checkpoint --phase dispatched 增驗用（堵 H6：dispatch/整合時自行併波或用漂移 manifest）。
@@ -811,8 +865,10 @@ export function waveMembershipProblem(plan, manifest, waveIds) {
 const PERF_UNIT = 'ms|s|sec|MB|KB|GB|%|rps|qps|tps|fps';
 export function parsePerfBudget(line) {
   const s = String(line || '');
-  const all = [...s.matchAll(new RegExp(`(<=|<|≤|>=|>|≥)\\s*([\\d.]+)\\s*(${PERF_UNIT})?`, 'gi'))]
-    .map(m => ({ op: m[1], budget: Number(m[2]), unit: (m[3] || '').toLowerCase() }));
+  // 數字允許千分位逗號（budget 常寫成 1,000ms / 2,000 tokens）——比對含逗號、Number 前 strip 掉，
+  // 否則 [\d.]+ 會在逗號前截斷把「< 1,000ms」錯解成 budget=1（靜默把達標判成超標）。
+  const all = [...s.matchAll(new RegExp(`(<=|<|≤|>=|>|≥)\\s*([\\d,.]+)\\s*(${PERF_UNIT})?`, 'gi'))]
+    .map(m => ({ op: m[1], budget: Number(m[2].replace(/,/g, '')), unit: (m[3] || '').toLowerCase() }));
   if (!all.length) return null;
   const chosen = all.find(x => x.unit) || all[0];
   return { ...chosen, lower: /^(>=|>|≥)/.test(chosen.op) };
@@ -825,14 +881,7 @@ export function perfMeetsBudget(value, budget) {
   if (budget.lower) return v >= budget.budget * 0.95 ? null : `實測 ${v}${budget.unit} 未達下限（budget ${budget.op} ${budget.budget}${budget.unit}，含 5% 容差）`;
   return v <= budget.budget * 1.05 ? null : `實測 ${v}${budget.unit} 超標（budget ${budget.op} ${budget.budget}${budget.unit}，含 5% 容差）`;
 }
-export function extractReqPerf(md) {
-  const out = [], seen = new Set();
-  for (const m of String(md || '').matchAll(/\bREQ-PERF-[A-Za-z0-9._-]+/gi)) {
-    const id = m[0].toUpperCase();
-    if (!seen.has(id)) { seen.add(id); out.push(id); }
-  }
-  return out;
-}
+export function extractReqPerf(md) { return extractIdsByRegex(md, /\bREQ-PERF-[A-Za-z0-9._-]+/gi); }
 // REQ-PERF 定義行（供 verify-perf 解析 budget）。回 { [id]: line }
 export function reqPerfLines(md) {
   const out = {};
@@ -850,9 +899,7 @@ export function reqPerfBlock(md, id) {
   for (let i = 0; i < lines.length; i++) {
     const m = lines[i].match(REQ_DEF_RE);
     if (!m || m[1].toUpperCase() !== target) continue;
-    let j = i + 1;
-    while (j < lines.length && !/^#{1,6}\s/.test(lines[j]) && !REQ_DEF_RE.test(lines[j])) j++;
-    return [lines[i].slice(m[0].length), ...lines.slice(i + 1, j)].join('\n');
+    return [lines[i].slice(m[0].length), ...lines.slice(i + 1, reqBlockEnd(lines, i))].join('\n');
   }
   return '';
 }
@@ -1106,14 +1153,7 @@ export function checkScope(changedFiles, zonesByFeature, opts = {}) {
 // ── REQ-E2E 覆蓋對賬（純函式可測；完成謂詞的機讀核心）──
 // 把「所有 REQ-E2E-* 都真綠了」從 complete-check 的散文提示，升級成「spec 清單 vs .flow/verify 記錄」逐條對賬。
 // covered 狀態：pass（真綠）或 n/a（此 journey 無法自動化、附原因）；缺記錄或 fail → 未覆蓋。
-export function extractReqE2E(md) {
-  const out = [], seen = new Set();
-  for (const m of String(md || '').matchAll(/\bREQ-E2E-[A-Za-z0-9._-]+/gi)) {
-    const id = m[0].toUpperCase();
-    if (!seen.has(id)) { seen.add(id); out.push(id); }
-  }
-  return out;
-}
+export function extractReqE2E(md) { return extractIdsByRegex(md, /\bREQ-E2E-[A-Za-z0-9._-]+/gi); }
 const isCoveredStatus = s => /^(pass|ok|n\/?a)$/i.test(String(s || '').trim());
 export function coverageAudit(reqIds, records) {
   const byId = new Map();
@@ -1341,4 +1381,48 @@ export function briefStatus(view) {
   if (danglingN) bits.push(`↻ ${danglingN} 個未完成動作`);
   if (allDelivered && phase !== 'shipped') bits.push('task 全交付、待驗證/出貨');
   return { hasWork: true, line: `⚡ 有未完成的 Flow（phase=${phase}${bits.length ? '；' + bits.join('、') : ''}）→ 打 /flow-resume 看完整進度並接續。` };
+}
+
+// ── 安裝完整性自檢（W0-2/W0-5，SessionStart 消費）─────────────────────────────
+// hook 接線對賬：hooks 目錄實存的 flow-*.mjs（排除 .test 與非註冊型）都應出現在 settings.json 文字裡。
+// 「檔案在、沒接線」＝閘門形同虛設（flow-auto-gate 漏接線的實證教訓）。純函式，動作交呼叫端。
+const WIRING_EXEMPT = new Set(['flow-precommit.mjs']);   // git pre-commit 執行體，不走 settings.json 註冊
+export function hookWiringProblems(hookFiles, settingsText) {
+  const txt = String(settingsText || '');
+  return (hookFiles || [])
+    .filter((f) => /^flow-.+\.mjs$/.test(f) && !f.endsWith('.test.mjs') && !WIRING_EXEMPT.has(f))
+    .filter((f) => !txt.includes(f));
+}
+
+// 雙向同步對賬（來源 dist ↔ 安裝區）：內容 hash 不一致或安裝區缺檔都回報，differing 附 mtime 方向提示
+// （installed 較新＝安裝區被熱修、記得回寫 dist；dist 較新＝改了源頭沒重裝）。
+// 只掃核心（排除 *.test.mjs、settings.flow.json、install/、design-systems/ 大目錄）控制每 session 成本。
+export async function syncDrift(srcDist, claudeHome) {
+  const skipDirs = new Set(['design-systems', 'install']);
+  const files = [];
+  async function walk(rel) {
+    let ents;
+    try { ents = await readdir(path.join(srcDist, rel), { withFileTypes: true }); } catch { return; }
+    for (const e of ents) {
+      const r = rel ? `${rel}/${e.name}` : e.name;
+      if (e.isDirectory()) { if (!skipDirs.has(e.name)) await walk(r); }
+      else if (!e.name.endsWith('.test.mjs') && e.name !== 'settings.flow.json') files.push(r);
+    }
+  }
+  await walk('');
+  const missing = [];
+  const differing = [];
+  for (const rel of files) {
+    const a = path.join(srcDist, rel);
+    const b = path.join(claudeHome, rel);
+    if (!existsSync(b)) { missing.push(rel); continue; }
+    const [ba, bb] = await Promise.all([readFile(a), readFile(b)]);
+    const ha = createHash('sha256').update(ba).digest('hex');
+    const hb = createHash('sha256').update(bb).digest('hex');
+    if (ha !== hb) {
+      const [sa, sb] = await Promise.all([stat(a), stat(b)]);
+      differing.push({ rel, newer: sb.mtimeMs > sa.mtimeMs ? 'installed' : 'dist' });
+    }
+  }
+  return { missing, differing };
 }

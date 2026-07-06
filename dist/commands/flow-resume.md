@@ -8,6 +8,8 @@ description: Flow 換手/接手 — 純從檔案狀態（.flow/state.json + spec
 
 ## Step 1：純讀檔重建現況（statelib reconstruct）
 
+**reconstruct 輸出的讀取與白話轉述 SHALL 交給便宜 subagent（Haiku/Sonnet 級）執行、只回 1-2k 摘要；主迴圈只負責彈窗待決策。**
+
 用 statelib 冷啟動 reconstruct 印現況 + 下一步（**只讀 `.flow/`，不讀對話**）：
 ```bash
 # mac/linux

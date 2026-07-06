@@ -86,7 +86,7 @@ flow/
     ├── rules/flow.md           # 薄 root 憲法（注入 CLAUDE.md）
     ├── skills/flow-toolkit/    # references + recipes（Workflow 腳本）+ statelib / flow-state.mjs
     ├── skills/git-tools/       # 智慧分群 commit + 安全 push + PR description（Flow commit+push 機制）
-    ├── hooks/                  # flow-verify-gate / flow-commit-gate / flow-session-start / flow-size-check / flow-precommit（git 兜底）+ commit-gate-core（Node，跨平台）
+    ├── hooks/                  # 11 支：flow-verify-gate / flow-commit-gate / flow-spec-gate / flow-auto-gate / flow-session-start / flow-size-check / flow-stall-monitor / flow-design-base-hint / flow-precommit（git 兜底）/ precommit-install / commit-gate-core（Node，跨平台）＋各 7 份 *.test.mjs＋settings.flow.json；完整清單以 dist/hooks/ 為準
     └── install/                # merge-settings.mjs（裝：hook 接線進 settings.json）/ flow-uninstall.mjs（卸：反向拔 hook + 清舊 FLOW 區塊）
 ```
 

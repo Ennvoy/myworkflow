@@ -33,6 +33,24 @@ function isNewDependency(s) {
   return false;
 }
 
+// W4-2：dependency 預核准——.flow/policy.json（進 git、使用者拍板維護）：{ "deps": { "allow": ["lodash", "@types/*"] } }。
+// 命令裡「全部」套件名都命中 allowlist → 放行＋自動落 decision 審計；任一不在清單 → 照原樣硬擋彈窗。
+// 讀不到 policy＝無白名單（維持硬擋）——放鬆只能來自實存的使用者政策檔。
+function extractDepNames(s) {
+  const grab = (re) => { const m = s.match(re); return m ? m[1].split(/\s+/).filter(t => t && !t.startsWith('-')) : null; };
+  return grab(/\bpip3?\s+install\s+(.+)$/i) || grab(/\bcargo\s+add\s+(.+)$/i) || grab(/\bgo\s+get\s+(.+)$/i)
+    || grab(/\bgem\s+install\s+(.+)$/i) || grab(/\b(?:poetry|composer)\s+(?:add|require)\s+(.+)$/i)
+    || grab(/\b(?:npm|pnpm|yarn|bun)\s+(?:add|install|i)\b(.+)$/i) || [];
+}
+function depAllowed(pkgs, allow) {
+  if (!Array.isArray(allow) || !allow.length || !pkgs.length) return false;
+  const names = pkgs.map(p => String(p).toLowerCase().replace(/(.)@[^@]+$/, '$1'));   // 去版本後綴（scoped 開頭的 @ 不受影響）
+  return names.every(p => allow.some(a => {
+    const A = String(a).toLowerCase();
+    return A.endsWith('*') ? p.startsWith(A.slice(0, -1)) : p === A;
+  }));
+}
+
 // 破壞性 DB（命令列內嵌 SQL；best-effort）。
 function isDestructiveDB(s) {
   if (/\b(DROP\s+(TABLE|DATABASE|SCHEMA|INDEX)|TRUNCATE\b)/i.test(s)) return true;
@@ -56,9 +74,25 @@ async function main() {
   try { state = JSON.parse(stripBom(readFileSync(join(cwd, '.flow', 'state.json'), 'utf8'))); } catch { process.exit(0); }
   if (String(state.mode || '') !== 'auto') process.exit(0);   // 只在自駕模式啟用，manual 不干擾
 
-  if (isNewDependency(command)) block(
-    'Flow 自駕閘門：裝新相依是 T1 必停集合，自駕下不可靜默裝。\n' +
-    '  → 先 AskUserQuestion 同步彈窗問使用者（白話講要裝什麼套件、為何需要、有無更輕方案），拍板後再裝。');
+  if (isNewDependency(command)) {
+    let allowed = false, pkgs = [];
+    try {
+      const pol = JSON.parse(stripBom(readFileSync(join(cwd, '.flow', 'policy.json'), 'utf8')));
+      pkgs = extractDepNames(command);
+      allowed = depAllowed(pkgs, pol && pol.deps && pol.deps.allow);
+    } catch { allowed = false; }
+    if (allowed) {
+      // 放行但留審計線：自動落一筆 decision（policy 放行不是無痕跳過）。審計失敗不擋放行。
+      try {
+        const S0 = await import('../skills/flow-toolkit/statelib.mjs');
+        const slug = pkgs.join('-').replace(/[^\w.\-]+/g, '-').slice(0, 60) || 'pkg';
+        await S0.recordDecision(cwd, `dep-auto-${slug}`, { choice: `allowlist 放行安裝：${pkgs.join(' ')}`, why: '.flow/policy.json deps.allow 命中（W4-2 預核准）', by: 'auto-gate' });
+      } catch { /* 審計非關鍵 */ }
+    } else block(
+      'Flow 自駕閘門：裝新相依是 T1 必停集合，自駕下不可靜默裝' + (pkgs.length ? `（${pkgs.join(' ')} 不在 .flow/policy.json 的 deps.allow）` : '') + '。\n' +
+      '  → 先 AskUserQuestion 同步彈窗問使用者（白話講要裝什麼套件、為何需要、有無更輕方案），拍板後再裝。\n' +
+      '  常用可信套件可請使用者拍板加進 .flow/policy.json：{ "deps": { "allow": ["<pkg>", "@scope/*"] } }（支援尾 * 前綴），下次免停。');
+  }
   if (isDestructiveDB(command)) block(
     'Flow 自駕閘門：偵測到破壞性 DB 操作（DROP/TRUNCATE / 無 WHERE 的 DELETE/UPDATE），是 T1 必停集合。\n' +
     '  → 先 AskUserQuestion 同步彈窗確認（會毀哪些資料、可否回復、是否真要），拍板後再執行。');

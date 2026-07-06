@@ -47,13 +47,11 @@ Web 驗證（完整範本 `references/playwright-real-data-template.md`）：
 
 ## 兩層 sensor + 有界重試
 
-- **Computational sensor**（便宜、確定性、ms–秒）：lint / type-check / unit / 既有測試 → **每個迴圈先跑**，當快速回饋（先擋語法錯，別在貴的 headed e2e 上燒一輪）。
-- **Inferential sensor**（貴、LLM 語義）：security / 耦合 review → 慢節奏跑。
-- **修復迴圈**：失敗 → 自動修 → 重跑。**便宜迴圈放寬上限但非無限**——lint/type/unit/build 命令會被 `flow-stall-monitor` 斷路器記帳，同一失敗連 ≥N 輪注入 STALL、自駕下連 ≥N+3 輪 `flow-auto-gate` 硬擋（防「lint 一直紅但每次不一樣」整夜燒）；**貴迴圈（完整 headed e2e / CI）有界**：1 次 + 1 次自動修 → 升級暫停問使用者。**check-in 間隔**（連 3 輪未過 / 同錯連 2 輪改動無效）→ 暫停問使用者，回覆後繼續，狀態維持「未完成」。**check-in 是暫停不是終止**，絕不到間隔就收工放生半成品。
+Computational（lint/type-check/unit，每迴圈先跑）vs Inferential（security/耦合 review，慢節奏）兩層、修復迴圈上限與 check-in 間隔，細節見 `references/verification-playbook.md` §二、§四。
 
 ## Step 0：起服務前置（避免驗到卡 port 的舊 build）
 
-bind/listen port 的產出物驗證前 SHALL 清 port：偵測 PID → 是本專案舊 server 才終止（Windows `Stop-Process -Id <pid> -Force`、mac/linux `kill -9 <pid>`，或 `lsof -ti:<port> | xargs kill`）、外來/不明 process 暫停問使用者 → 確認載入本次 build。
+bind/listen port 的產出物驗證前 SHALL 清 port，細節見 `references/verification-playbook.md` §四 Step 0。
 
 ## journey 真實性閘門（web 宣稱綠前 SHALL 跑，確定性節點）
 
@@ -72,26 +70,13 @@ Web 產出物宣稱綠**之前 SHALL 跑** `flow-state journey-check`（mac/linu
 
 不綠 → 進修復迴圈。
 
-## 全綠後：驗證垃圾清理（失敗一律保留 artifact 供 debug）
+## 全綠後：驗證垃圾清理
 
-- **檔案型產物（確定性，全綠後 SHALL 跑）**：`node "<flow-toolkit>/clean-verify-artifacts.mjs" --root <repo> --apply --gitignore`（路徑：Windows PS `$env:USERPROFILE\.claude\skills\flow-toolkit\`、mac/linux `~/.claude/skills/flow-toolkit/`）。白名單整刪 **Playwright MCP 的 `.playwright-mcp/`（console-*.log / page-*.yml a11y snapshot / 截圖）**、`test-results/`、coverage、`*.log`、`*.trace.zip`、`__pycache__` 等，並補 `.gitignore`；保 source 測試檔／specs／`.flow` ledger／baseline。**沒清就 commit 會被 `flow-commit-gate` 閘門一 exit 2 擋下**（先清、再 commit，對稱於「先標、再 commit」）。
-- 自起 process（PID 辨識，外來禁盲殺）、拋棄式驗證 DB/container 一併收。
-- **C-data 測試資料分層**：L0 可拋棄 DB 整個 drop / L1 持久 local 可精準識別 → DELETE 帶**精確 WHERE**（先列預估、差異即停手）/ L2 無法識別 → 列清單問 / L3 remote/共用/prod → 一律問
-- **絕不碰**：`.flow/` 狀態檔、無精確 WHERE 的 DB 刪除、tracked 非可重生檔、失敗時 artifact
+全綠才清、失敗一律保留 artifact 供 debug。跑 `node "<flow-toolkit>/clean-verify-artifacts.mjs" --root <repo> --apply --gitignore`（Windows PS `$env:USERPROFILE\.claude\skills\flow-toolkit\`、mac/linux `~/.claude/skills/flow-toolkit/`）。**沒清就 commit 會被 `flow-commit-gate` 閘門一 exit 2 擋下**。白名單／Tier 分級／週邊資源／C-data 分層／絕不碰清單細節見 `references/verification-playbook.md` §七。
 
 ## 驗證矩陣（依產出物型別選驗法，多型別並存則全跑）
 
-| 型別 | 綠燈條件 |
-|---|---|
-| Web 前端 | production build + Playwright headed + console/pageerror 零 + 真實資料鏈路 + 效能 budget |
-| 桌面 GUI（Tkinter/PyQt/PySide/Electron） | 真啟動 app（Linux/CI 用 xvfb 虛擬顯示）+ 程式化驅動真互動（PyQt/PySide→pytest-qt 點按鈕/斷言 widget·signal；Electron→Playwright 直驅）+ 視窗真出現、無 traceback + 涉資料走真實鏈路（seed 真 DB→GUI 操作→真讀回，禁 mock）；無法程式化驅動→啟動 smoke+screenshot 存證；真環境不可能→人工親眼確認+寫報告 |
-| 後端 API | 服務啟動 + health + 打關鍵 endpoint 驗 status/shape（真 DB）+ 啟動 log 無 error |
-| DB migration | 套到可拋棄 DB 成功 + schema 物件存在 + round-trip |
-| CLI/腳本 | 真執行代表性參數（destructive 先 --dry-run）→ exit 0、無 traceback |
-| Library | build + import smoke + 跑測試 / type-check |
-| 純 config/docs | 仍 SHALL 跑對應 linter + 既有測試仍綠（不是什麼都不做） |
-
-未列型別比照最接近者；原則：**一定要有「真的跑起來」的客觀綠燈訊號**。
+依產出物型別（Web/桌面 GUI/後端 API/DB migration/CLI/Library/背景 job/Infra/AI agent/純 config）選對應綠燈條件，完整矩陣見 `references/verification-playbook.md` §三。未列型別比照最接近者；原則：**一定要有「真的跑起來」的客觀綠燈訊號**。
 
 ## 完成判準（self-check）
 - [ ] Evaluator 是獨立 context、對抗人設、只看檔案

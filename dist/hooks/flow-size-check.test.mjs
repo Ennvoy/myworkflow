@@ -45,6 +45,23 @@ test('UserPromptSubmit 節流：同大小不重提', async () => {
   });
 });
 
+test('W4-1 PostToolUse：file_path 為 specs/requirements.md 且 >50KB → 注入膨脹提醒', async () => {
+  await withProject(async (root) => {
+    await writeFile(path.join(root, 'specs', 'requirements.md'), 'x'.repeat(60 * 1024), 'utf8');
+    const out = runHook({ hook_event_name: 'PostToolUse', cwd: root, tool_input: { file_path: 'specs/requirements.md' } });
+    assert.match(out, /SDD 檔案膨脹/);
+  });
+});
+
+test('W4-1 PostToolUse：file_path 為 src/app.ts（非 specs .md）→ 快速返回、不掃描', async () => {
+  await withProject(async (root) => {
+    // 即便 specs 目錄真有膨脹檔，非 specs/.sdd 的 .md 路徑要提早返回，不觸發任何掃描
+    await writeFile(path.join(root, 'specs', 'requirements.md'), 'x'.repeat(60 * 1024), 'utf8');
+    const out = runHook({ hook_event_name: 'PostToolUse', cwd: root, tool_input: { file_path: 'src/app.ts' } });
+    assert.equal(out.trim(), '');
+  });
+});
+
 test('非 Flow 專案 → 靜默', () => {
   const out = runHook({ hook_event_name: 'SessionStart', cwd: os.tmpdir() + '/definitely-not-a-flow-proj-xyz' });
   assert.equal(out.trim(), '');

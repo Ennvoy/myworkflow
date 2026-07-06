@@ -908,6 +908,15 @@ test('parsePerfBudget / perfMeetsBudget：上界/下界/單位錨定/條件句�
   assert.match(S.perfMeetsBudget(500, lo), /未達下限/);
 });
 
+test('parsePerfBudget：千分位逗號 budget 不被逗號截斷（1,000ms / 2,000 tokens 回歸）', () => {
+  // 過去 [\d.]+ 遇逗號截斷把「< 1,000ms」錯解成 budget=1、「≤ 2,000 tokens」錯解成 budget=2，
+  // 讓實測達標（85ms / 1155 tokens）反被判超標。strip 逗號後應回真正的 1000 / 2000。
+  assert.deepEqual(S.parsePerfBudget('SessionStart 注入 hook p95 < 1,000ms'), { op: '<', budget: 1000, unit: 'ms', lower: false });
+  assert.deepEqual(S.parsePerfBudget('單次注入總量 ≤ 2,000 tokens'), { op: '≤', budget: 2000, unit: '', lower: false });
+  assert.equal(S.perfMeetsBudget(85.62, S.parsePerfBudget('p95 < 1,000ms')), null, '85.62ms 應達標 <1000ms');
+  assert.equal(S.perfMeetsBudget(1155, S.parsePerfBudget('≤ 2,000 tokens')), null, '1155 tokens 應達標 ≤2000');
+});
+
 test('perfIsNonMeasurable：無 budget/N/A 的 REQ-PERF → true（走 perf-waiver 不是 verify-perf）（W2-4 死鎖修）', () => {
   const md = ['REQ-PERF-001：p95 <= 400ms。', 'REQ-PERF-002：不阻塞主線程（設計約束）。', 'REQ-PERF-003：N/A（內部工具）。'].join('\n');
   assert.equal(S.perfIsNonMeasurable(md, 'REQ-PERF-001'), false, '有 budget＝量測型');
@@ -1071,6 +1080,43 @@ test('auditJourneyTest：深層 goto / 無互動 → 只進 warnings（不擋）
   assert.equal(a.problems.length, 0, '軟訊號不進 problems（loose 防誤殺）');
   assert.ok(a.warnings.some(w => /深層/.test(w)), '深層 goto 進 warnings');
   assert.ok(a.warnings.some(w => /互動/.test(w)), '無點擊互動進 warnings');
+});
+
+// ── W4-4：journal 歸檔（archiveJournal）──
+
+test('archiveJournal：delivered task 的任務域事件搬歸檔；未交付/全域事件留主檔；回傳 archived/kept 數正確；冪等', async () => {
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [{ id: 'F-1' }, { id: 'F-2' }] });
+    await S.recordCheckpoint(root, 'F-1', 'green', '完成');
+    await S.transition(root, 'F-1', 'building', 'delivered');
+    await S.recordVerifyAttempt(root, 'pytest tests/x.py', 'ok', 0, 'F-1');
+    await S.recordCheckpoint(root, 'F-2', 'red', '進行中');
+    await S.appendJournal(root, { ev: 'spec.frozen', reqHash: 'abc' });   // 全域事件（無 taskId/id 綁定）
+
+    const r1 = await S.archiveJournal(root, ['F-1']);
+    assert.equal(r1.archived, 3, 'F-1 的 checkpoint/task.transition/verify.attempt 三筆搬歸檔');
+    assert.equal(r1.kept, 2, '主檔留 F-2 checkpoint ＋ spec.frozen 全域事件');
+
+    const mainJournal = await S.readJournal(root);
+    assert.equal(mainJournal.length, 2, '主檔恰留 2 筆');
+    assert.ok(!mainJournal.some(e => e.ev === 'checkpoint' && e.id === 'F-1'), 'F-1 checkpoint 已搬離主檔');
+    assert.ok(!mainJournal.some(e => e.ev === 'task.transition' && e.id === 'F-1'), 'F-1 task.transition 已搬離主檔');
+    assert.ok(!mainJournal.some(e => e.ev === 'verify.attempt' && e.taskId === 'F-1'), 'F-1 verify.attempt 已搬離主檔');
+    assert.ok(mainJournal.some(e => e.ev === 'checkpoint' && e.id === 'F-2'), 'F-2（未交付）checkpoint 留主檔');
+    assert.ok(mainJournal.some(e => e.ev === 'spec.frozen'), '全域事件留主檔（不分 task）');
+
+    const archivePath = path.join(root, '.flow', 'archive', 'journal.ndjson');
+    assert.ok(existsSync(archivePath), '歸檔檔案落地');
+    const archiveEvents = (await readFile(archivePath, 'utf8')).split('\n').filter(Boolean).map(l => JSON.parse(l));
+    assert.equal(archiveEvents.length, 3);
+    assert.ok(archiveEvents.some(e => e.ev === 'checkpoint' && e.id === 'F-1'));
+    assert.ok(archiveEvents.some(e => e.ev === 'task.transition' && e.id === 'F-1'));
+    assert.ok(archiveEvents.some(e => e.ev === 'verify.attempt' && e.taskId === 'F-1'));
+
+    const r2 = await S.archiveJournal(root, ['F-1']);
+    assert.equal(r2.archived, 0, '再跑一次冪等——F-1 的任務域事件已搬空，沒東西可再搬');
+    assert.equal(r2.kept, 2, '主檔內容不變');
+  });
 });
 
 // ── B 崩潰容錯：原子寫 / mid-task checkpoint / 對帳 reconcile / verifyTaskId 白嫖防線 / summarizeView / pickNext ──
@@ -1420,4 +1466,37 @@ test('#10：manifestScopeHash 對 updatedAt/mode/projectType 穩定、只認 blo
 test('#11：extractAllReqIds 不吞尾 ASCII 句點（task 行 REQ id 接句號）', () => {
   assert.deepEqual(S.extractAllReqIds('對應 REQ-E2E-001.'), ['REQ-E2E-001'], '尾點不進 id（否則變幻覺 id）');
   assert.deepEqual(S.extractAllReqIds('REQ-E2E-001, REQ-PERF-002'), ['REQ-E2E-001', 'REQ-PERF-002']);
+});
+
+test('W0-2 hookWiringProblems：實存 flow hook 未註冊即回報；test/非註冊型/非 flow 檔排除', () => {
+  const files = ['flow-auto-gate.mjs', 'flow-commit-gate.mjs', 'flow-commit-gate.test.mjs',
+    'flow-precommit.mjs', 'commit-gate-core.mjs', 'settings.flow.json'];
+  const settings = '{"hooks":{"PreToolUse":[{"hooks":[{"command":"node hooks/flow-commit-gate.mjs"}]}]}}';
+  assert.deepEqual(S.hookWiringProblems(files, settings), ['flow-auto-gate.mjs'],
+    'auto-gate 檔案在、沒接線 → 回報（漏接線實證）；.test/flow-precommit/commit-gate-core 不算');
+  assert.deepEqual(S.hookWiringProblems(files, settings + ' flow-auto-gate.mjs'), [], '接上即空');
+  assert.deepEqual(S.hookWiringProblems([], settings), [], '空清單不炸');
+});
+
+test('W0-5 syncDrift：內容不一致/安裝區缺檔回報，方向提示認 mtime；test 檔與 design-systems 排除', async () => {
+  await withRoot(async (root) => {
+    const src = path.join(root, 'dist');
+    const home = path.join(root, 'home');
+    await mkdir(path.join(src, 'hooks'), { recursive: true });
+    await mkdir(path.join(src, 'skills', 'flow-toolkit', 'references', 'design-systems'), { recursive: true });
+    await mkdir(path.join(home, 'hooks'), { recursive: true });
+    await writeFile(path.join(src, 'hooks', 'a.mjs'), 'same', 'utf8');
+    await writeFile(path.join(home, 'hooks', 'a.mjs'), 'same', 'utf8');
+    await writeFile(path.join(src, 'hooks', 'b.mjs'), 'old', 'utf8');
+    await new Promise((r) => setTimeout(r, 20));                       // 確保 home 的 mtime 較新
+    await writeFile(path.join(home, 'hooks', 'b.mjs'), 'hotfixed', 'utf8');
+    await writeFile(path.join(src, 'hooks', 'c.mjs'), 'new-file', 'utf8');           // 安裝區沒有
+    await writeFile(path.join(src, 'hooks', 'd.test.mjs'), 'test', 'utf8');          // 排除
+    await writeFile(path.join(src, 'skills', 'flow-toolkit', 'references', 'design-systems', 'x.css'), 'skip', 'utf8');
+    const d = await S.syncDrift(src, home);
+    assert.deepEqual(d.missing, ['hooks/c.mjs'], 'test 檔與 design-systems 不算 missing');
+    assert.equal(d.differing.length, 1);
+    assert.equal(d.differing[0].rel, 'hooks/b.mjs');
+    assert.equal(d.differing[0].newer, 'installed', '安裝區較新 → 提示回寫 dist');
+  });
 });

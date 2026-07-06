@@ -16,19 +16,33 @@ Flow = **5 階段 spec-driven 流程** + **3 條跨階段主軸**（context 預�
    └──────────── 人工閘門（你拍板）每階段之間 ────────────────────────┘
 ```
 
-## 2. 狀態機與檔案耐久狀態
+## 2. `.flow/` 目錄現況地圖
 
-Flow 的狀態**全在磁碟**，不在對話 context（harness 鐵則：狀態外部化 → agent 可拋棄、可恢復、純讀檔接手）。
+Flow 的狀態**全在磁碟**，不在對話 context（harness 鐵則：狀態外部化 → agent 可拋棄、可恢復、純讀檔接手）。`specs/requirements.md`（凍結）→ `specs/design.md` + `specs/tasks.md` → 各 feature 同 repo 平行生成 → 序列整合進 trunk；`.flow/` 底下是這條主軸沿途落下的機讀證據，`statelib.mjs` 是唯一讀寫入口（write-ahead：先寫意圖再做）。現況：
 
-- `specs/requirements.md`（凍結）→ `specs/design.md` + `specs/tasks.md` → 各 feature 同 repo 平行生成 → 序列整合進 trunk。
-- `.flow/state.json`（5 欄機讀狀態）：
-  ```json
-  { "phase": "plan-done", "task": "F-2", "tdd": "green", "verify": "ok:tests/e2e/items.realdata.spec.ts", "commit": "a1b2c3d" }
-  ```
-  - `phase`：spec-done / plan-done / building / shipped
-  - `tdd`：none / red:<ref> / green / refactored / n/a / skipped:<reason>
-  - `verify`：none / ok:<證據ref>
-  - 寫入時機：每個 action **write-ahead**（先寫意圖再做），確定性節點不靠模型判斷。
+```
+.flow/
+├── manifest.json          # wave --compute 算出的波次拓樸（blockedBy/conflictZone）；scope --wave、resume 判 blockedBy 是否已滿足的權威來源
+├── state.json             # 當前 task 的衍生指標（phase/tdd/verify/commit），瞬時、可從 journal 重建，不入版控
+├── journal.ndjson         # append-only 事件log（含 checkpoint 事件）；reconstruct 的唯一真相，N 個並行 worker 各自 dangling 都留得住
+├── lessons.ndjson         # 已知死路（failedApproach/why），再生計畫時 resume 提示別重走
+├── ledger/                # 逐 task 交付狀態（delivered/…），tasks.md `[x]` 與此對帳，分歧時以 ledger 為唯一真相
+├── decisions/             # 自駕模式 C 類分歧決策 + perf-waiver.json 等豁免記錄
+├── trace/
+│   ├── req-index.json     # spec-ready --freeze 瞬間落的 REQ 全集＋requirements hash＋HEAD；下游 plan-check/verify-e2e/complete-check 的凍結分母
+│   ├── wave-plan.json     # wave --compute 輸出：波次拓樸 + 逐 task 承接的 REQ 區塊（含 manifest/reqHash）；dispatch 給 worker 的唯一事實來源
+│   └── plan-check.json    # plan-check 通過後落檔：REQ↔task 覆蓋 + manifest 一致性對賬記錄，complete-check 讀它核對 manifest hash 未漂移
+├── redteam/<id>.json      # 每個 feature 的紅軍攻擊清單＋coverage；redteam --wave 整合前擋 high 攻擊未 covered/testFile 不實存
+├── code-review/
+│   └── findings.json      # 藍軍 code-review 落檔；complete-check 要求 red flag 全終局（fixed/waiver）才准出貨
+├── spec-review/           # spec-redteam/spec-consistency/codex 三個 lens 逐輪 ledger（<lens>-r<round>.json）+ resolutions.json；spec-ready --freeze 對賬收斂
+└── verify/
+    ├── <id>.json          # 逐 REQ-E2E 驗證記錄，complete-check 逐條核對 pass/n-a
+    └── perf-<id>.json     # 逐 REQ-PERF 驗證記錄，verify-perf 對賬達標
+```
+
+- 讀寫閘門對應：`flow-verify-gate`／`flow-state done` 讀 `state.json`+`ledger/`；`flow-state spec-ready --freeze` 讀 `spec-review/`＋落 `trace/req-index.json`；`flow-state wave --compute` 落 `manifest.json`+`trace/wave-plan.json`；`flow-state scope --wave`／`redteam --wave` 整合前分別核對 `manifest.json` 與 `redteam/`；`flow-state plan-check` 落 `trace/plan-check.json`；`flow-state complete-check` 一次核對 `trace/req-index.json`＋`verify/`＋`trace/plan-check.json`＋`code-review/findings.json`。
+- 瞬時檔（`state.json`／`*.mode`／`monitor.port`／`*.log`）由 `.flow/.gitignore` 排除；其餘（`manifest.json`／`ledger/`／`redteam/`／`verify/`／`decisions/`／`spec-review/`／`trace/`／`code-review/`／`journal.ndjson`／`lessons.ndjson`）是耐久證據，照常 track、換機 clone 即可 `reconstruct`。
 - `phase` 偵測讓 `/flow`、`/flow-resume` 從對的地方接續，不重做已 delivered 的。
 
 ## 3. 五階段設計理由
@@ -55,7 +69,7 @@ Flow 的狀態**全在磁碟**，不在對話 context（harness 鐵則：狀態�
 ## 4. 三條跨階段主軸
 
 ### A. Context 預算（防腐化 = 效率 + 收束的根）
-n² attention：可用上限 ~170k、~147k 退化、>60% 變笨。ETH 實證巨型 always-on 檔 −3% 成功率 +20% 成本。對策：薄 root（`rules/flow.md` ~95 行目錄）+ on-demand reference + subagent context firewall（只回 1–2k 蒸餾）+ compaction 先刪尾保 cache prefix（hit 價 = miss 1/10）。
+n² attention：可用上限 ~170k、~147k 退化、>60% 變笨。ETH 實證巨型 always-on 檔 −3% 成功率 +20% 成本。對策：薄 root（`rules/flow.md` ~67 行目錄）+ on-demand reference + subagent context firewall（只回 1–2k 蒸餾）+ compaction 先刪尾保 cache prefix（hit 價 = miss 1/10）。
 
 ### B. 檔案耐久狀態（多工 + 恢復的根）
 Anthropic Managed Agents「brain/hands/session 解耦」+ append-only event log + wake/resume。Flow：狀態進 specs/+.flow/+git，worker 是同 repo 的 cattle（只寫各自不重疊的檔），殺不死、純讀檔 resume。

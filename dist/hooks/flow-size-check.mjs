@@ -27,9 +27,15 @@ function main() {
   try { input = JSON.parse(stripBom(raw).trim() || '{}'); } catch {}
   const cwd = input.cwd || process.cwd();
   const event = input.hook_event_name || 'SessionStart';
+  // W4-1（R1）：加掛 PostToolUse(Write|Edit)——自駕連續多輪不打字時，SDD 檔膨脹才不會整段失明。
+  // 成本守則：只有「寫的是 specs//.sdd/ 的 .md」才往下量，其餘立即返回（每次寫檔多的只是這個 regex）。
+  if (event === 'PostToolUse') {
+    const fp = String(((input.tool_input ?? input.toolInput ?? {}).file_path) ?? '');
+    if (!/(^|[\\\/])(specs|\.sdd)[\\\/].*\.md$/i.test(fp)) return;
+  }
   if (!existsSync(join(cwd, 'specs')) && !existsSync(join(cwd, '.flow'))) return;
   const hasFlow = existsSync(join(cwd, '.flow'));
-  const isPrompt = event === 'UserPromptSubmit';
+  const isPrompt = event === 'UserPromptSubmit' || event === 'PostToolUse';   // 兩者共用同一節流（marker+SIZE_REGROW）
   const msgs = [];
 
   // ── SDD 檔膨脹 ──

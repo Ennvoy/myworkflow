@@ -10,6 +10,8 @@ description: Flow Phase 5 — 出貨收束。跨 feature 整合 e2e + 完整效�
 
 對 `main..HEAD` 全 diff 跑獨立 `code-reviewer` subagent（另開 context）：紅軍攻擊面（讀 `.flow/redteam/*.json`，build 落檔的機讀清單，**必有輸入**——缺檔＝build 流程缺陷，列為問題）是否真有防禦、每個 REQ 找不找得到對應實作、code smell、安全/效能潛在問題。**finding 不論是否在本次 diff 範圍 SHALL 全列**（順手修紀律）；安全 red flag 一律暫停。diff 含 auth/RBAC/migration/payment/金錢/個資 → 建議跑 codex 獨立對抗審查（裝了才問）。
 
+**散文 report SHALL 落檔**：藍軍回的完整 markdown report（品質分級、red/yellow 逐條、REQ 對賬表）原文寫入 `.flow/reports/code-review-<yyyymmddHHmm>.md`（UTF-8）——findings JSON 只留精簡欄位，敘述不落檔就讀完即逝。落檔是人讀留底，機讀 findings 仍是 complete-check 對賬來源。
+
 **red flag SHALL 落機讀檔**：把 code-reviewer 回的結構化 findings 存暫存檔 → `flow-state review-code --file <findings.json>` 落 `.flow/code-review/findings.json`（零 red flag 也落空陣列＝證明審過）。接著逐條把 red flag 走終局：修了 → `flow-state code-resolve <CR-id> --as fixed:<file:line/commit/測試名>`；使用者拍板不修 → `--as waiver:<decisionId>`（先 `flow-state decision` 留檔）。**Step 5 的 complete-check 逐條對賬，未終局的 red flag 擋 ship**——把「藍軍 red flag」從散文清單升級成完成謂詞的一部分（yellow flag 記錄不擋）。
 
 ## Step 2：跨 feature 整合 journey
@@ -39,6 +41,10 @@ description: Flow Phase 5 — 出貨收束。跨 feature 整合 e2e + 完整效�
 
 通過後：寫 state.json `phase="shipped"`、發 `<promise>COMPLETE</promise>`，**停止迭代**（滿足謂詞就收，不再打磨）。任一未中 → 回對應階段，**不准出通過報告**。
 
+## Step 5.5：出貨收據（選配，on-demand 才做）
+
+`complete-check` 通過後可提一句「要不要一份出貨收據（可留存/分享的交付證明頁）？」，**使用者明說要才做**——不彈窗追問、不預設產出、不綁任何必跑路徑。做法：讀機讀記錄（`.flow/verify/`、verify-perf、`.flow/code-review/findings.json`、diff 統計）組單頁自足 HTML 落 `.flow/reports/ship-receipt.html`，先載 `artifact-design` skill 再用 Artifact 工具發布成 claude.ai 私有頁。**收據純 render 機讀對賬結果，不得重算/軟化判定、不得替代 complete-check**；Artifact 不可用或發布失敗 → 本地 HTML 照留、出貨照走。頁面規格與護欄見 `references/ship-receipt.md`。
+
 ## Step 6：全系統垃圾兜底 + 出貨準備
 
 - **全系統清驗證垃圾（commit 前 SHALL 做）**：跑 `clean-verify-artifacts.mjs --apply --gitignore`（整合 e2e／效能驗收會生最多 **`.playwright-mcp/` MCP 殘留**，ship 前尤其多）。**沒清就 commit 會被 `flow-commit-gate` 閘門一 exit 2 擋**。細節見 `references/verification-playbook.md` §七。
@@ -46,7 +52,7 @@ description: Flow Phase 5 — 出貨收束。跨 feature 整合 e2e + 完整效�
 - 出貨準備：**呼叫 `git-tools` skill** 做智慧 commit+push（push 失敗回報、不擅自 `--force`）+ PR description（對應 REQ、列驗證證據與效能數字）。merge 衝突 / `.env` 等敏感檔才問使用者。
 
 ## 完成判準（self-check）
-- [ ] 全 diff 獨立審查跑過、finding 全列、安全 red flag 已處理
+- [ ] 全 diff 獨立審查跑過、finding 全列、安全 red flag 已處理、散文報告已落檔 `.flow/reports/`
 - [ ] 跨 feature e2e + auth/role 矩陣綠（真實資料鏈路）
 - [ ] 所有 REQ-PERF-* 達 budget（p50+p95）
 - [ ] X-* 清空、完成謂詞全中、發 COMPLETE

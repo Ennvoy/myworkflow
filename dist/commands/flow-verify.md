@@ -86,4 +86,5 @@ Web 產出物宣稱綠**之前 SHALL 跑** `flow-state journey-check`（mac/linu
 - [ ] 效能每維度達 budget（p50+p95），無「太慢但算過」
 - [ ] state.json verify/tdd 由真跑結果寫入，非手填
 - [ ] 每條真綠的 `REQ-E2E-*` 已 `flow-state verify-e2e` 記錄（供 ship 對賬）
+- [ ] Evaluator 驗證報告已落檔 `.flow/reports/`（人讀留底；機讀記錄仍是唯一對賬來源）
 - [ ] 全綠才清垃圾、失敗保留 artifact

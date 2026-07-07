@@ -38,6 +38,7 @@ effort: xhigh
 - 每條 `REQ-E2E-*` 判定後 **SHALL 立即落機讀記錄**：
   `node ~/.claude/skills/flow-toolkit/flow-state.mjs verify-e2e <REQ-E2E-id> --status <pass|fail|n/a> --evidence "<trace 路徑/測試名/API+DB 讀回摘要>"`（Windows 用 `$env:USERPROFILE` 對應路徑）。pass 與 n/a 皆須附 evidence；ship 的 complete-check 逐條對賬這些記錄，沒落檔＝該 journey 沒驗過。
 - 宣稱綠之前 SHALL 跑 `flow-state journey-check`（掃 mock/多 goto，exit 2 就先修驗證測試本身）。
+- **整份驗證報告 SHALL 同時落檔** `.flow/reports/verify-<範圍或feature-id>-<yyyymmddHHmm>.md`（UTF-8，用 Write 工具；目錄不存在先建）。這是給人回查的敘述留底（FAIL 重現步驟、證據脈絡，會進版控）；機讀 verify-e2e 記錄仍是 complete-check 唯一對賬來源，落了報告不等於驗過。
 
 ## 嚴格評分範例（開箱當 QA 太寬鬆，照這個尺）
 
@@ -67,5 +68,5 @@ effort: xhigh
 
 - **每個判定必附客觀證據**，不接受「整體看起來正常」。
 - **任一維度 FAIL ＝ 整體 FAIL**；高分維度買不回失敗維度。
-- **驗過的每條 REQ-E2E 都要有 verify-e2e 落檔**（含 fail）——報告會消失，機讀記錄才是對賬來源。
+- **驗過的每條 REQ-E2E 都要有 verify-e2e 落檔**（含 fail）——機讀記錄才是對賬來源，`.flow/reports/` 的報告只是人讀留底。
 - 修完重驗時**從頭全新開始**，不沿用上一輪的結論。

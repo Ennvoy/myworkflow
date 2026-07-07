@@ -50,7 +50,7 @@ async function writeJSON(p, obj) { await writeFileAtomic(p, JSON.stringify(obj, 
 // 把「耐久證據進 git、瞬時/衍生檔忽略」從散文鐵則釘成確定性檔，放在 .flow/ 內＝self-contained、隨目錄走、
 // 不必動專案根 .gitignore（那支由 clean-verify-artifacts 管另一塊）。清單為相對 .flow/ 的瞬時檔：
 //   state.json（當前 task 衍生指標、每動一次重寫）/ state.json.mode / monitor.port / *.log / *-reminded（ctx/size 提醒旗標）。
-// 耐久證據（manifest.json / ledger/ / redteam/ / verify/ / decisions/ / spec-review/ / trace/ / code-review/ / journal.ndjson / lessons.ndjson / 本 .gitignore）
+// 耐久證據（manifest.json / ledger/ / redteam/ / verify/ / decisions/ / spec-review/ / trace/ / code-review/ / reports/ / journal.ndjson / lessons.ndjson / 本 .gitignore）
 // 不在清單 → 照常 track（換機 clone 即 reconstruct、ship 審查讀紅軍清單）。冪等 managed block：只換自己區塊、保留使用者自訂行。
 const FLOW_GITIGNORE_BLOCK = [
   '# >>> flow-state (managed by flow-toolkit) >>>',

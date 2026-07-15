@@ -528,15 +528,21 @@ export function specResolutionProblem(findingId, asStr, requirementsMd, decision
 
 // review-check 核心（純函式）：每條 finding 都要有終局且指標當下仍有效——發現不能無痕蒸發。
 // currentHash（選填）：給了就對 resolved 加「文件有進展」錨點（finding 所屬輪的 docHash ≠ 現行）。
-export function reviewCheckAudit(ledgers, resolutions, requirementsMd, decisionExists, currentHash) {
+// frozenAt（選填）：最後一次 spec.frozen 時戳。落檔於該時點之前的輪＝上個週期的歷史 findings——
+// 當時 freeze 已對現行文件全終局對賬過（凍結事件即證據），其 resolved 指向的 REQ 會隨迭代歸檔而
+// 不在新 requirements.md，對「現行」文件重驗必偽陽性擋死新迭代。故歷史輪只驗「終局存在」
+// （不可蒸發不放鬆），指標有效性重驗只吃當前週期的輪。
+export function reviewCheckAudit(ledgers, resolutions, requirementsMd, decisionExists, currentHash, frozenAt = '') {
   const problems = [];
   const res = {};
   for (const [k, v] of Object.entries(resolutions || {})) res[k.toUpperCase()] = v;
   for (const rec of (ledgers || [])) {
+    const historical = !!frozenAt && (rec.at || '') <= frozenAt;
     for (const f of (rec.findings || [])) {
       const id = String(f.id || '').toUpperCase();
       const r = res[id];
       if (!r) { problems.push(`${id}（${rec.lens} r${rec.round}，${f.severity}）未終局——flow-state review-resolve ${id} --as <resolved:REQ-xxx|open|deferred:<id>|rejected:<id>>`); continue; }
+      if (historical) continue;
       const p = specResolutionProblem(id, r.as, requirementsMd, decisionExists, { findingDocHash: rec.docHash, currentHash });
       if (p) problems.push(`${id}：${p}`);
     }
@@ -591,10 +597,15 @@ export async function listSpecReviewLedgers(root) {
 // 「各 ≥2 輪＋末輪零新發現」要對本週期重新成立，不能被上個週期累計的輪數蒙混（rounds.length>=cap 永久為真）。
 // spec.frozen journal 事件是天然斷代點；ledger 帶 at 時戳。歷史輪的 findings 已終局，reviewCheckAudit 仍吃全量（保「不可蒸發」）。
 export function currentCycleLedgers(ledgers, journal) {
-  let t0 = '';
-  for (const e of (journal || [])) if (e && e.ev === 'spec.frozen' && (e.t || '') > t0) t0 = e.t || '';
+  const t0 = lastFrozenAt(journal);
   if (!t0) return ledgers || [];
   return (ledgers || []).filter(r => (r.at || '') > t0);
+}
+// 最後一次 spec.frozen 的 journal 時戳（''＝從未凍結）——週期斷代的單一事實來源。
+export function lastFrozenAt(journal) {
+  let t0 = '';
+  for (const e of (journal || [])) if (e && e.ev === 'spec.frozen' && (e.t || '') > t0) t0 = e.t || '';
+  return t0;
 }
 
 export async function readSpecResolutions(root) { return readJSON(specResolutionsPath(root), {}); }

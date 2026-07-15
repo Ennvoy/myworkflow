@@ -778,6 +778,32 @@ test('reviewCheckAudit：未終局/指標失效點名；全終局＝零 problems
   assert.deepEqual(ok, [], JSON.stringify(ok));
 });
 
+test('reviewCheckAudit：frozenAt 週期斷代——歷史輪只驗終局存在（REQ 已歸檔不偽陽性）、當前輪照驗指標', () => {
+  const frozenAt = '2026-07-06T00:00:00.000Z';
+  const dec = () => false;
+  const oldRound = { lens: 'redteam', round: 1, at: '2026-07-05T10:00:00.000Z', findings: [{ id: 'SR-RT-901', severity: 'high' }] };
+  const newRound = { lens: 'redteam', round: 2, at: '2026-07-15T10:00:00.000Z', findings: [{ id: 'SR-RT-902', severity: 'low' }] };
+  // 歷史輪 resolved 指向已歸檔（現行文件沒有）的 REQ → 不偽陽性
+  const hist = S.reviewCheckAudit([oldRound], { 'SR-RT-901': { as: 'resolved:REQ-ARCHIVED-9' } }, REVIEW_MD, dec, undefined, frozenAt);
+  assert.deepEqual(hist, [], JSON.stringify(hist));
+  // 歷史輪沒終局 → 仍點名（不可蒸發不放鬆）
+  const gone = S.reviewCheckAudit([oldRound], {}, REVIEW_MD, dec, undefined, frozenAt);
+  assert.equal(gone.length, 1);
+  assert.match(gone[0], /SR-RT-901.*未終局/);
+  // 當前週期輪指向不存在 REQ → 照擋
+  const cur = S.reviewCheckAudit([newRound], { 'SR-RT-902': { as: 'resolved:REQ-NOPE-1' } }, REVIEW_MD, dec, undefined, frozenAt);
+  assert.equal(cur.length, 1);
+  assert.match(cur[0], /REQ-NOPE-1 不存在/);
+  // 未曾凍結（frozenAt=''）→ 行為同舊版全量重驗
+  const legacy = S.reviewCheckAudit([oldRound], { 'SR-RT-901': { as: 'resolved:REQ-ARCHIVED-9' } }, REVIEW_MD, dec, undefined, '');
+  assert.equal(legacy.length, 1);
+});
+
+test('lastFrozenAt：取最後一次 spec.frozen 時戳；無凍結事件回空字串', () => {
+  assert.equal(S.lastFrozenAt([]), '');
+  assert.equal(S.lastFrozenAt([{ ev: 'spec.frozen', t: '2026-07-01T00:00:00Z' }, { ev: 'spec.frozen', t: '2026-07-06T00:00:00Z' }]), '2026-07-06T00:00:00Z');
+});
+
 // ── 第 2 波：全鏈路對賬純函式 ──
 
 test('extractAllReqIds：抽全型號 REQ id 去重保序大寫（W2-1）', () => {

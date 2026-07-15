@@ -877,13 +877,14 @@ switch (cmd) {
       // 全部 findings 走到四種終局之一。codex lens 有 ledger 就一併對賬、沒裝不強制。
       // 收斂判準只看「最後一次凍結之後」的輪（週期斷代，防再凍結時舊週期輪數蒙混）；終局對賬吃全量（findings 不可蒸發）。
       const allLedgers = await S.listSpecReviewLedgers(root);
-      const cycleLedgers = S.currentCycleLedgers(allLedgers, await S.readJournal(root));
+      const journal0 = await S.readJournal(root);
+      const cycleLedgers = S.currentCycleLedgers(allLedgers, journal0);
       const reqText = readFileSync(rp, 'utf8');
       const curHash = S.sha256Text(reqText);
       const decisionExists = (did) => existsSync(path.join(root, '.flow', 'decisions', did + '.json'));
       const srProblems = [
         ...S.lensConvergenceAudit(cycleLedgers, curHash),
-        ...S.reviewCheckAudit(allLedgers, await S.readSpecResolutions(root), reqText, decisionExists, curHash),
+        ...S.reviewCheckAudit(allLedgers, await S.readSpecResolutions(root), reqText, decisionExists, curHash, S.lastFrozenAt(journal0)),
       ];
       if (srProblems.length) {
         console.error('✗ 多角度審查未收斂，不能凍結（迴圈細節見 references/spec-review-loop.md）：');
@@ -1003,7 +1004,8 @@ switch (cmd) {
     const rp4 = path.join(root, 'specs', 'requirements.md');
     const reqMd = existsSync(rp4) ? readFileSync(rp4, 'utf8') : '';
     const problems = S.reviewCheckAudit(ledgers, await S.readSpecResolutions(root), reqMd,
-      (did) => existsSync(path.join(root, '.flow', 'decisions', did + '.json')), S.sha256Text(reqMd));
+      (did) => existsSync(path.join(root, '.flow', 'decisions', did + '.json')), S.sha256Text(reqMd),
+      S.lastFrozenAt(await S.readJournal(root)));
     if (problems.length) {
       console.error('✗ findings 終局化對賬未過（發現不能無痕蒸發）：');
       for (const p of problems) console.error('  - ' + p);

@@ -243,3 +243,11 @@ test('#8：F-1 已交付、訊息交叉引用未交付 F-2（unblocks）→ 不�
     assert.equal(runHook(bash('git commit -m "F-2 wip"', root)).code, 2, '直接點名未交付仍擋');
   } finally { await rm(root, { recursive: true, force: true }); }
 });
+
+test('C-6：緊湊 -m"msg"（無空白）也解析出 task id → 未 delivered 擋（原 -m\s+ 漏接＝繞過「先標再 commit」）', async () => {
+  await withFlowRepo(async (root) => {
+    const r = runHook(bash('git commit -m"F-9-W0-1 完成了"', root));
+    assert.equal(r.code, 2, '緊湊 -m 也要抓到未 delivered 的 task');
+    assert.match(r.stderr, /F-9-W0-1|先標/);
+  });
+});

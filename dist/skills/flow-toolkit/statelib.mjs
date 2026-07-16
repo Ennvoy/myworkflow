@@ -179,10 +179,25 @@ export function isRunnerCommand(cmd) {
   return RUNNER_RE.test(s);
 }
 
+// C-13：flow-state 閘門子命令連紅偵測（複審/計畫/完成謂詞等）。**只給 stall-monitor 軟 STALL 用**（提醒換路），
+// 刻意不併進 isRunnerCommand——否則 auto-gate 硬天花板會把「檢查完成的那條命令」也硬擋掉，反而 deadlock。
+const GATE_RE = /\bflow-state(?:\.mjs)?\s+(complete-check|plan-check|spec-ready|redteam|scope|journey-check|review-check|code-check|coverage|verify-e2e|verify-perf)\b/i;
+export function isGateThrash(cmd) { return GATE_RE.test(String(cmd || '')); }
+
 // 把 runner 命令正規化成穩定的「失敗分桶 key」：去 flag、小寫、壓空白。
 // 同一條測試重跑→同 bucket；不同測試/檔→不同 bucket。cwd 已由 .flow 位置隔離專案。
+// C-13：把 `cd <dir> && …` 前綴摺進 key（保留 <dir> 防 monorepo 不同子專案誤併同桶）、npm/pnpm/yarn/bun run <s> ≡ <pm> <s>、
+// 去掉 && / ; 串接的前置指令只留真正 runner——讓「同一條 runner 換寫法/加 cd/加 flag」穩定同桶、doom-loop 連敗不被歸零。
 export function runnerBucket(cmd) {
-  return String(cmd || '').split(/\s+/).filter(t => t && !t.startsWith('-')).join(' ').toLowerCase().slice(0, 200) || '_runner';
+  let s = String(cmd || '').trim();
+  let cdTarget = '';
+  const cdm = s.match(/^cd\s+(\S+)\s*(?:&&|;)\s*(.+)$/i);
+  if (cdm) { cdTarget = cdm[1].replace(/["']/g, ''); s = cdm[2]; }
+  const parts = s.split(/\s*(?:&&|;)\s*/).filter(Boolean);        // 取最後一段＝真正的 runner（去前置 export/echo 等）
+  if (parts.length) s = parts[parts.length - 1];
+  s = s.replace(/\b(npm|pnpm|yarn|bun)\s+run\s+/i, '$1 ');        // run 是可選語法糖
+  const norm = s.split(/\s+/).filter(t => t && !t.startsWith('-')).join(' ').toLowerCase().slice(0, 200);
+  return (cdTarget ? cdTarget.toLowerCase() + '|' : '') + (norm || '_runner');
 }
 
 // 失敗指紋去噪：抽「失敗特徵行」（非首行 banner），正規化掉路徑/耗時/行號/seed 等易變 token，
@@ -1044,7 +1059,7 @@ export function codeReviewAudit(review, resolutions, decisionExists) {
 // 這裡把「翻 [x] + ledger→delivered」綁成一次呼叫，flow-state done 與 commit gate 都走它。
 const tasksMdPath = root => path.join(root, 'specs', 'tasks.md');
 const LINE_RE = /^(\s*[-*]\s*\[)([ xX])(\]\s*)(.+)$/;          // 抓 checkbox 行（保留前後綴以原樣回寫）
-const ID_RE   = /^([A-Z][A-Za-z]*(?:-[\w.]+)+)\b/;            // 抽 canonical id（去 ** 後取開頭 ID token）
+const ID_RE   = /^([A-Za-z][A-Za-z0-9]*(?:-[\w.]+)+)\b/;      // 抽 canonical id（去 ** 後取開頭 ID token）。C-48：容許字母後緊接數字（W0-5/T1-2 等 wave 標籤），原 [A-Z][A-Za-z]* 會把它們解析成 null → 翻勾/對帳/閘門全鏈靜默失明
 function lineId(rest) {
   const m = rest.replace(/\*\*/g, '').trim().match(ID_RE);
   return m ? m[1] : null;

@@ -62,9 +62,11 @@ $gt = Join-Path $ClaudeHome 'skills\git-tools'
 if ($removeGit -and (Test-Path $gt)) { $targets.Add($gt) }
 $rf = Join-Path $ClaudeHome 'rules\flow.md'
 if (Test-Path $rf) { $targets.Add($rf) }
-foreach ($hk in 'flow-verify-gate.mjs', 'flow-session-start.mjs', 'flow-size-check.mjs', 'flow-commit-gate.mjs', 'flow-design-base-hint.mjs', 'flow-stall-monitor.mjs', 'flow-auto-gate.mjs', 'flow-spec-gate.mjs') {
-  $p = Join-Path $ClaudeHome "hooks\$hk"
-  if (Test-Path $p) { $targets.Add($p) }
+# C-18：動態 glob hooks\flow-*.mjs（含 .test.mjs），不再硬編清單——原硬編 8 支漏 stop-gate/precompact，
+# 卸載殘留檔。命名慣例掃描新增 hook 自動涵蓋、零漂移。
+$hooksDir = Join-Path $ClaudeHome 'hooks'
+if (Test-Path $hooksDir) {
+  foreach ($f in Get-ChildItem -Path $hooksDir -Filter 'flow-*.mjs' -File) { $targets.Add($f.FullName) }
 }
 foreach ($ag in 'red-team.md', 'code-reviewer.md', 'spec-reviewer.md', 'evaluator.md', 'spec-redteam.md', 'spec-consistency.md') {
   $p = Join-Path $ClaudeHome "agents\$ag"

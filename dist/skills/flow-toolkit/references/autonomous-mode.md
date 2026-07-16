@@ -31,7 +31,8 @@
 
 呼叫 `PushNotification` 前先確認 harness 是否已因使用者 `inputNeededNotifEnabled` 設定自動推播同等訊息——若已自動推播，不必再手動疊加，避免同一件事對使用者重複騷擾。使用者一旦回答，循環立即停止、依回答往下走；**逾時本身永遠不是放行訊號**，不論循環幾輪都一律死等，對齊使用者「彈窗超時也不准自決」硬鐵則（使用者全域規則，非本檔新增）。
 
-**T1 的執法強度（誠實）**：②裝新相依、③破壞性 DB、⑤stall 升級的硬天花板，由 `flow-auto-gate`（PreToolUse，僅 `mode:auto`）**exit-2 硬擋**，模型滑不過。**①需求骨架變動、④安全紅旗**本質是語義判斷、做不成確定性閘門 → 屬**盡力而為的散文約束、非硬保證**；為補強，自駕下「碰 ①④ 該停卻自決了」由 ship 階段全 diff 審查與 `.flow/decisions/` 對賬事後抓。別把自駕當成對整個 T1 有確定性防護。
+**T1 的執法強度（誠實）**：②裝新相依、③破壞性 DB、⑤stall 升級的硬天花板，由 `flow-auto-gate`（PreToolUse，僅 `mode:auto`）**exit-2 硬擋**，模型滑不過。②另涵蓋 **C-5 相依 manifest 編輯**（`package.json`/lockfile/`requirements.txt`… 的 Write/Edit，堵「改檔加套件→bare install 還原」）。
+**硬擋的涵蓋邊界（誠實）**：auto-gate 靠**命令字串／編輯目標**辨識，抓不到**間接執行**——`npm run setup`（script 內裝套件）、`node migrate.mjs`／`psql -f migration.sql`（破壞性 DB 寫在腳本/檔案裡）這類不含敏感文字的正常工程命令會滑過硬擋，仍屬**散文 T1**（模型自律停等）。**①需求骨架變動、④安全紅旗**本質是語義判斷、做不成確定性閘門 → 同屬**盡力而為的散文約束、非硬保證**；為補強，自駕下「碰 ①④ 該停卻自決了」由 ship 階段全 diff 審查與 `.flow/decisions/` 對賬事後抓（見 `/flow-ship` 藍軍必查維度）。別把自駕當成對整個 T1 有確定性防護。
 
 ## 自決 + 記錄紀律（T1 之外的分歧 AI 自己拍板）
 

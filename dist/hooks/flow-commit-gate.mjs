@@ -34,13 +34,14 @@ process.stdin.on('end', async () => {
 
   // ── W3-3：模型端補堵「繞過 git pre-commit 兜底」的旗標 ──
   // 只挖「-m/-F 的值」（含 here-string 與雙引號轉義），再去掉殘餘引號「字元」（非內容）：
+  // C-6：-m\s* 而非 \s+——同時吃緊湊寫法 `-m"msg"`/`-mmsg`（無空白），否則訊息不被挖除＝假阻擋，或 task id 不被抽出＝繞過「先標再 commit」。
   //   ① message 內文含 --no-verify 隨值挖掉＝不誤擋；② 被引號包的旗標（git commit "--no-verify"）去引號後仍測得到＝不漏擋。
   // git 原生 pre-commit 是兜底，模型若在命令列直接 --no-verify/-n 或改向 core.hooksPath 就繞過它——對模型明確擋。
   // （人自己在終端機打的不過本 hook → --no-verify 對人仍是 documented 逃生門、reflog 可稽核。）
   const cmdFlags = cmd
-    .replace(/-m\s+@(['"])[\s\S]*?\1@/g, ' ')                 // PowerShell here-string message
-    .replace(/-m\s+"(?:\\.|[^"\\])*"/g, ' ')                  // 雙引號 message（吞轉義 \" 不提前收尾）
-    .replace(/-m\s+'[^']*'/g, ' ')                            // 單引號 message（POSIX 無轉義）
+    .replace(/-m\s*@(['"])[\s\S]*?\1@/g, ' ')                 // PowerShell here-string message
+    .replace(/-m\s*"(?:\\.|[^"\\])*"/g, ' ')                  // 雙引號 message（吞轉義 \" 不提前收尾）
+    .replace(/-m\s*'[^']*'/g, ' ')                            // 單引號 message（POSIX 無轉義）
     .replace(/-F\s+\S+/g, ' ')                                // -F <file>
     .replace(/['"]/g, ' ');                                   // 去殘餘引號字元（"--no-verify" → --no-verify）
   // --no-verify（含短式 -n 與 bundle 含 n，如 -an）＋改向 core.hooksPath（-c 旗標形／大小寫不敏感／git config 子命令形持久改向）
@@ -64,8 +65,8 @@ process.stdin.on('end', async () => {
 
   // 閘門二取 commit 訊息：PowerShell here-string @'…'@/@"…"@、-m "..."/'...'、或 -F <file>。取不到就 fail-open。
   let msg = '';
-  for (const m of cmd.matchAll(/-m\s+@(['"])([\s\S]*?)\1@/g)) msg += ' ' + m[2];
-  for (const m of cmd.matchAll(/-m\s+("([^"]*)"|'([^']*)'|((?!@)\S+))/g)) msg += ' ' + (m[2] ?? m[3] ?? m[4] ?? ''); // (?!@)：不重吃 here-string 殘渣
+  for (const m of cmd.matchAll(/-m\s*@(['"])([\s\S]*?)\1@/g)) msg += ' ' + m[2];
+  for (const m of cmd.matchAll(/-m\s*("([^"]*)"|'([^']*)'|((?!@)\S+))/g)) msg += ' ' + (m[2] ?? m[3] ?? m[4] ?? ''); // (?!@)：不重吃 here-string 殘渣
   const fm = cmd.match(/-F\s+("([^"]*)"|'([^']*)'|(\S+))/);
   if (fm) { const f = fm[2] ?? fm[3] ?? fm[4]; try { msg += ' ' + readFileSync(f, 'utf8'); } catch {} }
   const task = await core.taskDeliveredReason(cwd, msg);

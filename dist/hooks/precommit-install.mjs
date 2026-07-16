@@ -33,7 +33,10 @@ export function installPrecommit(cwd) {
   if (hooksPath) {
     return { skipped: 'custom-hookspath', warn: `偵測到自訂 git hook 路徑（core.hooksPath=${hooksPath}，多半是 husky/lefthook）——Flow 沒自動裝 pre-commit 兜底以免打架。要兜底：把「node "${scriptPosix}"」加進你的 pre-commit，或跑 flow-state install-precommit 後手動確認。` };
   }
-  const hooksDir = isAbsolute(gitDir) ? join(gitDir, 'hooks') : join(cwd, gitDir, 'hooks');
+  // C-54：worktree 下 --git-dir 指向 .git/worktrees/<name>，其 hooks/ 不是 commit 實際會執行的位置；
+  // --git-common-dir 指向共用主 .git（hooks 真正所在）。非 worktree 兩者相同。Git 2.5+（無虞）。
+  const commonDir = git(cwd, ['rev-parse', '--git-common-dir']) || gitDir;
+  const hooksDir = isAbsolute(commonDir) ? join(commonDir, 'hooks') : join(cwd, commonDir, 'hooks');
   const target = join(hooksDir, 'pre-commit');
   const cur = existsSync(target) ? safeRead(target) : '';
   const firstTime = !BLOCK_RE.test(cur);

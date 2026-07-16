@@ -33,22 +33,48 @@ function testFileProblem(testFile) {
 // W3-2 pass 證據驗真：證據 SHALL 指向實存非空檔/目錄（trace/測試檔/報告），拉到與紅軍 testFileProblem 同強度——
 // 「我保證通過」這種純敘述不算證據；人工驗證請把輸出存檔（如 .flow/verify/evidence-<id>.txt）再指過來。
 // 相容 file:line 寫法（tests/auth.spec.ts:12 → 驗 tests/auth.spec.ts）。
-function evidenceProblem(evidence, evidenceFile) {
+function evidenceProblem(evidence, evidenceFile, opts = {}) {
   const cand = String(evidenceFile || evidence || '').trim().replace(/:\d+(?:[-:]\d+)?$/, '');
   if (!cand) return '缺證據';
   const abs = path.resolve(root, cand);
   if (!existsSync(abs)) return `證據不是實存檔（${cand}）——pass 證據 SHALL 指向實存的 trace/測試檔/量測報告；純敘述請先存檔再用 --evidence-file 指過來`;
+  let isDir = false, body = '';
   try {
     const st = statSync(abs);
-    if (st.isDirectory()) return readdirSync(abs).length ? null : `證據目錄是空的（${cand}）`;
-    if (st.size < 10) return `證據檔形同空檔（${cand}）——touch 空檔不算證據`;
+    isDir = st.isDirectory();
+    if (isDir) { if (!readdirSync(abs).length) return `證據目錄是空的（${cand}）`; }
+    else { if (st.size < 10) return `證據檔形同空檔（${cand}）——touch 空檔不算證據`; body = readFileSync(abs, 'utf8'); }
   } catch { return `證據讀不到（${cand}）`; }
+  // C-11：量測型 pass 的證據內容 SHALL 佐證宣稱的實測值——防「拿任意實存檔（README/舊 log）當量測報告充數」。
+  // 檔內須有與 --value ±10% 相符的數字（量測工具真輸出必含該數）；純字串證據（無檔）也掃自身。best-effort、只對量測型套。
+  if (opts.value !== undefined && !isDir) {
+    const target = Number(opts.value);
+    const hay = body + '\n' + String(evidence || '');
+    const nums = (hay.match(/-?\d+(?:\.\d+)?/g) || []).map(Number);
+    const tol = Math.max(Math.abs(target) * 0.1, 0.01);
+    if (Number.isFinite(target) && !nums.some(n => Math.abs(n - target) <= tol))
+      return `證據檔（${cand}）內容找不到與實測值 ${opts.value} 相符的數字（±10%）——像是拿了無關檔案充數；把量測工具的真實輸出存進去再指過來`;
+  }
   return null;
 }
 
 // 現行 HEAD sha（best-effort；非 git/無 commit/失敗回 ''，不洩漏 git stderr）——trace 記「凍結/驗證在哪個 commit」的審計錨。
 function gitHead(r) {
   try { return execSync('git rev-parse HEAD', { cwd: r, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch { return ''; }
+}
+
+// C-7：兩個 commit 之間變動的檔名（review 新鮮度對賬用）。git 失敗回 null（無從判定→上層 fail-open，不憑空擋 ship）。
+function gitDiffNames(r, fromRef) {
+  try { return execSync(`git diff --name-only ${fromRef}..HEAD`, { cwd: r, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).split('\n').map(s => s.trim()).filter(Boolean); }
+  catch { return null; }
+}
+// 變動檔是否含「非測試、非文件/設定、非 Flow 自身狀態」的原始碼（review 新鮮度只在真的改了 code 時要求重審）。
+function sourceChanged(files) {
+  return (files || []).filter(f =>
+    !/(^|\/)\.flow\//.test(f) &&                                  // Flow 自身 ledger/journal/trace，非產品原始碼
+    !/(^|\/)(tests?|__tests__|spec|e2e)\//i.test(f) &&
+    !/\.(test|spec)\.[jt]sx?$/i.test(f) &&
+    !/\.(md|txt|json|ndjson|lock|ya?ml|toml|cfg|ini|env)$/i.test(f));
 }
 
 // git 真實變動檔（staged + unstaged + untracked）。模型偽造不了——這是 scope 閘門的事實來源。
@@ -230,6 +256,23 @@ switch (cmd) {
     const lg = r.alreadyDelivered ? 'ledger 本已 delivered' : 'ledger→delivered';
     console.log(`✓ ${r.id}：${md}；${lg}${commit ? `；commit=${commit}` : ''}`);
     console.log(`  下一步：照常 git commit（commit gate 已可放行此 task）${staged ? '；已自動 stage .flow 耐久證據＋tasks.md、不會落隊' : ''}。`);
+    break;
+  }
+  case 'verify-ok': {
+    // C-10：verify/tdd 寫入 state.json 的唯一正門（取代裸寫——flow-spec-gate 會擋裸寫 verify/tdd）。
+    // 有 runner 優先用 `run --task`（真跑捕真 exit code）；手動/無法自動化的驗證走本命令（留 journal 審計線）。
+    // 用法：flow-state verify-ok <taskId> --ref "<真證據 ref>" [--tdd <green|refactored|n/a|skipped:...>]
+    const id = argv[1];
+    if (!id || id.startsWith('--')) { console.error('usage: flow-state verify-ok <taskId> --ref "<證據ref>" [--tdd <green|refactored|n/a|skipped:...>]'); process.exit(1); }
+    const ref = (flag('--ref') || '').trim();
+    if (!ref) { console.error('需給 --ref（真證據：trace 路徑/測試名/verify-e2e id——空 ref 不算驗證）'); process.exit(1); }
+    const tdd = (flag('--tdd') || 'green').trim();
+    const rid = await resolveIdOrExit(id);
+    const st = await S.readStateJson(root);
+    await S.writeStateJson(root, { ...st, verify: `ok:${ref}`, tdd });
+    await S.appendJournal(root, { ev: 'verify.ok', id: rid, ref, tdd });
+    console.log(`✓ ${rid}：verify="ok:${ref}"、tdd="${tdd}" 已寫入 state.json（done 閘門認得）。`);
+    console.log(`  若有 runner，建議先 flow-state run --task ${rid} -- <測試命令> 真跑綠更硬（done 會擋「跑過但最後紅」）。`);
     break;
   }
   case 'mode': {
@@ -587,7 +630,8 @@ switch (cmd) {
     if (value === undefined) { console.error('須給 --value <實測數字>（同 budget 單位）。'); process.exit(1); }
     if (!evidence) { console.error('須給 --evidence（量測工具輸出 ref：k6/autocannon/lighthouse 檔或摘要）——堵空綠。'); process.exit(1); }
     // W3-2：達標記錄的證據驗真（與 verify-e2e pass 同強度）——量測工具輸出 SHALL 是實存檔。
-    const perfEp = evidenceProblem(evidence, flag('--evidence-file'));
+    // C-11：量測型再加碼——證據內容 SHALL 含與 --value 相符的數字（防拿無關檔充數、填假數字過關）。
+    const perfEp = evidenceProblem(evidence, flag('--evidence-file'), { value });
     if (perfEp) { console.error('✗ ' + perfEp); process.exit(2); }
     const budget = S.parsePerfBudget(line);
     const miss = S.perfMeetsBudget(value, budget);
@@ -734,21 +778,43 @@ switch (cmd) {
       for (const p of codeProblems) console.error('  - ' + p);
       process.exit(2);
     }
-    // W3-1 journey 真實性納完成謂詞：web 類 projectType SHALL 有「當前 HEAD」的 journey-check 通過記錄
-    //（靜態掃描秒級，ship 前重跑即可）；逃生口＝journey-waiver decision（可稽核、不 brick）。
+    // C-7：code-review 新鮮度——review 記錄的 HEAD 之後又改了原始碼（非測試/文件）＝驗的是舊 code、「先驗綠後改壞仍出貨」。
+    // 只在 git 可用（review 有記 head）＋真的動到 source 時擋；改測試/文件不算。逃生口＝code-review-waiver（沿用同一張）。
+    if (codeReview && codeReview.head && !codeWaived) {
+      const headNow = gitHead(root);
+      if (headNow && codeReview.head !== headNow) {
+        const src = sourceChanged(gitDiffNames(root, codeReview.head));
+        if (src.length) {
+          console.error('✗ 完成謂詞未達：code-review 之後又改了原始碼（review 驗的是舊 code）——重跑藍軍 review-code 再對賬：');
+          for (const f of src.slice(0, 8)) console.error('  - ' + f);
+          console.error('  真有理由沿用舊審查（改的是無關檔）→ flow-state decision code-review-waiver --choice … --why … 留可稽核豁免。');
+          process.exit(2);
+        }
+      }
+    }
+    // W3-1 journey 真實性納完成謂詞：web 類 projectType SHALL 有「當前 HEAD」的 journey-check 通過記錄（靜態掃描秒級，ship 前重跑即可）。
+    // C-19：journey-waiver 不再讓整段 journey-check@HEAD 要求「被略過」——waiver 只在 journey-check 內部把特定
+    // mock/goto 違規降級成警告（合法外部服務 mock）；real-browser 走查記錄仍 SHALL 存在且綁當前 HEAD。
+    // 堵「一張 waiver＝永久全庫關掉 journey 檢查」。有 waiver 時印複核提醒（含建立時間），提示定期回看是否仍該豁免。
     const cm = await S.readManifest(root);
-    const journeyWaivedCC = existsSync(path.join(root, '.flow', 'decisions', 'journey-waiver.json'));
-    if (S.WEB_PROJECT_TYPES.includes(cm.projectType) && !journeyWaivedCC) {
+    const journeyWaiverPath = path.join(root, '.flow', 'decisions', 'journey-waiver.json');
+    const journeyWaivedCC = existsSync(journeyWaiverPath);
+    if (S.WEB_PROJECT_TYPES.includes(cm.projectType)) {
       const jc = await S.readJourneyCheck(root);
       if (!jc) {
         console.error('✗ 完成謂詞未達：web 專案未過 journey 真實性閘門（防 mock 假綠）——跑 flow-state journey-check（通過會落 .flow/trace/journey-check.json）；');
-        console.error('  真有合法理由跳過 → flow-state decision journey-waiver --choice "跳過 journey-check" --why "<原因>" 留可稽核豁免。');
+        console.error('  合法外部服務 mock（金流/analytics sandbox）→ flow-state decision journey-waiver …（降級違規為警告，但仍須跑 journey-check）。');
         process.exit(2);
       }
       const headNow = gitHead(root);
       if (jc.head && headNow && jc.head !== headNow) {
         console.error('✗ journey-check 記錄不是當前 HEAD（驗的是舊 code）——重跑 flow-state journey-check（靜態掃描、秒級）再 complete-check。');
         process.exit(2);
+      }
+      if (journeyWaivedCC) {
+        let wat = '';
+        try { wat = (JSON.parse(readFileSync(journeyWaiverPath, 'utf8')).at || '').slice(0, 10); } catch { /* 時戳非關鍵 */ }
+        console.log(`  ⚠ journey-waiver 生效${wat ? `（${wat} 建立）` : ''}——只豁免特定 mock/goto 違規，非跳過走查；ship 前確認豁免的外部服務 mock 仍合理。`);
       }
     }
     // Stop hook（W3-5）據此判「收工前完成謂詞真的過了」——成功即落機讀記錄（綁 HEAD）。
@@ -1097,7 +1163,7 @@ switch (cmd) {
     break;
   }
   default:
-    console.log(`flow-state <resume|status|done|checkpoint|mode|project-type|scope|wave|redteam|journey-check|run|verify-e2e|verify-perf|plan-check|review-code|code-resolve|code-check|coverage|lesson|decision|pending|guardrail-check|complete-check|spec-ready|spec-review|review-resolve|review-check|mockup-check> [--root <path>]
+    console.log(`flow-state <resume|status|done|checkpoint|mode|project-type|scope|wave|redteam|journey-check|run|verify-ok|verify-e2e|verify-perf|plan-check|review-code|code-resolve|code-check|coverage|lesson|decision|pending|guardrail-check|complete-check|spec-ready|spec-review|review-resolve|review-check|mockup-check> [--root <path>]
   resume | status        冷啟動：reconstruct 印現況 + 下一步 + mid-task 進度 + 對帳 + 已知死路（換 session/電腦/中斷後接手；平行波看 /workflows）
   done <id> [--commit]   標一個 task 完成：翻 tasks.md [x] + ledger→delivered（自帶 verify 閘門；先標、再 commit）
   checkpoint <id> --phase <red|green|refactor|integrated> [--note]   記 mid-task 進度（開發中當機 → resume 帶出「上次做到第幾步」，只補沒做完的）
@@ -1108,6 +1174,7 @@ switch (cmd) {
   redteam --wave <ids>   紅軍對賬閘門：.flow/redteam/<id>.json 攻擊 <3、high 未全 covered、testFile 不實存、或高危關鍵字攻擊無痕 skipped（無 waiver decision）→ exit 2
   journey-check [--dir]  journey 真實性閘門：掃 Playwright 測試（mock/網路攔截、單一 test >1 goto）＋playwright.config（retries 非 0、webServer 用 dev）→ exit 2（web 驗證宣稱綠前跑）
   run --task <id> -- <cmd>   verify runner wrapper：真跑命令、捕真 exit code、綁 taskId 落 journal（done 據此擋「跑過但最後紅卻標 done」）
+  verify-ok <id> --ref "<證據>" [--tdd <green|refactored|n/a|skipped:…>]   手動/無法自動化驗證的正門：寫 state.json verify/tdd（取代裸寫；spec-gate 擋裸寫）
   verify-e2e <id> --status <pass|fail|n/a> --evidence "<ref>" [--decision <id>]   記一條 REQ-E2E 驗證（自動記 HEAD/reqHash；n/a 須附 decision）
   verify-perf <REQ-PERF-id> --value <數字> --evidence "<ref>"   記 REQ-PERF 達標（從凍結 index 解析 budget、超標拒記；complete-check 對賬）
   plan-check             計畫出口對賬：REQ↔task 覆蓋＋tasks.md↔manifest 逐欄一致 → 落 plan-check.json＋phase="plan-done"，否則 exit 2（/flow-plan 出口跑）

@@ -241,7 +241,8 @@ async function passLenses(root) {
 
 // W3-2 證據驗真後：pass 證據 SHALL 指向實存非空檔——測試統一用這支造真檔。
 async function evid(root, name = 'evidence.txt') {
-  await writeFile(path.join(root, name), 'evidence: runner output / trace ref（測試用真檔）', 'utf8');
+  // C-11：量測型 verify-perf 現要求證據內容含與 --value 相符的數字（±10%）——內嵌代表性量測數字（含 perf 測試常用的 2.0/5.0）。
+  await writeFile(path.join(root, name), 'evidence: k6/lighthouse output p50=1.9 p95=2.0s lcp=2.0 worst=5.0 ref/trace（測試用真檔）', 'utf8');
   return name;
 }
 // W3-3① scope fail-closed 後：scope 測試需要真 git repo 且 working tree 乾淨（git 不可用/失敗＝擋，不再當零變動）。
@@ -972,8 +973,13 @@ test('complete-check（web 類）：全綠但缺 journey-check 記錄 → exit 2
     const r = run(['complete-check'], root);
     assert.equal(r.code, 2, 'web 類缺 journey-check 記錄 → 擋');
     assert.match(r.err, /journey/);
-    run(['decision', 'journey-waiver', '--choice', '跳過 journey-check', '--why', '本測不驗真實瀏覽器'], root);
-    assert.equal(run(['complete-check'], root).code, 0, '補 journey-waiver 後放行');
+    // C-19：journey-waiver 只降級 mock/goto 違規、不再讓整段 journey-check@HEAD 要求被略過——仍 SHALL 跑 journey-check。
+    run(['decision', 'journey-waiver', '--choice', '外部金流 sandbox mock', '--why', '第三方金流無 sandbox'], root);
+    assert.equal(run(['complete-check'], root).code, 2, 'C-19：只有 waiver、沒跑 journey-check → 仍擋');
+    await writeSpec(root, 'tests/e2e/pay.spec.ts',
+      "import {test} from '@playwright/test'\ntest('x', async ({page}) => { await page.route('**/pay/**', r=>r.fulfill({body:'{}'})); await page.goto('/') })");
+    assert.equal(run(['journey-check'], root).code, 0, 'waiver 在 → journey-check 降級 mock 違規為警告、通過落 jc@HEAD');
+    assert.equal(run(['complete-check'], root).code, 0, '跑過 journey-check@HEAD＋waiver → 放行');
   });
 });
 
@@ -1267,5 +1273,55 @@ test('spec-ready --freeze：requirements 命中高風險面但無 security-revie
     assert.match(r0.err, /security-review/);
     run(['decision', 'security-review', '--choice', '已審 SQLi/authz', '--why', 'auth/權限/token 高風險'], root);
     assert.equal(run(['spec-ready', '--freeze'], root).code, 0, '補 security-review 後凍結');
+  });
+});
+
+// ── Batch 2（造假驗證硬化）：C-10 verify-ok、C-11 perf 內容、C-7 code-review 新鮮度 ──
+
+test('verify-ok：寫 verify/tdd 進 state.json（C-10 正門）；缺 --ref → exit 1；done 認得', async () => {
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [{ id: 'F-1' }] });
+    assert.equal(run(['verify-ok', 'F-1'], root).code, 1, '缺 --ref');
+    assert.equal(run(['verify-ok', 'F-1', '--ref', 'tests/x.spec.ts:5', '--tdd', 'green'], root).code, 0);
+    const st = await S.readStateJson(root);
+    assert.equal(st.verify, 'ok:tests/x.spec.ts:5');
+    assert.equal(st.tdd, 'green');
+    assert.equal(run(['done', 'F-1'], root).code, 0, 'done 閘門認得 verify-ok 寫的綠燈');
+  });
+});
+
+test('verify-perf：證據內容不含實測值（拿無關檔充數）→ exit 2；含相符值 → 過（C-11）', async () => {
+  await withRoot(async (root) => {
+    await frozenRoot(root);
+    await writeFile(path.join(root, 'unrelated.txt'), '跟量測無關的說明文件，只有 42 與 99 這些數字', 'utf8');
+    assert.equal(run(['verify-perf', 'REQ-PERF-001', '--value', '2.0', '--evidence', 'unrelated.txt'], root).code, 2, '內容找不到 2.0 → 擋');
+    await writeFile(path.join(root, 'lh.json'), 'lighthouse: lcp p95 = 2.0 s（達標）', 'utf8');
+    assert.equal(run(['verify-perf', 'REQ-PERF-001', '--value', '2.0', '--evidence', 'lh.json'], root).code, 0, '內容含相符值 → 過');
+  });
+});
+
+test('complete-check：code-review 後又改原始碼（HEAD 變）→ exit 2；改的是測試/文件 → 放行（C-7 新鮮度）', async () => {
+  await withRoot(async (root) => {
+    await frozenRoot(root);
+    gitClean(root);   // 真 git repo（C-7 只在 review 有記 head 時對賬）
+    await writeFile(path.join(root, 'specs', 'tasks.md'), '- [x] **F-1**\n', 'utf8');
+    run(['verify-e2e', 'REQ-E2E-001', '--status', 'pass', '--evidence', await evid(root)], root);
+    run(['verify-perf', 'REQ-PERF-001', '--value', '2.0', '--evidence', await evid(root, 'lh.json')], root);
+    // 落一份零 red flag 的 code-review（綁當下 HEAD）
+    const fp = path.join(root, 'cr.json');
+    await writeFile(fp, JSON.stringify({ findings: [] }), 'utf8');
+    assert.equal(run(['review-code', '--file', fp], root).code, 0);
+    assert.equal(run(['complete-check'], root).code, 0, '同 HEAD → 綠');
+    // 改一個原始碼檔並 commit（HEAD 前進）→ code-review 變舊
+    await writeFile(path.join(root, 'src.js'), 'console.log("changed source")\n', 'utf8');
+    execSync('git add -A && git -c user.email=t@t -c user.name=t -c commit.gpgsign=false commit -q -m src', { cwd: root });
+    const stale = run(['complete-check'], root);
+    assert.equal(stale.code, 2, 'review 之後改了原始碼 → 擋');
+    assert.match(stale.err, /src\.js|舊 code/);
+    // 改的是文件/測試 → 不擋：再 review 一次拉回 HEAD，然後只改 .md
+    run(['review-code', '--file', fp], root);
+    await writeFile(path.join(root, 'notes.md'), '# 只是文件\n', 'utf8');
+    execSync('git add -A && git -c user.email=t@t -c user.name=t -c commit.gpgsign=false commit -q -m doc', { cwd: root });
+    assert.equal(run(['complete-check'], root).code, 0, '只改 .md/測試 → 不要求重審');
   });
 });

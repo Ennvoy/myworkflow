@@ -1,9 +1,11 @@
 #!/usr/bin/env node
-// Flow spec/plan 階段閘門的「窗戶感應器」（PreToolUse on Write|Edit|Bash|PowerShell），守兩道後門：
+// Flow spec/plan 階段閘門的「窗戶感應器」（PreToolUse on Write|Edit|Bash|PowerShell），守三道後門：
 // ① 階段轉移：擋「繞過子命令、直接 raw-edit .flow/state.json 把 phase 寫成 spec-done / plan-done」——
 //    正門＝flow-state spec-ready --freeze（凍結）／flow-state plan-check（計畫對賬）。只擋轉移那一刻，已是該 phase 的再存放行。
 // ② 機讀 ledger：擋「裸寫/刪除 .flow/{spec-review,trace,verify}/」——正門＝flow-state 各子命令
 //    （docHash/reqHash/manifestHash 由 CLI 自算，裸改＝偽造或蒸發對賬證據）。Bash/PS 分讀寫：唯讀/staging 放行。
+// ③ C-10 verify/tdd 裸寫：擋「直接寫 state.json 的 verify/tdd 洗假綠燈」——正門＝flow-state run（真跑）/ verify-ok（手動留審計）。
+// C-4：字串偵測前先解 \uXXXX 跳脫（防轉義繞過）；命令列正門偵測錨定「flow-state 為執行主體」（排除尾綴註解冒充）。
 // 自駕下模型不能靠竄改檔案跳過收斂/對賬檢查（與 done-gate + flow-verify-gate 同 belt-and-suspenders）；
 // 非此一律 fail-open exit 0，絕不誤擋非 Flow 專案。
 import { readFileSync, existsSync } from 'node:fs';
@@ -17,8 +19,12 @@ process.stdin.on('error', () => process.exit(0));
 process.stdin.on('data', c => (raw += c));
 process.stdin.on('end', () => { try { main(); } catch { process.exit(0); } });
 
+// C-4：先把 JSON \uXXXX 跳脫解回字元（堵「phase:"spec-done" 這種轉義繞過字串偵測」），再判。best-effort、失敗回原字串。
+const decodeUnicodeEsc = s => String(s || '').replace(/\\u([0-9a-fA-F]{4})/g, (_, h) => { try { return String.fromCharCode(parseInt(h, 16)); } catch { return _; } });
 // 內容是否把 phase 設成受守 phase（spec-done / plan-done）——回 phase 名或 null。
-const setsGatedPhase = s => { const m = String(s || '').match(/["']?phase["']?\s*[:=]\s*["']?(spec-done|plan-done)\b/i); return m ? m[1].toLowerCase() : null; };
+const setsGatedPhase = s => { const m = decodeUnicodeEsc(s).match(/["']?phase["']?\s*[:=]\s*["']?(spec-done|plan-done)\b/i); return m ? m[1].toLowerCase() : null; };
+// C-10：內容是否把 state.json 的 verify/tdd 設成值（裸寫繞過真跑檢查、洗假綠燈）。回 true/false。
+const setsVerifyTdd = s => /["']?(verify|tdd)["']?\s*[:=]\s*["'][^"']/i.test(decodeUnicodeEsc(s));
 // 目標是否為 .flow/state.json（含 Bash/PS 命令字串內嵌路徑：可在重導/空白/引號後出現）。
 // 先把反斜線正規化成正斜線，再要求 .flow 落在路徑邊界（開頭 / 斜線 / 空白 / 引號）。
 const targetsState = s => /(^|[\s'"/])\.flow\/state\.json\b/.test(String(s || '').replace(/\\/g, '/'));
@@ -61,10 +67,23 @@ function main() {
     process.exit(2);
   }
   if (!targetsState(target)) process.exit(0);                    // 不是寫 .flow/state.json → 放行
+  const isCmd = tool === 'Bash' || tool === 'PowerShell';
+  // C-4：命令列放行正門偵測錨定「flow-state 為執行主體」（排除尾綴註解冒充：`echo x # flow-state verify-ok` 這類）。
+  const invokesCli = (subs) => isCmd && new RegExp(`(^|[;&|]|\\bnode\\b)[^#\\n]*flow-state(\\.mjs)?\\s+(${subs})\\b`, 'i').test(content);
+  // C-10：擋裸寫 verify/tdd 到 state.json（正門＝flow-state verify-ok / run；裸寫繞過真跑檢查、洗假綠燈）。
+  if (setsVerifyTdd(content) && !invokesCli('verify-ok|run|done')) {
+    process.stderr.write([
+      'Flow verify 閘門：禁止直接寫 .flow/state.json 的 verify/tdd（會洗掉「真跑綠燈」檢查、假裝驗證過）。',
+      '  → 有 runner：flow-state run --task <id> -- <測試命令>（真跑、捕真 exit code）。',
+      '  → 手動/無法自動化：flow-state verify-ok <id> --ref "<真證據>" [--tdd <green|refactored|n/a>]（留審計）。',
+      '  別手改 state.json 假裝過關（系統性違規）。',
+    ].join('\n') + '\n');
+    process.exit(2);
+  }
   const phase = setsGatedPhase(content);
   if (!phase) process.exit(0);                                   // 沒要把 phase 設成 spec-done/plan-done → 放行
-  // 放行正門：spec-ready（凍結）／plan-check（計畫）子命令內部用 fs 寫，不經工具呼叫；此為防禦性放行
-  if ((tool === 'Bash' || tool === 'PowerShell') && /flow-state(\.mjs)?[\s\S]*(spec-ready|plan-check)/i.test(content)) process.exit(0);
+  // 放行正門：spec-ready（凍結）／plan-check（計畫）子命令內部用 fs 寫，不經工具呼叫；此為防禦性放行（錨定執行主體、排除註解冒充）
+  if (invokesCli('spec-ready|plan-check')) process.exit(0);
 
   // 已是該 phase 的再存（非轉移）放行——只擋「轉移成該 phase」那一刻
   try {

@@ -100,3 +100,22 @@ test('非 Flow / 壞 JSON / 非 Bash 工具 → fail-open exit 0', async () => {
   await rm(tmp, { recursive: true, force: true });
   assert.equal(spawnSync('node', [HOOK], { input: '{bad', encoding: 'utf8' }).status, 0, '壞 JSON 放行');
 });
+
+// ── C-5：自駕下編輯相依 manifest → exit 2；非 manifest 編輯 / manual → 放行 ──
+test('C-5：mode:auto 編輯 package.json/requirements.txt → exit 2；非 manifest 編輯放行', async () => {
+  await withAuto(async (root) => {
+    const edit = (fp) => ({ tool_name: 'Edit', tool_input: { file_path: path.join(root, fp) }, cwd: root });
+    const write = (fp) => ({ tool_name: 'Write', tool_input: { file_path: path.join(root, fp) }, cwd: root });
+    assert.equal(run(edit('package.json')), 2, '編輯 package.json＝改相依');
+    assert.equal(run(write('requirements.txt')), 2, '寫 requirements.txt');
+    assert.equal(run(edit('pnpm-lock.yaml')), 2, 'lockfile');
+    assert.equal(run(edit('src/app.ts')), 0, '一般原始碼編輯放行');
+    assert.equal(run(write('README.md')), 0, '文件放行');
+  });
+});
+
+test('C-5：mode:manual 編輯 package.json → 放行（不干擾非自駕）', async () => {
+  await withAuto(async (root) => {
+    assert.equal(run({ tool_name: 'Edit', tool_input: { file_path: path.join(root, 'package.json') }, cwd: root }), 0);
+  }, 'manual');
+});

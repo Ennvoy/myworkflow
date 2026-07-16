@@ -19,16 +19,12 @@ if (!settingsPath || !claudeMdPath) {
   process.exit(1);
 }
 
-// Flow's hook scripts identify Flow's registrations regardless of path/quoting.
-// 完整 8 支（與 dist/hooks/settings.flow.json 註冊一致；漏列會殘留註冊指向已刪檔 → 每次工具呼叫 spawn 失敗 node）。
-const FLOW_HOOK_SCRIPTS = [
-  'flow-verify-gate.mjs', 'flow-session-start.mjs', 'flow-size-check.mjs', 'flow-commit-gate.mjs',
-  'flow-design-base-hint.mjs', 'flow-stall-monitor.mjs', 'flow-auto-gate.mjs', 'flow-spec-gate.mjs',
-];
+// C-18：不再硬編 hook 清單（原硬編 8 支，實際註冊 10 支＝漏 flow-stop-gate/flow-precompact → 卸載殘留
+// 註冊指向已刪檔，每次工具呼叫 spawn 失敗 node）。改用命名慣例：任何 command 引用 flow-*.mjs（Flow 所有
+// settings.json hook 一律此命名）即 Flow 註冊。新增/移除 hook 自動涵蓋、零漂移，不必再手動同步三個卸載入口。
+const FLOW_HOOK_RE = /\bflow-[a-z0-9-]+\.mjs\b/i;
 const isFlowEntry = (entry) =>
-  (entry.hooks || []).some(
-    (h) => typeof h.command === 'string' && FLOW_HOOK_SCRIPTS.some((s) => h.command.includes(s))
-  );
+  (entry.hooks || []).some((h) => typeof h.command === 'string' && FLOW_HOOK_RE.test(h.command));
 
 // --- 1) settings.json: remove Flow hook entries (mirror of merge-settings.mjs) ---
 if (existsSync(settingsPath)) {

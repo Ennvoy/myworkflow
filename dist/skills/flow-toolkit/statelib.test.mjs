@@ -430,8 +430,13 @@ test('isRunnerCommand：辨識 test + build/typecheck runner、排除套件管�
 test('runnerBucket：去 flag、同測試重跑同桶、不同檔不同桶', () => {
   assert.equal(S.runnerBucket('pytest tests/test_x.py -v --tb=short'), S.runnerBucket('pytest tests/test_x.py'), '同測試去 flag 後同桶');
   assert.notEqual(S.runnerBucket('pytest tests/test_x.py'), S.runnerBucket('pytest tests/test_y.py'), '不同檔不同桶');
-  assert.equal(S.runnerBucket('NPM RUN TEST'), 'npm run test', '小寫正規化');
+  assert.equal(S.runnerBucket('NPM RUN TEST'), S.runnerBucket('npm test'), 'C-13：npm run <s> ≡ npm <s>＋小寫正規化');
+  assert.equal(S.runnerBucket('npm test'), 'npm test');
   assert.ok(S.runnerBucket('') === '_runner', '空命令有 fallback key');
+  // C-13：cd 前綴/加 flag/串接前置指令都摺成穩定同桶（doom-loop 連敗不被換寫法歸零）；不同 cd 目標不誤併（monorepo）
+  assert.equal(S.runnerBucket('cd packages/api && npm test'), S.runnerBucket('cd packages/api && npm test --silent'), 'cd 目標＋runner 相同→同桶');
+  assert.notEqual(S.runnerBucket('cd packages/api && npm test'), S.runnerBucket('cd packages/web && npm test'), '不同 cd 目標→不同桶');
+  assert.equal(S.runnerBucket('export CI=1 && pytest tests/test_x.py'), S.runnerBucket('pytest tests/test_x.py'), '前置指令不影響 runner 桶');
 });
 
 test('verifyFailSig：抽失敗特徵行（非 banner）；同失敗去噪後穩定、不同失敗不同指紋', () => {
@@ -1525,4 +1530,21 @@ test('W0-5 syncDrift：內容不一致/安裝區缺檔回報，方向提示認 m
     assert.equal(d.differing[0].rel, 'hooks/b.mjs');
     assert.equal(d.differing[0].newer, 'installed', '安裝區較新 → 提示回寫 dist');
   });
+});
+
+// ── Batch 2：C-48 ID_RE 放寬、C-13 isGateThrash ──
+test('flipCheckbox / lineId：字母緊接數字的 id（W0-5/T1-2）解析得到（C-48，原 ID_RE 解析成 null）', () => {
+  const md = '- [ ] **W0-5** 波\n- [ ] **T1-2** 拓樸\n';
+  assert.ok(/- \[x\] \*\*W0-5\*\*/.test(S.flipCheckbox(md, 'W0-5').text), 'W0-5 被翻勾');
+  assert.ok(/- \[x\] \*\*T1-2\*\*/.test(S.flipCheckbox(md, 'T1-2').text), 'T1-2 被翻勾');
+  // 既有 REQ-E2E-001 / F-1 樣式不回歸
+  assert.ok(/- \[x\] \*\*F-1\*\*/.test(S.flipCheckbox('- [ ] **F-1**\n', 'F-1').text), 'F-1 仍可翻');
+});
+
+test('isGateThrash：flow-state 閘門連紅偵測（C-13）——只給 stall 軟提醒、不進 isRunnerCommand（不上硬天花板）', () => {
+  assert.ok(S.isGateThrash('node ~/.claude/skills/flow-toolkit/flow-state.mjs complete-check'));
+  assert.ok(S.isGateThrash('flow-state plan-check'));
+  assert.ok(!S.isGateThrash('flow-state done F-1'), 'done 不是閘門');
+  assert.ok(!S.isGateThrash('npm test'));
+  assert.ok(!S.isRunnerCommand('flow-state complete-check'), '閘門不進 isRunnerCommand（否則 auto-gate 硬擋掉 complete-check）');
 });

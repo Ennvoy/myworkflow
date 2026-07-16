@@ -107,3 +107,26 @@ test('非 Flow / 壞 JSON / 非相關工具 → fail-open exit 0', async () => {
     assert.equal(run({ tool_name: 'TaskUpdate', tool_input: {}, cwd: root }), 0, '非 Write/Edit/Bash/PS 放行');
   });
 });
+
+// ── Batch 2：C-10 verify/tdd 裸寫、C-4 unicode/註解繞過 ──
+
+test('C-10：Write raw 寫 verify/tdd 進 state.json → exit 2；正門 verify-ok/run 命令放行', async () => {
+  await withFlow(async (root) => {
+    const sp = path.join(root, '.flow', 'state.json');
+    assert.equal(run(write(root, sp, JSON.stringify({ verify: 'ok:fake', tdd: 'green' }))), 2, '裸寫 verify/tdd');
+    assert.equal(run(edit(root, sp, '"tdd": "green"')), 2, 'Edit 改 tdd');
+    // 正門命令（bash 呼叫 flow-state verify-ok / run）不含 verify:"..." JSON → 不誤擋
+    assert.equal(run(bash(root, 'node ~/.claude/skills/flow-toolkit/flow-state.mjs verify-ok F-1 --ref trace.zip --tdd green')), 0, 'verify-ok 正門放行');
+    assert.equal(run(bash(root, 'node flow-state.mjs run --task F-1 -- npm test')), 0, 'run 正門放行');
+  });
+});
+
+test('C-4：unicode 轉義 phase 值繞過 → 仍擋；尾綴註解冒充正門 → 不放行', async () => {
+  await withFlow(async (root) => {
+    const sp = path.join(root, '.flow', 'state.json');
+    // \u escape 的 spec-done（"spec-done" 每字元轉義片段）
+    assert.equal(run(write(root, sp, '{"phase":"spec-\u0064one"}')), 2, 'unicode 轉義 phase 仍被解回並擋');
+    // echo 寫 state.json + 尾綴註解假裝有跑 spec-ready 正門 → 不該放行
+    assert.equal(run(bash(root, `echo '{"phase":"spec-done"}' > .flow/state.json  # flow-state spec-ready --freeze`)), 2, '註解冒充正門不放行');
+  });
+});

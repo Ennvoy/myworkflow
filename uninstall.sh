@@ -43,9 +43,11 @@ fi
 [ -d "$CLAUDE_HOME/skills/design-system-base" ] && TARGETS+=("$CLAUDE_HOME/skills/design-system-base")  # install.sh 有裝 → 也要清
 { [ "$REMOVE_GIT" -eq 1 ] && [ -d "$CLAUDE_HOME/skills/git-tools" ]; } && TARGETS+=("$CLAUDE_HOME/skills/git-tools")
 [ -f "$CLAUDE_HOME/rules/flow.md" ] && TARGETS+=("$CLAUDE_HOME/rules/flow.md")
-for hk in flow-verify-gate.mjs flow-session-start.mjs flow-size-check.mjs flow-commit-gate.mjs flow-design-base-hint.mjs flow-stall-monitor.mjs flow-auto-gate.mjs flow-spec-gate.mjs; do
-  [ -f "$CLAUDE_HOME/hooks/$hk" ] && TARGETS+=("$CLAUDE_HOME/hooks/$hk")
-done
+# C-18：動態 glob hooks/flow-*.mjs（同 commands 的 find 模式），不再硬編清單——原硬編 8 支漏 stop-gate/precompact，
+# 卸載殘留檔。命名慣例掃描，新增 hook 自動涵蓋、零漂移。
+if [ -d "$CLAUDE_HOME/hooks" ]; then
+  while IFS= read -r f; do TARGETS+=("$f"); done < <(find "$CLAUDE_HOME/hooks" -maxdepth 1 -name 'flow-*.mjs' 2>/dev/null)
+fi
 for ag in red-team.md code-reviewer.md spec-reviewer.md evaluator.md spec-redteam.md spec-consistency.md; do
   [ -f "$CLAUDE_HOME/agents/$ag" ] && TARGETS+=("$CLAUDE_HOME/agents/$ag")
 done

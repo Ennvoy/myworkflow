@@ -33,10 +33,13 @@ function extractFailure(tr) {
   if (exit !== null) {
     failed = exit !== 0;
   } else {
-    const strong = /(\bFAILED\b|Traceback|AssertionError|\w+Error\b|✗|✘|\bnot ok\b|panic:)/i.test(text);
+    // 大寫 FAILED＝pytest/CI 的狀態標記（真失敗）；小寫 "0 failed" 是摘要計數、由 countFail/zeroFail 處理，不算 strong。
+    const strong = /\bFAILED\b/.test(text) || /(Traceback|AssertionError|\w+Error\b|✗|✘|\bnot ok\b|panic:)/i.test(text);
     const countFail = /\b[1-9]\d*\s+(failed|errors?|failures?)\b/i.test(text);   // 明確失敗計數 >0
     const zeroFail = /\b0\s+(failed|errors?|failures?)\b/i.test(text);          // 0 failed/errors → 視為綠
-    failed = (strong || countFail) && !zeroFail;
+    // C-13：strong 標記（Traceback/AssertionError/panic…）不得被 "0 failed" 覆蓋——編譯失敗時測試框架仍可能印
+    // "0 failed"，或模型手動印一行 "0 failed" 洗白；strong 命中一律算失敗，只有純 countFail 才受 zeroFail 抵銷。
+    failed = strong || (countFail && !zeroFail);
   }
   return { failed, exit: exit === null ? 1 : exit, text };
 }
@@ -52,7 +55,8 @@ async function main() {
 
   let S;
   try { S = await import('../skills/flow-toolkit/statelib.mjs'); } catch { return; }  // 缺檔/壞檔 → fail-open
-  if (!S.isRunnerCommand(command)) return;                  // 非 test/build runner → 不關我事
+  // C-13：test/build runner，或連紅的 flow-state 閘門子命令（後者只軟提醒、不進 auto-gate 硬天花板）→ 都納入 doom-loop 偵測
+  if (!S.isRunnerCommand(command) && !S.isGateThrash(command)) return;
 
   const cwd = input.cwd ?? process.cwd();
   if (!existsSync(join(cwd, '.flow'))) return;              // 非 Flow 專案 → 不污染

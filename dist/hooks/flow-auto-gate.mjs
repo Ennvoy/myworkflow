@@ -1,10 +1,12 @@
 #!/usr/bin/env node
-// Flow 自駕硬閘門（PreToolUse on Bash|PowerShell）。**僅 state.json mode==='auto' 時啟用**，manual 一律放行。
+// Flow 自駕硬閘門（PreToolUse on Write|Edit|Bash|PowerShell）。**僅 mode==='auto'（manifest 先、state.json 後）時啟用**，manual 一律放行。
 // 把自駕 T1 必停集合的「可機檢子集」從散文升成 exit-2 閘門（與 commit-gate/done-gate 同風格、模型不能滑過）：
 //   ① 裝新相依（npm/pnpm/yarn/bun add|install <pkg>、pip install <pkg>、cargo add、go get、gem install）
+//   ①' C-5：編輯相依 manifest（package.json/lockfile/requirements.txt/… 的 Write|Edit）——堵「改檔加套件→bare install 還原」繞過 ①
 //   ② 破壞性 DB（DROP/TRUNCATE、無 WHERE 的 DELETE/UPDATE）
 //   ③ doom-loop 硬天花板：同一 runner 失敗連 ≥ hardThreshold（軟 STALL 被忽略太久）→ 硬擋下一次同 runner 重跑
-// 語義型 T1（需求骨架誤判 / 安全紅旗）本質是語義判斷，做不成確定性閘門，留散文（autonomous-mode.md 已誠實標注）。
+// 語義型 T1（需求骨架誤判 / 安全紅旗）＋純字串抓不到的間接執行（npm run setup / node migrate.mjs / psql -f）本質是語義/間接，
+// 做不成確定性閘門，留散文 T1（autonomous-mode.md 誠實標注涵蓋邊界）。
 // 一律 fail-open：任何錯 / 非 Flow / 非 auto → exit 0 放行，絕不誤擋。
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
@@ -61,12 +63,18 @@ function isDestructiveDB(s) {
 
 function block(msg) { process.stderr.write(msg + '\n'); process.exit(2); }
 
+// C-5：相依 manifest 檔（編輯它加套件 → 之後 bare install 還原＝繞過命令列 install 偵測）。
+const isDepManifest = p => /(^|[\/\\])(package\.json|package-lock\.json|pnpm-lock\.yaml|yarn\.lock|requirements\.txt|pyproject\.toml|Pipfile|Cargo\.toml|go\.mod|Gemfile|composer\.json)$/i.test(String(p || ''));
+
 async function main() {
   let input = {};
   try { input = JSON.parse(stripBom(raw).trim() || '{}'); } catch { process.exit(0); }
   const tool = input.tool_name ?? input.toolName ?? '';
-  if (tool !== 'Bash' && tool !== 'PowerShell') process.exit(0);
-  const command = String((input.tool_input ?? input.toolInput ?? {}).command ?? '');
+  const isCmd = tool === 'Bash' || tool === 'PowerShell';
+  const isEdit = tool === 'Write' || tool === 'Edit';
+  if (!isCmd && !isEdit) process.exit(0);
+  const ti = input.tool_input ?? input.toolInput ?? {};
+  const command = String(ti.command ?? '');
   const cwd = input.cwd ?? process.cwd();
   if (!existsSync(join(cwd, '.flow'))) process.exit(0);
 
@@ -78,6 +86,17 @@ async function main() {
   try { state = JSON.parse(stripBom(readFileSync(join(cwd, '.flow', 'state.json'), 'utf8'))); } catch { state = {}; }
   const mode = manifestMode || String(state.mode || '');
   if (mode !== 'auto') process.exit(0);   // 只在自駕模式啟用，manual 不干擾
+
+  // C-5：自駕下編輯相依 manifest＝變更相依（T1）。攔在 PreToolUse，堵「改 package.json 加套件 → bare install 還原」。
+  // 純字串偵測抓不到的間接執行（npm run setup / node migrate.mjs）仍留 T1 散文（autonomous-mode.md 誠實標注）。
+  if (isEdit) {
+    const target = String(ti.file_path ?? ti.filePath ?? '');
+    if (isDepManifest(target)) block(
+      `Flow 自駕閘門：偵測到編輯相依 manifest（${target.split(/[\/\\]/).pop()}）——改相依是 T1 必停集合（會影響安裝/供應鏈）。\n` +
+      '  → 先 AskUserQuestion 同步彈窗問使用者（要動什麼相依、為何），拍板後再改；\n' +
+      '  或真的卡住：flow-state pending add <id> --why "<需要改的相依與原因>"，收尾一批請使用者拍板。');
+    process.exit(0);   // 非相依 manifest 的 Write/Edit → 放行
+  }
 
   if (isNewDependency(command)) {
     let allowed = false, pkgs = [];

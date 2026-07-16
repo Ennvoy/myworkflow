@@ -17,7 +17,13 @@
           {
             "type": "command",
             "command": "node \"{{CLAUDE_HOME}}/hooks/flow-commit-gate.mjs\""
-          },
+          }
+        ]
+      },
+      {
+        "_comment": "C-5：auto-gate 擴到 Write|Edit——自駕下攔相依 manifest 編輯（改 package.json 加套件繞過命令列 install 偵測）。",
+        "matcher": "Write|Edit|Bash|PowerShell",
+        "hooks": [
           {
             "type": "command",
             "command": "node \"{{CLAUDE_HOME}}/hooks/flow-auto-gate.mjs\""

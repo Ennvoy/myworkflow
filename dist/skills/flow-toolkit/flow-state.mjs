@@ -436,10 +436,48 @@ switch (cmd) {
     // 「使用者彈窗拍板後留檔」，預設記 by:'user'；其餘（自駕 C 類自決）預設 by:'auto'。--by 可明示覆寫。
     const by = flag('--by') || (/waiver|signoff/i.test(rid) ? 'user' : 'auto');
     if (by !== 'user' && by !== 'auto') { console.error('--by 須為 user / auto'); process.exit(1); }
+    // C-8：自駕下 AI 不得自建 waiver/signoff——那等於冒使用者名義關掉一道出貨安全門。改記待決單、收尾彈窗請使用者拍板。
+    if (/waiver|signoff/i.test(rid) && (await S.reconstruct(root)).mode === 'auto') {
+      console.error(`✗ 自駕模式下不可自建豁免/定版單（${rid}）——那等於 AI 冒你的名義關掉一道出貨安全門。`);
+      console.error(`  → 改記待決單：flow-state pending add ${rid} --why "<為何需要豁免>"；自駕收尾時會一批彈窗請使用者拍板。`);
+      process.exit(2);
+    }
     try { await S.recordDecision(root, rid, { question: flag('--question') || '', choice, why: flag('--why') || '', by }); }
     catch (e) { if (e && e.code === 'UNSAFE_ID') { console.error('✗ ' + e.message); process.exit(1); } throw e; }
     console.log(`✓ ${by === 'user' ? '已記使用者拍板' : '已記自決'}：${rid}：${choice}${flag('--why') ? `（${flag('--why')}）` : ''}`);
     console.log('  審計線在 .flow/journal.ndjson（ev:decision）；最新快照在 .flow/decisions/。使用者可事後翻、要改再說。');
+    break;
+  }
+  case 'pending': {
+    // 待決單（C-8）：自駕碰到「重試仍過不了」的關卡 → 記一張、繼續其他工作不中斷；收尾一批彈窗請使用者拍板。
+    // 取代「AI 自建 waiver 冒名關掉出貨門」。complete-check 對 pending 非空 exit 2（有待決＝不得自稱出貨）。
+    // 用法：flow-state pending add <id> --why "<為何過不了>" | list | resolve <id> [--how "<處理>"]
+    const sub = argv[1];
+    if (sub === 'add') {
+      const id = argv[2];
+      if (!id || id.startsWith('--')) { console.error('usage: flow-state pending add <id> --why "<為何過不了>"'); process.exit(1); }
+      const why = flag('--why') || '';
+      if (!why) { console.error('需給 --why（記清楚試了什麼、為何過不了，收尾時使用者才知道怎麼拍板）'); process.exit(1); }
+      let rid;
+      try { rid = await S.addPending(root, id, { why }); }
+      catch (e) { if (e && e.code === 'UNSAFE_ID') { console.error('✗ ' + e.message); process.exit(1); } throw e; }
+      console.log(`✓ 已記待決單：${rid}（${why}）。繼續其他工作，收尾時 SHALL 一批彈窗請使用者拍板。`);
+    } else if (sub === 'list') {
+      const items = await S.listPending(root);
+      if (!items.length) { console.log('✓ 無待決單。'); break; }
+      console.log(`待決單 ${items.length} 筆（收尾 SHALL 一批彈窗請使用者拍板）：`);
+      for (const p of items) console.log(`  - ${p.id}：${p.why || '(無說明)'}`);
+    } else if (sub === 'resolve') {
+      const id = argv[2];
+      if (!id || id.startsWith('--')) { console.error('usage: flow-state pending resolve <id> [--how "<處理>"]'); process.exit(1); }
+      let ok;
+      try { ok = await S.resolvePending(root, id, flag('--how') || ''); }
+      catch (e) { if (e && e.code === 'UNSAFE_ID') { console.error('✗ ' + e.message); process.exit(1); } throw e; }
+      console.log(ok ? `✓ 待決單 ${id} 已結案。` : `⚠ 查無待決單 ${id}（可能已結案）。`);
+    } else {
+      console.error('usage: flow-state pending <add|list|resolve> …');
+      process.exit(1);
+    }
     break;
   }
   case 'lesson': {
@@ -612,6 +650,26 @@ switch (cmd) {
     const xstar = (md.match(/\bX-[A-Za-z]\w*/g) || []).length;
     if (open > 0) { console.error(`✗ 完成謂詞未達：tasks.md 還有 ${open} 個未完成 [ ]。自駕不准在此發 COMPLETE，回 build 補完。`); process.exit(2); }
     console.log(`✓ tasks.md 全數 [x]${xstar ? `（注意：尚見 ${xstar} 處 X-* cross-cutting 標記，ship 前確認已清）` : ''}。`);
+    // C-8：有待決單＝還有沒拍板的關卡，不得自稱出貨完成。
+    const pend = await S.listPending(root);
+    if (pend.length) {
+      console.error(`✗ 完成謂詞未達：還有 ${pend.length} 筆待決單未結案（自駕跳過、待使用者拍板）：`);
+      for (const p of pend) console.error(`  - ${p.id}：${p.why || ''}`);
+      console.error('  → 收尾彈窗請使用者逐筆拍板，處理後 flow-state pending resolve <id>；全部結案才可 COMPLETE。');
+      process.exit(2);
+    }
+    // C-17：tasks.md 全 [x] 不代表真交付——與 ledger 交叉對賬（現成 reconcile），揪「翻了勾但沒走 done」的偽造。
+    // 最小 guard：ledger 非空才對賬（空 ledger＝從未走過 done 的極簡/舊專案，不誤擋）。
+    const ledgerAll = await S.listLedger(root);
+    if (ledgerAll.length) {
+      const rec = S.reconcile(md, ledgerAll);
+      if (rec.checkedButNotDelivered.length) {
+        console.error('✗ 完成謂詞未達：以下 task 在 tasks.md 標了 [x] 但 ledger 沒有 delivered（翻勾≠真交付）：');
+        for (const id of rec.checkedButNotDelivered) console.error('  - ' + id);
+        console.error('  → 每個都跑 flow-state done <id>（冪等、會補齊 ledger）後再 complete-check。別手翻 [x] 繞過。');
+        process.exit(2);
+      }
+    }
     // REQ-E2E 覆蓋對賬（把原本的散文提示升級成確定性節點）。requirements.md 缺則提醒不擋（不破壞既有最小用法）。
     const cov = await coverageReport(root);
     // W0-7：缺 requirements.md 從警告升 exit 2——「歸檔/改名 spec ＝ 整段 REQ-E2E 完成謂詞靜默關閉」的洞封死。
@@ -649,7 +707,14 @@ switch (cmd) {
       process.exit(2);
     }
     // W2-4 plan-check 對賬：manifest 在 plan-check 後不得被改（scope/wave 事實來源）
+    // C-9：plan-check.json SHALL 實存（計畫出口對賬從未跑或被刪＝可整段略過）。舊專案相容＝plan-check-waiver 逃生口。
     const pc = await S.readPlanCheck(root);
+    const planWaived = existsSync(path.join(root, '.flow', 'decisions', 'plan-check-waiver.json'));
+    if (!pc && !planWaived) {
+      console.error('✗ 完成謂詞未達：查無 .flow/trace/plan-check.json——計畫出口對賬（REQ↔task／manifest scope）從未跑或被刪。');
+      console.error('  → 跑 flow-state plan-check（會落 plan-check.json）；舊專案相容：flow-state decision plan-check-waiver --choice "略過計畫對賬" --why "<原因>"。');
+      process.exit(2);
+    }
     if (pc && pc.manifestHash && pc.manifestHash !== S.manifestScopeHash(await S.readManifest(root)))
       { console.error('✗ manifest 的 blockedBy/conflictZone 在 plan-check 後被改過（scope/wave 的事實來源漂移）——重跑 flow-state plan-check 重新對賬。'); process.exit(2); }
     // C：藍軍 code-review forcing function——ship 出貨 SHALL 過藍軍。缺 code-review 且無明確豁免 → exit 2
@@ -688,7 +753,10 @@ switch (cmd) {
     }
     // Stop hook（W3-5）據此判「收工前完成謂詞真的過了」——成功即落機讀記錄（綁 HEAD）。
     await S.writeCompleteCheck(root, { head: gitHead(root) });
-    console.log(`✓ 所有 ${cov.audit.total} 條 REQ-E2E-* 驗綠${perfIds.length ? `＋${perfIds.length} 條 REQ-PERF 達標` : ''}＋${codeReview ? 'code-review red flag 全終局' : 'code-review 已豁免'}。完成謂詞達成。`);
+    // C-26：完成謂詞達成＝出貨完成。原子寫 manifest.phase=shipped（phase 單一事實來源），
+    // SessionStart 的 briefStatus 據此靜默、不再每 session 喊「task 全交付、待驗證/出貨」。
+    await S.writeManifest(root, { ...(await S.readManifest(root)), phase: 'shipped' });
+    console.log(`✓ 所有 ${cov.audit.total} 條 REQ-E2E-* 驗綠${perfIds.length ? `＋${perfIds.length} 條 REQ-PERF 達標` : ''}＋${codeReview ? 'code-review red flag 全終局' : 'code-review 已豁免'}。完成謂詞達成（phase=shipped）。`);
     break;
   }
   case 'coverage': {
@@ -891,6 +959,19 @@ switch (cmd) {
         for (const p of srProblems) console.error('  - ' + p);
         process.exit(2);
       }
+      // C-22：Step 4 高風險獨立安全審查從散文 SHALL 升為機檢——requirements 命中高風險面（auth/權限/金流/注入…）
+      // 但查無 security-review decision → exit 2（「漏做與沒觸發不可區分」的散文洞封死）。domain-presence 單訊號即可、
+      // 不照搬紅軍三組共現（需求文字語境不同、硬搬會誤殺）；未命中也印稽核線（證明檢查跑過）。
+      if (S.isHighRiskAttackText(reqText)) {
+        if (!decisionExists('security-review')) {
+          console.error('✗ requirements 命中高風險面（auth/權限/金流/注入等）但查無 security-review 記錄——Step 4 安全審查 SHALL 做並留檔：');
+          console.error('  flow-state decision security-review --choice "<審了什麼/結論>" --why "<高風險點>"（使用者拍板後留可稽核檔）。');
+          process.exit(2);
+        }
+        console.log('✓ 高風險面已有 security-review 記錄（Step 4 安全審查留檔）。');
+      } else {
+        console.log('  ⓘ requirements 未命中高風險關鍵字——Step 4 安全審查非強制（稽核線）。');
+      }
       // UI 定版記錄（走了原型路才要求）：使用者彈窗定版後 SHALL 留檔——機器證明不了「使用者真點過」，
       // 但「沒有定版記錄就凍結」從此擋得住（decision 檔可由模型自寫屬蓄意欺騙級，靠彈窗雙寫＋git 審計線兜底）。
       if (existsSync(path.join(root, mockDirRel)) && !decisionExists('ui-signoff')) {
@@ -1016,7 +1097,7 @@ switch (cmd) {
     break;
   }
   default:
-    console.log(`flow-state <resume|status|done|checkpoint|mode|project-type|scope|wave|redteam|journey-check|run|verify-e2e|verify-perf|plan-check|review-code|code-resolve|code-check|coverage|lesson|decision|guardrail-check|complete-check|spec-ready|spec-review|review-resolve|review-check|mockup-check> [--root <path>]
+    console.log(`flow-state <resume|status|done|checkpoint|mode|project-type|scope|wave|redteam|journey-check|run|verify-e2e|verify-perf|plan-check|review-code|code-resolve|code-check|coverage|lesson|decision|pending|guardrail-check|complete-check|spec-ready|spec-review|review-resolve|review-check|mockup-check> [--root <path>]
   resume | status        冷啟動：reconstruct 印現況 + 下一步 + mid-task 進度 + 對帳 + 已知死路（換 session/電腦/中斷後接手；平行波看 /workflows）
   done <id> [--commit]   標一個 task 完成：翻 tasks.md [x] + ledger→delivered（自帶 verify 閘門；先標、再 commit）
   checkpoint <id> --phase <red|green|refactor|integrated> [--note]   記 mid-task 進度（開發中當機 → resume 帶出「上次做到第幾步」，只補沒做完的）
@@ -1035,7 +1116,8 @@ switch (cmd) {
   code-check             code-review red flag 終局化對賬：任一 red flag 未終局 → exit 2（complete-check 內含同一檢查）
   coverage               REQ-E2E 覆蓋對賬：requirements.md 的 REQ-E2E-* vs .flow/verify 記錄，缺/未過 exit 2
   lesson <id> --approach "<a>" --why "<w>"   記一條失敗記憶（防再生撞同一面牆；標 BLOCKED/stall 升級時記）
-  decision <id> --choice "<c>" --why "<w>" [--by user|auto]   記決策留審計（waiver 類 id 預設 by:user＝使用者拍板；其餘預設 by:auto＝自駕自決）
+  decision <id> --choice "<c>" --why "<w>" [--by user|auto]   記決策留審計（waiver 類 id 預設 by:user＝使用者拍板；其餘預設 by:auto＝自駕自決；自駕下禁自建 waiver/signoff → 改記 pending）
+  pending <add|list|resolve>   待決單（自駕碰重試仍過不了的關卡→記一張繼續跑，收尾一批彈窗請使用者拍板；complete-check 對 pending 非空 exit 2）
   guardrail-check        自駕前置：確認 settings.json 含 stall 斷路器，缺則 exit 2（/flow 寫 mode:auto 前跑）
   complete-check         完成謂詞硬閘門：tasks.md 全 [x] ＋ requirements.md 實存 ＋ 所有 REQ-E2E-* 有 pass/n-a 記錄 才准發 COMPLETE，否則 exit 2（/flow-ship 出口跑）
   spec-ready [--freeze]  需求收斂閘門：### 開放問題 段缺失/沒清零、缺 REQ-E2E·PERF、placeholder、REQ-E2E 缺 journey 結構、PERF N/A 無豁免檔 → exit 2（含糊詞僅警告；--freeze 另對賬 projectType＋走查台/mockup-waiver＋lens 收斂/findings 終局＋ui-signoff）

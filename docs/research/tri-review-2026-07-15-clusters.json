@@ -1,0 +1,1381 @@
+[
+  {
+    "id": "C-1",
+    "title": "flow-stop-gate fail-open 面：mid-run 收工一律放行＋cc.head 空值即放行，整夜自駕無聲斷氣",
+    "category": "long-horizon",
+    "severity": "high",
+    "status": "fable-verified",
+    "worth": "yes",
+    "members": {
+      "fable": [
+        "FB-5"
+      ],
+      "codex": [
+        "CX-9"
+      ],
+      "gemini": [
+        "GM-g8-001"
+      ]
+    },
+    "problem_short": "三家族同指：Stop hook 無法區分合法 T1 停等與模型疲乏/context 結束/錯誤提早收工，mid-run 自然收束回合＝整夜自駕最高頻失敗型態零偵測、無推播無 journal（FB-5/CX-9）。…（dist/hooks/flow-stop-gate.mjs:27-32）",
+    "recommendation_short": "mode=auto 且 pickNext 有可推進項時首次 Stop 改 exit 2 擋下並指路（繼續/T1 重彈/mode manual）；硬擋前先確保 needs-decision 可靠標記，過渡期至少降級 PushNotification 告警。另修 cc.head 判定：cc.head …",
+    "verify_note_short": ""
+  },
+  {
+    "id": "C-2",
+    "title": "mode 雙倉 split-brain：換機 clone 後自駕照跑，但 auto-gate/stop-gate 整組硬護欄靜默下線",
+    "category": "long-horizon",
+    "severity": "high",
+    "status": "fable-verified",
+    "worth": "yes",
+    "members": {
+      "fable": [
+        "FB-1"
+      ],
+      "codex": [
+        "CX-1"
+      ],
+      "gemini": [
+        "GM-g1-008"
+      ]
+    },
+    "problem_short": "mode 雙寫 manifest.json(git) 與 state.json(gitignored)；fresh clone 後 resume 宣稱續跑自駕，但 auto/stop hook 只讀不存在的 state.json 即 …（statelib.mjs:1303-1305）",
+    "recommendation_short": "auto-gate/stop-gate 改經 statelib 讀 manifest→state 的 mode fallback（各約 1 行）；resume 續跑自駕前強制重跑 guardrail-check；長期收斂單一事實來源＝manifest，移除雙寫列後續（牽動 test 斷言）。",
+    "verify_note_short": ""
+  },
+  {
+    "id": "C-3",
+    "title": "Hook 稅實測：每支早退 1.3–5.1s、每個 Bash 呼叫疊 3+1 支，單日 build session 純 hook 牆鐘 20–40 分鐘",
+    "category": "efficiency",
+    "severity": "high",
+    "status": "fable-verified",
+    "worth": "maybe",
+    "members": {
+      "fable": [
+        "FB-2"
+      ],
+      "codex": [],
+      "gemini": [
+        "GM-g8-005"
+      ]
+    },
+    "problem_short": "per-call 稅約 5–6s；10–20x 開銷為單機防毒病理非普世缺陷（Fable refute 已修正「3-4 支」誇大：僅 Bash/PowerShell 吃滿）。GM 另指 SessionStart 全量 syncDrift …（settings.flow.json:14-64）",
+    "recommendation_short": "① dispatcher 合併升最高優先（同 matcher 的 commit/auto/spec-gate 合一支）；② node.exe 與 hooks 目錄做 Defender 排除實驗；③ 冷啟量測進 session-start 自檢（僅③無條件值得，①②需拍板）。syncDrift 改 …",
+    "verify_note_short": ""
+  },
+  {
+    "id": "C-10",
+    "title": "done 閘門實為自我聲明：直改 state.json 的 verify/tdd 不被擋、verifyTaskId 省略即回退寬鬆全域檢查",
+    "category": "precision",
+    "severity": "medium",
+    "status": "fable-verified",
+    "worth": "maybe",
+    "members": {
+      "fable": [
+        "FB-3"
+      ],
+      "codex": [
+        "CX-5"
+      ],
+      "gemini": [
+        "GM-g5-004",
+        "GM-g4-003"
+      ]
+    },
+    "problem_short": "三家族同指同一洞：未走 flow-state run 的 task 只要 Write 假造 verify=\"ok:anything\"、tdd=\"n/a\" 並省略 verifyTaskId，即零成本通過 TaskUpdate 與 done；…（flow-verify-gate.mjs:40-46）",
+    "recommendation_short": "採 Fable 裁決方案②：spec-gate 擋 state.json 的 verify/tdd 裸寫、正門改 flow-state verify-ok 子命令（勿裸套「verify ref 驗實存」——合法 ref 可為測試名/e2e-id 會誤殺）。CX 補強方向可並行評估：done 引用 …",
+    "verify_note_short": ""
+  },
+  {
+    "id": "C-11",
+    "title": "verify-e2e/perf 的 pass 證據只驗「檔案實存≥10 bytes」不驗內容，且 evaluator 可自標 n/a 跳過真驗",
+    "category": "precision",
+    "severity": "medium",
+    "status": "fable-verified",
+    "worth": "maybe",
+    "members": {
+      "fable": [
+        "FB-9"
+      ],
+      "codex": [
+        "CX-3"
+      ],
+      "gemini": [
+        "GM-g7-004"
+      ]
+    },
+    "problem_short": "可把任意實存檔（如 README.md）當 pass 證據、效能硬閘門可填假數字過關；CLI 自行硬填 by=evaluator 與文件「pass 必須來自 runner」不符；GM 補：n/a 無強制約束，模型可自我解釋「與本次變動無關」跳過真 …（flow-state.mjs:36-47）",
+    "recommendation_short": "複用 testFileProblem 的內容關鍵字掃描模式（成本最低）：evidence 內容須正則抓到與 --value 容差內數字、或含 REQ id 特徵字串；n/a 須預先定義 waiver list 或 complete-check 對 n/a 拋警告要求人工複核；長期評估 CX …",
+    "verify_note_short": ""
+  },
+  {
+    "id": "C-12",
+    "title": "findings 最低數量 Goodhart：紅軍 minItems:3、code-reviewer 強制 5–10 項，與 finding-discipline「湊數比漏報毒」自相衝突",
+    "category": "over-regulation",
+    "severity": "medium",
+    "status": "fable-verified",
+    "worth": "maybe",
+    "members": {
+      "fable": [
+        "FB-11"
+      ],
+      "codex": [
+        "CX-13"
+      ],
+      "gemini": [
+        "GM-g7-006"
+      ]
+    },
+    "problem_short": "三家族同指：一行文案/CSS 改動也被迫湊 2-3 個低價值攻擊情境＋failingTestHint；乾淨小 diff、docs/config task 硬湊 findings 會把 style 偏好升格 yellow、不適用情境硬寫成 attack，造成修補疲勞、…（red-team.md:88）",
+    "recommendation_short": "採整任務級 redteam-waiver-<id>＋insufficientReason（勿直接放寬 minItems，正式波次維持）；或最低數量改成風險分級 coverage attestation：允許 0 finding 但要求列出已檢查維度與具體排除證據；輕量路徑紅軍改條件觸發（僅 …",
+    "verify_note_short": ""
+  },
+  {
+    "id": "C-13",
+    "title": "doom-loop 斷路器偵測洞：字面 token 分桶連敗歸零、閘門 CLI 連紅不偵測、zeroFail 覆蓋強失敗標記",
+    "category": "long-horizon",
+    "severity": "medium",
+    "status": "fable-verified",
+    "worth": "yes",
+    "members": {
+      "fable": [
+        "FB-6"
+      ],
+      "codex": [],
+      "gemini": [
+        "GM-g10-001"
+      ]
+    },
+    "problem_short": "自然除錯行為（換寫法、加 flag、加 cd）每步歸零連敗計數，doom-loop 天花板對 flow-state 閘門連紅永不觸發；GM 補：編譯失敗時測試框架仍印 0 failed，zeroFail 強制覆蓋 Traceback …（statelib.mjs:184-186）",
+    "recommendation_short": "① runnerBucket 正規化（去 cd 前綴但保留 cd 目標於 bucket key 防 monorepo 誤合併、npm run test≡npm test）；② sig 改用正規化 bucket；③ 閘門子命令納入 runner 偵測或另立連紅計數；④ strong 命中時 …",
+    "verify_note_short": ""
+  },
+  {
+    "id": "C-14",
+    "title": "spec 階段彈窗疲勞：異常路徑逐功能×6 類全量彈窗、grill-me 獨立一彈、起手 phase 確認＋模式選擇兩連彈",
+    "category": "over-regulation",
+    "severity": "medium",
+    "status": "fable-verified",
+    "worth": "maybe",
+    "members": {
+      "fable": [
+        "FB-20"
+      ],
+      "codex": [],
+      "gemini": [
+        "GM-g2-002"
+      ]
+    },
+    "problem_short": "兩家族同指：異常路徑彈窗隨功能數線性膨脹且與訪談重疊，多功能專案可達數十次互動；純前端/無狀態功能確認併發衝突、網路斷無實質意義。Fable refute 註記：實務單次最多 4 題可批成 O(功能數×2)。（flow-spec.md:29）",
+    "recommendation_short": "① 異常自檢改差集確認、剩餘缺口單一矩陣彈窗一次收，≤3 功能併入訪談末輪，允許一鍵套用通用異常處理策略；② grill-me 併入最後一題；③ phase 偵測與模式選擇合併起手單彈。①觸及核心 forcing function 須彈窗拍板，②③可逕做。",
+    "verify_note_short": ""
+  },
+  {
+    "id": "C-17",
+    "title": "complete-check「tasks 全 [x]」只數 tasks.md 純文字、不與 ledger 交叉對賬：一次 Edit 即可偽造",
+    "category": "precision",
+    "severity": "medium",
+    "status": "fable-verified",
+    "worth": "yes",
+    "members": {
+      "fable": [
+        "FB-4"
+      ],
+      "codex": [],
+      "gemini": []
+    },
+    "problem_short": "Edit 全翻 [x] 零阻擋即可通過完成謂詞第一條；現成的 reconcile() 就差一個呼叫沒接上，checkedButNotDelivered 方向可直接偵測「勾了但沒 done」。（flow-state.mjs:611-613）",
+    "recommendation_short": "謂詞①追加 reconcile 對賬：checkedButNotDelivered 非空→exit 2 列清單並指路 flow-state done <id>（一行整合）；加最小 guard（ledger 非空才對賬）避免誤擋舊專案。",
+    "verify_note_short": ""
+  },
+  {
+    "id": "C-18",
+    "title": "hook 接線知識四處手工副本、兩處已實際漂移：uninstall 硬編 8 支 vs 實際 10 支，卸載後全域殘留指向已刪檔",
+    "category": "simplicity",
+    "severity": "medium",
+    "status": "fable-verified",
+    "worth": "yes",
+    "members": {
+      "fable": [
+        "FB-7"
+      ],
+      "codex": [],
+      "gemini": []
+    },
+    "problem_short": "卸載不完整會留下 active hook 指向已刪檔案；README 數字失準。Fable refute 補充：三個卸載入口（.mjs/.ps1/.sh）各漏同兩支。（uninstall.mjs:23-27）",
+    "recommendation_short": "settings.flow.json 定唯一事實來源：uninstall 改動態解析抽腳本名、README 改指標句；guardrailProblem 複用 hookWiringProblems 風險較高，建議先只加對賬測試防再漂。",
+    "verify_note_short": ""
+  },
+  {
+    "id": "C-19",
+    "title": "journey-waiver 是全庫單一永久開關：一張 decision 降級所有測試檔違規並跳過 complete-check 的 journey-check@HEAD",
+    "category": "precision",
+    "severity": "medium",
+    "status": "fable-verified",
+    "worth": "yes",
+    "members": {
+      "fable": [
+        "FB-8"
+      ],
+      "codex": [],
+      "gemini": []
+    },
+    "problem_short": "豁免永久且自動覆蓋未來新增的測試檔；觸發雖需 git 可稽核 decision（非靜默 fail-open），但一次拍板＝永久全庫關檢。（flow-state.mjs:785-789）",
+    "recommendation_short": "分階段：先加落檔時間戳＋複核提醒；再改 waiver 記檔案 glob 清單逐檔比對（注意舊格式相容）；complete-check 即使有 waiver 仍要求 journey-check@HEAD 跑過。",
+    "verify_note_short": ""
+  },
+  {
+    "id": "C-20",
+    "title": "journey-check 的 goto 計數只認字面字串：page.goto(變數) 完全不計數，第五鐵則可用一個變數繞過",
+    "category": "precision",
+    "severity": "medium",
+    "status": "fable-verified",
+    "worth": "maybe",
+    "members": {
+      "fable": [
+        "FB-10"
+      ],
+      "codex": [],
+      "gemini": []
+    },
+    "problem_short": "單一入口、禁 deep-link 的靜態檢查對 page.goto(變數) 零警告；Fable refute 註記深層路徑偵測本就是非阻擋 warning，修法應維持 warning 級。（statelib.mjs:1229）",
+    "recommendation_short": "另計 .goto( 出現總數與字面值命中數差值，>0 時對該 test 記警告「目標非字面，無法靜態確認非 deep-link」；限縮為 block 內 goto>1 且含非字面才升警，避免單一入口變數誤噴。",
+    "verify_note_short": ""
+  },
+  {
+    "id": "C-21",
+    "title": "紅軍 effort 實際預設 high：recipe 顯式覆蓋 frontmatter 的 xhigh，EVAL_EFFORT 同樣漂移，三個對抗代理兩個被靜默降級",
+    "category": "precision",
+    "severity": "medium",
+    "status": "fable-verified",
+    "worth": "yes",
+    "members": {
+      "fable": [
+        "FB-13"
+      ],
+      "codex": [],
+      "gemini": []
+    },
+    "problem_short": "憲法「模型/effort 分級寫死、對抗審查不降級」被 recipe 預設值靜默推翻，code-reviewer.md 也是 xhigh——三個對抗代理兩個實跑 high。（parallel-build.js:30）",
+    "recommendation_short": "呼叫端不傳 effort 讓 frontmatter xhigh 生效；recipe 註明「effort 由 agent 定義檔釘死勿覆寫」；guide 表加一句「預設值須與表一致」。",
+    "verify_note_short": ""
+  },
+  {
+    "id": "C-22",
+    "title": "Step 4 高風險獨立審查是純散文 SHALL：spec-ready --freeze 完全不對賬 security-review decision",
+    "category": "precision",
+    "severity": "medium",
+    "status": "fable-verified",
+    "worth": "yes",
+    "members": {
+      "fable": [
+        "FB-14"
+      ],
+      "codex": [],
+      "gemini": []
+    },
+    "problem_short": "跳過整個 Step 4 無痕跡，漏做與沒觸發不可區分——正是「散文會被滑過」的反例。（flow-spec.md:47）",
+    "recommendation_short": "命中判定做進 spec-ready --freeze：沿用 isHighRiskAttackText 詞庫擴充中文同義詞，命中且查無 security-review decision→exit 2；未命中也印稽核線。實作採 domain-presence 單訊號偵測即可，勿照搬三組共現邏輯。",
+    "verify_note_short": ""
+  },
+  {
+    "id": "C-23",
+    "title": "complete-check 七大類逐類 fail-fast：一次只揭露一類失敗，自駕下每類多耗一整個「修→重跑」模型迴圈",
+    "category": "efficiency",
+    "severity": "medium",
+    "status": "fable-verified",
+    "worth": "yes",
+    "members": {
+      "fable": [
+        "FB-16"
+      ],
+      "codex": [],
+      "gemini": []
+    },
+    "problem_short": "同時多類未達時要跑 3-4 輪「讀錯誤→修→重跑」才見全貌（Fable refute 修正原「~7 輪」誇大）。（flow-state.mjs:605-692）",
+    "recommendation_short": "改收集全部類別失敗、統一列印最後 exit 2：各檢查 push 進 problems 陣列；保留 :609/:618/:630 三處前置 fail-fast；改完跑全套測試確認續綠。",
+    "verify_note_short": ""
+  },
+  {
+    "id": "C-24",
+    "title": "build 每 feature 各自 spawn Opus/xhigh Evaluator＋各自 production build：N features 付 N 次最貴配置驗 happy-path smoke",
+    "category": "efficiency",
+    "severity": "medium",
+    "status": "fable-verified",
+    "worth": "maybe",
+    "members": {
+      "fable": [
+        "FB-17"
+      ],
+      "codex": [],
+      "gemini": []
+    },
+    "problem_short": "與已排程「波級 tsc/build 重用」部分重疊但 production build 更重，屬獨立新槓桿（Fable value 裁決）。（evaluator.md:5-6）",
+    "recommendation_short": "提供波級批次窄驗證選項：整波整合完 spawn 一次 evaluator 驗全部 happy path 逐條回 PASS/FAIL；trade-off 經 Ask-first 彈窗拍板，並與已排程波級 tsc 重用合併評估避免彈窗疲勞。",
+    "verify_note_short": ""
+  },
+  {
+    "id": "C-41",
+    "title": "lens 收斂判準寫死「各 ≥2 輪」：首輪零發現仍對同一 docHash 重跑，白燒 Opus 呼叫且修 findings 改 docHash 會再觸發重跑",
+    "category": "efficiency",
+    "severity": "low",
+    "status": "fable-verified",
+    "worth": "maybe",
+    "members": {
+      "fable": [
+        "FB-12"
+      ],
+      "codex": [],
+      "gemini": [
+        "GM-g2-003"
+      ]
+    },
+    "problem_short": "同模型 re-roll 邊際增益趨近零；GM 額外擔憂無限重跑（實作有封頂輪數，宣稱過重）。Fable refute：不宜直接「首輪空即收斂」（弱化韌性），輪數應與 spec 規模掛鉤。與已裁決不做的 self-consistency/best-of-N …（statelib.mjs:567）",
+    "recommendation_short": "輪數與 spec 規模掛鉤（REQ<10 條放寬 1 輪）；增量評估：僅核心需求變更才重跑受影響 lens；需同步改 statelib.test.mjs:1016。",
+    "verify_note_short": ""
+  },
+  {
+    "id": "C-42",
+    "title": "T1 停等喚回 loop 無退避無 journal：60s 逾時後反覆重彈＋推播，輪次不落檔無法稽核",
+    "category": "long-horizon",
+    "severity": "low",
+    "status": "fable-verified",
+    "worth": "yes",
+    "members": {
+      "fable": [
+        "FB-18"
+      ],
+      "codex": [],
+      "gemini": [
+        "GM-g5-001"
+      ]
+    },
+    "problem_short": "Fable refute 已推翻「純散文」原判（②③⑤已由 flow-auto-gate exit-2 硬擋），殘餘缺口為停等輪次不落 journal＋無指數退避；GM 的成本擔憂與殘餘缺口一致。（autonomous-mode.md:26-32）",
+    "recommendation_short": "Phase A：每輪停等落 journal（ev:t1-wait）＋重彈用固定模板；Phase A+：喚回 loop 加指數退避（1m→5m→15m→30m 封頂），並評估升級成 auto-gate 硬擋。",
+    "verify_note_short": ""
+  },
+  {
+    "id": "C-43",
+    "title": "互動原型無輕量檔位：小型 web 工具與純 API/headless 專案同套硬規格或被迫手動 waiver",
+    "category": "over-regulation",
+    "severity": "low",
+    "status": "fable-verified",
+    "worth": "no",
+    "members": {
+      "fable": [
+        "FB-23"
+      ],
+      "codex": [],
+      "gemini": [
+        "GM-g6-005"
+      ]
+    },
+    "problem_short": "Fable value 裁決 payoff 有限（mockup-check 本就只擋輕量骨架、品牌基底已有一鍵豁免、waiver 出口存在）；GM 的無 UI web 專案場景是較實的邊界 case，但同樣有 waiver 出口。",
+    "recommendation_short": "最相容做法：狀態切換器 SHALL 改條件化、純 API 專案 project-type 判定自動跳過 mockup-check（免手動 waiver），不新增制度分級。",
+    "verify_note_short": ""
+  },
+  {
+    "id": "C-44",
+    "title": "subagent 委派無規模門檻：resume 轉述／compact 歸檔／plan 盤點一律 SHALL 下放，小狀態時 spawn 反而比直讀貴",
+    "category": "efficiency",
+    "severity": "low",
+    "status": "fable-verified",
+    "worth": "maybe",
+    "members": {
+      "fable": [
+        "FB-25"
+      ],
+      "codex": [],
+      "gemini": [
+        "GM-g1-003",
+        "GM-g1-004",
+        "GM-g2-008"
+      ]
+    },
+    "problem_short": "小專案輸出 <1k token 時 spawn 往返比主迴圈直讀貴，且與 session-start 已注入現況重複；確定性檔案搬移交 LLM 有幻覺風險。Fable refute 註記實際影響低（10-30s 主要是 node 冷啟）。GM-g1-004 …（flow-resume.md:11）",
+    "recommendation_short": "SHALL 改門檻式：輸出 >2-3k token 或 task 數 >10 才委派；session-start 已注入且無 stale 疑慮直接沿用；compact 的機械搬移改 deterministic 腳本；research-sweep 設 codebase 規模門檻。",
+    "verify_note_short": ""
+  },
+  {
+    "id": "C-45",
+    "title": "flow-auto-gate 相依偵測雙表漂移＋extractDepNames 把 && 後串接命令誤抓成套件名",
+    "category": "simplicity",
+    "severity": "low",
+    "status": "fable-verified",
+    "worth": "maybe",
+    "members": {
+      "fable": [
+        "FB-26"
+      ],
+      "codex": [],
+      "gemini": [
+        "GM-g8-003"
+      ]
+    },
+    "problem_short": "漏同步一邊＝allowlist 靜默失效（安全側：多彈窗非漏放行）；GM 補具體解析 bug 破壞自駕流暢度。兩表已有既存分歧。",
+    "recommendation_short": "收成單一表 [{detect,extract}] 雙函式同表驅動（注意 npm 分支帶邏輯非純機械）；extract 前先截斷 &&、||、;、>、| 等 shell 運算子；加 detect/extract parity 測試。",
+    "verify_note_short": ""
+  },
+  {
+    "id": "C-46",
+    "title": "憲法級內容三至四處詳略不一重複、root 以過期「~67 行」自證薄、無 byte budget 守門",
+    "category": "simplicity",
+    "severity": "low",
+    "status": "fable-verified",
+    "worth": "maybe",
+    "members": {
+      "fable": [
+        "FB-27"
+      ],
+      "codex": [
+        "CX-12"
+      ],
+      "gemini": []
+    },
+    "problem_short": "每 session 支付重複 token、稀釋核心規則注意力權重。註記：v0.27.0 已做過憲法瘦身 39%，本輪為瘦身後的殘餘重複；Fable value 裁決其餘效益被高估。（architecture.md:72）",
+    "recommendation_short": "最乾淨動作：「~67 行」改相對描述、SKILL.md 憲法摘要段改指標句直接做；root 再瘦（移研究數字/模型表/完整清單）與 byte-budget 進 sync-check 先彈窗問門檻再做。",
+    "verify_note_short": ""
+  },
+  {
+    "id": "C-47",
+    "title": "flow-size-check 節流高水位在 /flow-compact 後不重置：壓縮後再膨脹被舊高水位悶掉",
+    "category": "long-horizon",
+    "severity": "low",
+    "status": "fable-verified",
+    "worth": "yes",
+    "members": {
+      "fable": [
+        "FB-28"
+      ],
+      "codex": [],
+      "gemini": [
+        "GM-g10-005"
+      ]
+    },
+    "problem_short": "兩家族獨立命中同一 bug：同 session「壓縮後再膨脹」提醒延遲失聲，自駕最需要的那次提醒被悶。Fable refute 補充悶掉區間可能更寬（marker=120KB 時 100KB 檔仍靜默）。（flow-size-check.mjs:56-60）",
+    "recommendation_short": "hook 側修法（勿改 flow-compact.md 加步驟）：over 為空且 maxBytes 明顯低於 marker 時把 marker 重置為當前值（約三行）；切勿改成無條件每次上寫。",
+    "verify_note_short": ""
+  },
+  {
+    "id": "C-48",
+    "title": "tasks.md id 正則對「字母緊接數字」的 id（T1-2/W0-5）解析為 null：翻勾/對帳/閘門全鏈靜默失明",
+    "category": "precision",
+    "severity": "low",
+    "status": "fable-verified",
+    "worth": "yes",
+    "members": {
+      "fable": [
+        "FB-15"
+      ],
+      "codex": [],
+      "gemini": []
+    },
+    "problem_short": "Fable value 裁決調降 low：官方模板已釘 P-/F-/X- 安全樣式，字母＋數字是內部 wave 標籤，實際命中面窄。（statelib.mjs:1020）",
+    "recommendation_short": "ID_RE 改容許 [A-Za-z][A-Za-z0-9]*，加單元測試釘 W0-5/T1-2；訊息升級為診斷式提示改用 P-/F-/X- 樣式；修 dist/ 後同步複製到 ~/.claude/skills/flow-toolkit/。",
+    "verify_note_short": ""
+  },
+  {
+    "id": "C-49",
+    "title": "高危關鍵字 floor 誤傷面過寬：low 攻擊只要提到 auth/login/token 就被鎖進「湊測試或逐攻擊拍板 waiver」二選一",
+    "category": "over-regulation",
+    "severity": "low",
+    "status": "fable-verified",
+    "worth": "maybe",
+    "members": {
+      "fable": [
+        "FB-19"
+      ],
+      "codex": [],
+      "gemini": []
+    },
+    "problem_short": "Fable refute 裁決：只有「輸出分列兩種擋因」子建議安全；「low 降級執法」與 severity 反造假設計衝突不可採。",
+    "recommendation_short": "僅取分列透明化（輸出分列「severity 觸發」與「關鍵字觸發」兩種擋因），floor 硬度不動。",
+    "verify_note_short": ""
+  },
+  {
+    "id": "C-50",
+    "title": "三套同構 findings 終局化框架（spec-review/code-review/redteam）各自實作、兩套終局動詞詞彙",
+    "category": "simplicity",
+    "severity": "low",
+    "status": "fable-verified",
+    "worth": "no",
+    "members": {
+      "fable": [
+        "FB-21"
+      ],
+      "codex": [],
+      "gemini": []
+    },
+    "problem_short": "Fable value 裁決不建議抽引擎：resolution key/docHash 生命週期分歧限制去重價值，真正重複僅 shape-validator 骨架，payoff 誇大。（statelib.mjs:464-551）",
+    "recommendation_short": "唯一低風險動作：把交叉引用註解補雙向對稱；不抽 findings-ledger 引擎。",
+    "verify_note_short": ""
+  },
+  {
+    "id": "C-51",
+    "title": "flow-state 26+ 子命令目錄三份手工副本已漂移：journal-archive 實存但自家 help 沒列",
+    "category": "simplicity",
+    "severity": "low",
+    "status": "fable-verified",
+    "worth": "yes",
+    "members": {
+      "fable": [
+        "FB-22"
+      ],
+      "codex": [],
+      "gemini": []
+    },
+    "problem_short": "實傷有限（讀 help 發現不了一個多半自動跑的命令），Fable 已調降 low。（flow-state.mjs:1019-1046）",
+    "recommendation_short": "加測試斷言 help 子命令集合==switch case 集合（十行內）；順手補 journal-archive 進 help；SKILL.md:42 縮成指標句。",
+    "verify_note_short": ""
+  },
+  {
+    "id": "C-52",
+    "title": "build 迴圈兩筆固定牆鐘稅：每波無條件 deps install/ci＋per-task 逐個 git push 的 N 次冗餘網路往返",
+    "category": "efficiency",
+    "severity": "low",
+    "status": "fable-verified",
+    "worth": "maybe",
+    "members": {
+      "fable": [
+        "FB-24"
+      ],
+      "codex": [],
+      "gemini": []
+    },
+    "problem_short": "Fable refute 註記：push 批次化與 flow-build.md:61-63「跨電腦即時接得上」性質部分衝突，需彈窗拍板並補 resume 對賬，否則靜默失去波內即時遠端備份。（build-playbook.md:12）",
+    "recommendation_short": "① lockfile hash 記進 .flow/，未變則跳過全量 ci；② commit 維持 per-task、push 移到每波整合完統一一次（經彈窗拍板），resume 對賬補「領先 remote」提醒。與 C-34 的 push 失敗處理一起設計。",
+    "verify_note_short": ""
+  },
+  {
+    "id": "C-73",
+    "title": "純編輯迴圈防死循環靠模型自律、無硬性計數斷路器（前次已裁決不做）",
+    "category": "precision",
+    "severity": "low",
+    "status": "known-baseline",
+    "worth": "",
+    "members": {
+      "fable": [],
+      "codex": [],
+      "gemini": [
+        "GM-g4-005"
+      ]
+    },
+    "problem_short": "與已知分母「已裁決不做：純編輯迴圈工具計數斷路器」完全重疊，GM 未提出新事證（建議的 hook 計數器即前次被否決方案）；stall-monitor 已覆蓋 runner 連敗面。",
+    "recommendation_short": "維持前次裁決不做；若 doom-loop 實案累積再議。",
+    "verify_note_short": ""
+  },
+  {
+    "id": "C-4",
+    "title": "flow-spec-gate 靜態字串比對可繞過：兩步腳本、cd .flow、尾綴註解冒充正門、unicode 轉義 phase 值",
+    "category": "precision",
+    "severity": "low",
+    "status": "partial",
+    "worth": "maybe",
+    "members": {
+      "fable": [],
+      "codex": [
+        "CX-4"
+      ],
+      "gemini": [
+        "GM-g9-003",
+        "GM-g9-008",
+        "GM-g9-004"
+      ]
+    },
+    "problem_short": "ledger 防竄改本質是命令字串靜態匹配：先 Write 一支普通 script 再 node 執行（兩次工具呼叫各自不命中）、cd 進 .flow 再相對路徑寫入、裸寫命令尾端加註解冒充正門、unicode 轉義 phase 值，…（flow-spec-gate.mjs:41-45）",
+    "recommendation_short": "放行正則錨定命令起點（flow-state 須為執行主體、排除註解）；對 state.json 的 Write/Edit 先 JSON.parse 解碼再判 phase；解析 cwd 變化計算目標絕對路徑。若威脅模型含蓄意作弊，ledger 寫入須簽章或受限 helper；否則文件改稱防誤操作、…",
+    "verify_note_short": "改3處低成本：正則排除註解、正規化\\u跳脫、文件降調成「防誤操作」；cd/間接腳本繞過不修"
+  },
+  {
+    "id": "C-5",
+    "title": "flow-auto-gate 只看內嵌命令文字：npm run setup／migration 檔／改 package.json 後裸 install 全繞過 T1 硬擋",
+    "category": "precision",
+    "severity": "medium",
+    "status": "partial",
+    "worth": "maybe",
+    "members": {
+      "fable": [],
+      "codex": [
+        "CX-8"
+      ],
+      "gemini": [
+        "GM-g5-002",
+        "GM-g5-008"
+      ]
+    },
+    "problem_short": "npm run setup、node migrate.mjs、psql -f migration.sql 等間接執行不含敏感文字即繞過；先 Edit package.json 再跑無參數 npm install 引入新相依不被攔；破壞性 SQL …（flow-auto-gate.mjs:20-33）",
+    "recommendation_short": "auto 模式對 migration、package-manager script 與未知 DB runner 採預設停問；PostToolUse 比對 package manifest/lockfile 與 migration diff，發現未預核准變化立即阻止後續推進；Write/Edit …",
+    "verify_note_short": "不擋npm run*(誤攔過高)；改文件誠實用詞＋加manifest編輯時PreToolUse攔阻，migration面留T1"
+  },
+  {
+    "id": "C-6",
+    "title": "flow-commit-gate 解析正則六連發：-m\"msg\"／-ccore.hooksPath／-Ffile 緊湊寫法、轉義引號、-F 相對路徑，多數 fail-open",
+    "category": "precision",
+    "severity": "low",
+    "status": "partial",
+    "worth": "maybe",
+    "members": {
+      "fable": [],
+      "codex": [],
+      "gemini": [
+        "GM-g9-001",
+        "GM-g9-002",
+        "GM-g9-009",
+        "GM-g9-006",
+        "GM-g9-005",
+        "GM-g9-007"
+      ]
+    },
+    "problem_short": "同一支 hook 六個具體、可最小命令重現的正則/路徑處理缺陷：Delivered 狀態檢查（先標再 commit）與 core.hooksPath 兜底繞過偵測皆可被合法 Git 語法繞過，部分情境反向誤擋。單家族提出但屬可機械驗證的 code-level bug 群。",
+    "recommendation_short": "-m/-F 正則改 \\s*、引號匹配改可處理轉義的 \"(?:\\\\.|[^\"\\\\])*\"；hooksPath 偵測改 /-c\\s*core\\.hooksPath/i；readFileSync 改 join(cwd,f)；commit 偵測正則錨定子命令位置。逐條先寫重現測試再修。",
+    "verify_note_short": "severity high降low；僅修緊湊-m\"msg\"正則(連帶修假阻擋)，-c/-F/子命令重錨不值得動"
+  },
+  {
+    "id": "C-7",
+    "title": "品質證據無新鮮度對賬：E2E/PERF/code-review 舊記錄可沿用到改壞後的新 HEAD 出貨",
+    "category": "precision",
+    "severity": "medium",
+    "status": "confirmed",
+    "worth": "maybe",
+    "members": {
+      "fable": [],
+      "codex": [
+        "CX-2"
+      ],
+      "gemini": []
+    },
+    "problem_short": "verify、效能量測或 code review 通過後再提交產品改動，complete-check 仍接受舊記錄；全鏈只有 journey-check 有 @HEAD 對賬，其他品質證據沒有同等新鮮度保證——「先驗綠、後改壞、…（flow-state.mjs:739-742）",
+    "recommendation_short": "complete-check 對 E2E、PERF、code-review 全部核對當前 HEAD；若不要求逐 commit 重跑，至少儲存被驗檔案集合與 content hash，僅在相關 diff 未變時沿用。",
+    "verify_note_short": "確認缺新鮮度對賬；建議拆兩票：code-review HEAD-diff優先，E2E/PERF相關-diff較複雜緩後"
+  },
+  {
+    "id": "C-8",
+    "title": "模型可自行產生被標為 user 的 waiver：不經 AskUserQuestion 即關閉 perf/code-review/journey 出口閘門",
+    "category": "precision",
+    "severity": "medium",
+    "status": "confirmed",
+    "worth": "yes",
+    "members": {
+      "fable": [],
+      "codex": [
+        "CX-6"
+      ],
+      "gemini": []
+    },
+    "problem_short": "AI 不必真的取得使用者回覆就能執行 flow-state decision code-review-waiver/journey-waiver/perf-waiver，CLI 還記成使用者拍板——以審計檔外觀冒充真人授權，直接關閉重要出口閘門。（flow-state.mjs:432-440）",
+    "recommendation_short": "user approval receipt 與普通 decision 分開；只有互動工具回傳的不可偽造 approval 才能建 waiver。至少強制明示 --by user＋非空 why＋問題與選項摘要，並禁止 auto mode 自行建立高風險 waiver。",
+    "verify_note_short": "確認；加auto-gate攔waiver建立(僅mode:auto、一行regex)逼T1；不可偽造receipt過度設計不採"
+  },
+  {
+    "id": "C-9",
+    "title": "complete-check 不要求 plan-check.json 存在：pc 缺失直接跳過，計畫出口對賬可整段略過",
+    "category": "precision",
+    "severity": "medium",
+    "status": "confirmed",
+    "worth": "yes",
+    "members": {
+      "fable": [],
+      "codex": [
+        "CX-7"
+      ],
+      "gemini": []
+    },
+    "problem_short": "流程可完全略過計畫出口對賬仍通過最終完成謂詞；單 task 或未使用多 task scope 的專案尤其容易走到出貨才無聲漏檢，文件宣稱與實作不符。（dist/commands/flow-ship.md:38）",
+    "recommendation_short": "complete-check 要求 plan-check.json 實存、manifestHash 相符，並核對其 reqHash/HEAD；相容舊專案提供一次性 migration waiver，不要永久 fail-open。",
+    "verify_note_short": "確認；clone既有waiver樣式補plan-check缺失擋(exit 2)，約5條既有測試需補waiver decision"
+  },
+  {
+    "id": "C-15",
+    "title": "plan-check 覆蓋深度不足：只 filter REQ-E2E/PERF、只驗 id 字面出現，功能 REQ 可無聲蒸發、敷衍 task 描述可綠",
+    "category": "precision",
+    "severity": "low",
+    "status": "partial",
+    "worth": "maybe",
+    "members": {
+      "fable": [],
+      "codex": [
+        "CX-10"
+      ],
+      "gemini": [
+        "GM-g2-006"
+      ]
+    },
+    "problem_short": "兩家族同指：一般 REQ-XXX 可未映射到任何 task；worker 若只承接 REQ-E2E 拿到的是 journey 區塊而非背後欄位/錯誤/權限細節；結構性對賬保證不了實質覆蓋，自駕下設計缺陷直接帶進 build。（flow-plan.md:68）",
+    "recommendation_short": "建立明確 trace graph：功能 REQ→E2E→task；plan-check 驗每條功能 REQ 至少被某 E2E 或 task 承接；wave-plan 將閉包內全部 REQ 區塊投餵 worker；輔以輕量實質性啟發式（最小結構完整度）而非只驗 id 字面。",
+    "verify_note_short": "只修文件用詞(誠實標註REQ覆蓋邊界)；結構化追蹤圖/heuristic過度設計不採，與H10逐字凍結衝突"
+  },
+  {
+    "id": "C-16",
+    "title": "design-base-hint 宣稱「一專案一次」實為每個新前端檔注入一次：建 10 個 component 收 10 次相同提示",
+    "category": "over-regulation",
+    "severity": "low",
+    "status": "partial",
+    "worth": "maybe",
+    "members": {
+      "fable": [],
+      "codex": [
+        "CX-14"
+      ],
+      "gemini": [
+        "GM-g10-002",
+        "GM-g10-007"
+      ]
+    },
+    "problem_short": "兩家族同指註解與實作矛盾：批次建立前端檔時反覆注入數百字元 additionalContext，非 Flow UI 工作也被重複推銷 150 套設計系統，token 稅＋提示疲勞；併發 hook 程序可能互相覆蓋 seen 紀錄導致重複提示。（flow-design-base-hint.mjs:7）",
+    "recommendation_short": "去重 key 改 repo root，或在 manifest 記 designBase 已選/已略過，只有新專案第一個 UI 檔觸發一次；seen 標記移進專案 .flow 內避免全域檔競態。",
+    "verify_note_short": "confirmed但per-file是刻意設計；只修line-7註解措辭，不改成一專案一次"
+  },
+  {
+    "id": "C-25",
+    "title": "藍軍 findings.json 只做存在性＋空陣列檢查：不 spawn code-reviewer 直接寫 [] 即繞過整個藍軍閘門",
+    "category": "precision",
+    "severity": "low",
+    "status": "partial",
+    "worth": "no",
+    "members": {
+      "fable": [],
+      "codex": [],
+      "gemini": [
+        "GM-g3-005"
+      ]
+    },
+    "problem_short": "complete-check 只做靜態存在性檢查，模型可不啟動 code-reviewer subagent 直接 fs 寫入 []。與 C-7（新鮮度）、C-10（自我聲明）同屬「ledger 證據不驗真」家族但機制獨立；驗證時應對照 v0.25.0 機讀落檔實作確認是否已有 metadata …",
+    "recommendation_short": "complete-check 驗 findings.json 的元數據：產生時間、對應 commit hash、由 orchestrator 落檔的來源特徵；長期與 C-7 的 HEAD 對賬、C-8 的 approval receipt 一併設計成統一的證據簽章層。",
+    "verify_note_short": "簽章層不值得做，違反防懶不防蓄意設計；唯一可行slice與C-7重疊，歸known-baseline"
+  },
+  {
+    "id": "C-26",
+    "title": "出貨後 SessionStart 仍可能永久提示未出貨：briefStatus 只讀 manifest.phase，allDelivered 但 phase!=shipped 即判 hasWork",
+    "category": "long-horizon",
+    "severity": "medium",
+    "status": "confirmed",
+    "worth": "yes",
+    "members": {
+      "fable": [],
+      "codex": [
+        "CX-11"
+      ],
+      "gemini": []
+    },
+    "problem_short": "典型 manifest 沒有 shipped phase；即使 state.json 已標 shipped，reconstruct/briefStatus 仍顯示「待驗證/出貨」，違反 SessionStart 全完成後靜默的承諾，完成專案每個 session …（flow-ship.md:42）",
+    "recommendation_short": "phase 建立單一耐久來源：complete-check 成功後由 CLI 原子寫 manifest.phase=shipped；reconstruct 明確合併 phase，SessionStart 只讀合併結果。與 C-2 的單一事實來源收斂同方向，宜一起設計。",
+    "verify_note_short": "確認；補3處讀取點phase判斷，建議把shipped寫入移進complete-check CLI而非留散文步驟"
+  },
+  {
+    "id": "C-27",
+    "title": "commit 安全閘門在核心故障時全面 fail-open：staged 取不到/模組 import 失敗/任意例外皆放行",
+    "category": "precision",
+    "severity": "low",
+    "status": "partial",
+    "worth": "maybe",
+    "members": {
+      "fable": [],
+      "codex": [
+        "CX-15"
+      ],
+      "gemini": []
+    },
+    "problem_short": "半安裝、路徑漂移或模組語法錯時，secrets 與驗證垃圾保護同時消失且 commit 照常成功，與架構文件「確定性安全節點」表述不一致。（commit-gate-core.mjs:5）",
+    "recommendation_short": "自動代理觸發的 commit 對 core/staged 查詢故障 fail-closed 並輸出修復命令；保留人類可見的單次 --no-verify 逃生口；SessionStart 落 hook health receipt 避免靜默降級。",
+    "verify_note_short": "不建議fail-closed(違反永不卡死commit鐵則)；唯一可行slice是SessionStart健康自檢，價值邊際"
+  },
+  {
+    "id": "C-28",
+    "title": "多支 hook 只以 existsSync(join(cwd,'.flow')) 判專案：子目錄執行時全面 fail-open（懷疑點：hook cwd 多為 session 根）",
+    "category": "precision",
+    "severity": "low",
+    "status": "refuted",
+    "worth": "no",
+    "members": {
+      "fable": [],
+      "codex": [],
+      "gemini": [
+        "GM-g8-002"
+      ]
+    },
+    "problem_short": "GM 主張在專案子目錄（src/、monorepo 子模組）執行指令時找不到 .flow 即 exit 0，自駕護欄/收工檢查/pre-commit 安裝全失效。懷疑點：Claude Code hook input 的 cwd 通常是 session 工作目錄（專案根）而非 Bash 內 cd …",
+    "recommendation_short": "驗證 hook 實收 cwd 行為後，如確有洞則實作向上遞迴尋找 .flow 或以 git rev-parse --show-toplevel 定位專案根。",
+    "verify_note_short": "refuted；Gemini誤判hook cwd會隨Bash cd漂移，實際不會，無跨目錄fail-open"
+  },
+  {
+    "id": "C-29",
+    "title": "輕量路徑只要求補 requirements/tasks，與全域硬規則「沒 design.md+tasks.md 不寫 code」矛盾",
+    "category": "precision",
+    "severity": "low",
+    "status": "partial",
+    "worth": "maybe",
+    "members": {
+      "fable": [],
+      "codex": [],
+      "gemini": [
+        "GM-g1-001"
+      ]
+    },
+    "problem_short": "模型執行輕量路徑時面臨「是否必須寫 design.md」的語意含糊，兩份 always-on 文件間規則漂移，執行不穩定。",
+    "recommendation_short": "Step 0.5 明確規定輕量路徑下 design.md 的簡化規範（如既有 design.md 增補一節或明示可豁免），或在全域硬規則標注輕量路徑例外。",
+    "verify_note_short": "非硬矛盾；輕量路徑靠既有design.md沿用+code-reviewer drift偵測補洞，僅Step 0.5補半句澄清"
+  },
+  {
+    "id": "C-30",
+    "title": "Step 0 起始偵測：「所有 task [x] 但完成謂詞未達」直接導向 Phase 5，無接續 Phase 4 獨立驗證的分支",
+    "category": "precision",
+    "severity": "low",
+    "status": "refuted",
+    "worth": "no",
+    "members": {
+      "fable": [],
+      "codex": [],
+      "gemini": [
+        "GM-g1-002"
+      ]
+    },
+    "problem_short": "中斷重啟時可能跳過 Phase 4 /flow-verify 的獨立 Evaluator 驗證。緩衝註記：ship 的 complete-check 仍逐條對賬 REQ-E2E 記錄、缺驗會被擋，並非完全 fail-open；但漏跑獨立驗證會把修綠成本堆到 ship 才爆。",
+    "recommendation_short": "Step 0 加入「所有 task [x] 且 REQ-E2E 記錄不全/不新鮮」→ 從 Phase 4 接續的判定分支。",
+    "verify_note_short": "refuted；加Phase 4接續分支不可行且多餘，ship既有全範圍verify+對賬已擋stale情形"
+  },
+  {
+    "id": "C-31",
+    "title": "spec-ready 開放問題清零判定可被「直接刪除區塊」繞過：字面清零≠真的釐清",
+    "category": "precision",
+    "severity": "low",
+    "status": "refuted",
+    "worth": "no",
+    "members": {
+      "fable": [],
+      "codex": [],
+      "gemini": [
+        "GM-g1-007"
+      ]
+    },
+    "problem_short": "模型面臨棘手開放問題時，可為過閘門直接清空或刪除該區塊，而非真與使用者互動解決——典型 Goodhart。",
+    "recommendation_short": "凍結閘門加歷史對比：曾記錄過的開放問題須有對應 decision 紀錄或訪談答案軌跡才准清零；或凍結時列出「本次清零的開放問題數」供彈窗確認。",
+    "verify_note_short": "refuted；決策留痕能力已在對抗審查路徑實作，剩餘漏洞屬刻意排除的蓄意欺瞞層級"
+  },
+  {
+    "id": "C-32",
+    "title": "關鍵字命中即強制注入動態 RBAC 需求：小專案/內部工具過度設計並誘發避詞 Goodhart",
+    "category": "over-regulation",
+    "severity": "low",
+    "status": "partial",
+    "worth": "maybe",
+    "members": {
+      "fable": [],
+      "codex": [],
+      "gemini": [
+        "GM-g2-001"
+      ]
+    },
+    "problem_short": "單人腳本、測試用 admin 頁、內部工具被迫實作動態 RBAC；模型可能為避規則刻意避用常見詞，spec 描述不自然。",
+    "recommendation_short": "命中後改彈窗確認是否需要 RBAC（一題），而非無條件強制注入；保留高風險關鍵字的稽核線。",
+    "verify_note_short": "與既有訪談+Step1確認部分冗餘；建議改用詞「建議注入」軟化而非新增停點"
+  },
+  {
+    "id": "C-33",
+    "title": "接縫契約「兩邊 import 同一份」鐵則未考慮跨語言專案：Python 後端＋TS 前端無法 import 同一實體檔",
+    "category": "precision",
+    "severity": "low",
+    "status": "partial",
+    "worth": "maybe",
+    "members": {
+      "fable": [],
+      "codex": [],
+      "gemini": [
+        "GM-g2-009"
+      ]
+    },
+    "problem_short": "跨語言專案（FastAPI+React 等）此鐵則不可行，會強迫無意義 workaround 或被模型自行放棄執行。",
+    "recommendation_short": "規則補充跨語言路徑：允許 codegen（OpenAPI/Zod→雙端型別）或 design.md 定義單一權威契約檔＋生成物對賬，保留「釘一處」精神。",
+    "verify_note_short": "若採納僅line 34尾端加跨語言codegen子句，不升級為新閘門或plan-check硬擋"
+  },
+  {
+    "id": "C-34",
+    "title": "per-task push 失敗僅警告仍寫 ledger completed（懷疑點：push 失敗時 ledger 也沒上 remote，跨機宣稱鏈路存疑）",
+    "category": "precision",
+    "severity": "low",
+    "status": "refuted",
+    "worth": "maybe",
+    "members": {
+      "fable": [],
+      "codex": [],
+      "gemini": [
+        "GM-g3-001"
+      ]
+    },
+    "problem_short": "GM 主張 push 失敗後 ledger 已記 completed，跨電腦 resume 誤判已交付。懷疑點：state.json 為 gitignored、tracked 的 .flow 變更也隨同一批 commit 未上 remote，另一台機器看到的是一致的舊狀態，…",
+    "recommendation_short": "push 失敗至少記入 journal 並在 resume 對賬時提示「本地領先 remote N commits」；與 C-52（push 批次化）一起設計。",
+    "verify_note_short": "push失敗只是能見度小事、非正確性缺陷；建議併入C-52批次push一起做，不獨立排程"
+  },
+  {
+    "id": "C-35",
+    "title": "build Step 1.5 拍板策略寫進 manifest 會改變 hash，但無同步更新 plan-check.json 機制，ship 對賬必炸",
+    "category": "precision",
+    "severity": "low",
+    "status": "refuted",
+    "worth": "no",
+    "members": {
+      "fable": [],
+      "codex": [],
+      "gemini": [
+        "GM-g3-003"
+      ]
+    },
+    "problem_short": "屬 fail-closed 死鎖而非漏放行：偏離預設策略的專案到 ship 必被 complete-check exit 2，需人工發現要重跑 plan-check。",
+    "recommendation_short": "build 更新 manifest 的合法路徑順手重跑 plan-check（或提供 flow-state plan-check --refresh 註記原因留審計線），文件寫明此依賴。",
+    "verify_note_short": "refuted；因果關係不成立，加plan-check-refresh機制會弄髒刻意窄scope-hash語意"
+  },
+  {
+    "id": "C-36",
+    "title": "mock 禁令的例外邊界不清：鐵則二允許外部 API mock 但 journey-check 靜掃無條件擋攔截特徵；error path 測試與零 mock 要求打架",
+    "category": "precision",
+    "severity": "low",
+    "status": "refuted",
+    "worth": "no",
+    "members": {
+      "fable": [],
+      "codex": [],
+      "gemini": [
+        "GM-g4-001",
+        "GM-g7-003"
+      ]
+    },
+    "problem_short": "合法例外（外部金流 mock、DB 斷線/超時等 error path 的單元級模擬）可能被硬閘門或審查規則誤殺。懷疑點：journey-waiver 機制實存（見 C-19），GM 稱「無豁免機制」可能誤報；code-reviewer 的 mock …（code-reviewer.md:7）",
+    "recommendation_short": "若確有缺口：journey-check 支援 scoped mock-waiver（特定外部域名攔截白名單）；文件明確分層——E2E/integration happy path 禁 mock，單元/error path 允許 stub 模擬異常。",
+    "verify_note_short": "refuted；journey-waiver整檔豁免是刻意鬆綁設計，細粒度白名單換低價值不划算"
+  },
+  {
+    "id": "C-37",
+    "title": "自駕 T1 ①④ 宣稱「ship 全 diff 審查＋decisions 對帳事後抓」，但 complete-check 無對應檢查邏輯",
+    "category": "precision",
+    "severity": "low",
+    "status": "partial",
+    "worth": "maybe",
+    "members": {
+      "fable": [],
+      "codex": [],
+      "gemini": [
+        "GM-g5-003"
+      ]
+    },
+    "problem_short": "自駕下模型違反 T1 做需求骨架變動或忽視安全紅旗時，最終出口沒有機制執行 diff 與 decisions 對帳，補償控制僅存在於散文。與 C-22（散文 SHALL 無機檢）同病根、不同閘門。",
+    "recommendation_short": "complete-check 補 decisions 對帳項（auto session 的 C 類自決 decision 數與 journal 事件對賬），或至少 ship 藍軍審查 prompt 中把 .flow/decisions/ 對帳列為必查維度並落 findings。",
+    "verify_note_short": "decisions對賬新檢查價值低有風險；建議只改文件用詞或把decisions交叉引用加進藍軍review"
+  },
+  {
+    "id": "C-38",
+    "title": "commit 與 done 的順序語意矛盾：commit-gate 要求點名 task 先 done，build 流程卻是先 commit 再補 done --commit sha",
+    "category": "precision",
+    "severity": "low",
+    "status": "refuted",
+    "worth": "no",
+    "members": {
+      "fable": [],
+      "codex": [],
+      "gemini": [
+        "GM-g5-006",
+        "GM-g3-002"
+      ]
+    },
+    "problem_short": "兩份文件的順序敘述表面矛盾，模型可能被迫提前 done 假完成或刻意不帶 canonical id 提交。懷疑點：閘門可能只擋「宣稱 delivered 語意」的 message、WIP 不帶 id 本可過（GM 自己也註記此為出口），「無法提交 WIP」的宣稱疑誇大——驗證時對照 …",
+    "recommendation_short": "若確有矛盾：統一為「先 verify 綠→done→commit（gate 對賬 ledger）」或「commit 允許 wip(F-id) 前綴豁免」；文件兩處敘述改成同一句。",
+    "verify_note_short": "refuted；文件已一致，commit先於done的順序無矛盾，改動只會擾動delivered語意"
+  },
+  {
+    "id": "C-39",
+    "title": "size-check 提醒疲勞面：非 Flow 專案 marker 寫不進去每次重複提示；凍結後 >50KB 的 requirements 永遠被點名",
+    "category": "over-regulation",
+    "severity": "low",
+    "status": "partial",
+    "worth": "yes",
+    "members": {
+      "fable": [],
+      "codex": [],
+      "gemini": [
+        "GM-g10-006",
+        "GM-g5-005",
+        "GM-g1-006"
+      ]
+    },
+    "problem_short": "g10-006 給出具體機制（非 Flow 專案 fail-open 式重複提示）；g5-005 指凍結檔無壓縮出路仍被點名（部分被 8KB regrow 節流緩解）；g1-006 的「每訊息必提醒」宣稱過廣（實作有節流 marker），但在 g10-006 的場景確實成立。",
+    "recommendation_short": "hasFlow 為 false 直接 return（非 Flow 專案不檢測）；size-check 排除已凍結的 requirements.md 或對其改單次提示；與 C-47（marker 高水位不重置）同檔一起修。",
+    "verify_note_short": "只做line 36改成只認.flow(1-2行)，凍結後大檔特殊排除不值得加，severity medium降low"
+  },
+  {
+    "id": "C-40",
+    "title": "紅軍落檔 .flow/redteam/<id>.json 若 id 為 A1..An，跨 feature 同名互相覆蓋（懷疑點：<id> 可能是 task-scoped）",
+    "category": "precision",
+    "severity": "medium",
+    "status": "refuted",
+    "worth": "no",
+    "members": {
+      "fable": [],
+      "codex": [],
+      "gemini": [
+        "GM-g7-001"
+      ]
+    },
+    "problem_short": "若 <id> 解讀為攻擊情境 id，多 feature 平行時 A1.json 互覆蓋、code-reviewer 對賬漏攻擊面。懷疑點：<id> 更可能指 task/feature id（每 task 一檔含 A1..An 陣列），Gemini 只看切片易誤讀——驗證時對照 …",
+    "recommendation_short": "若確為情境級檔名：改 .flow/redteam/<taskId>-<id>.json；若本為 task 級：在 red-team.md 補一句消歧義。",
+    "verify_note_short": "refuted；<id>是feature-scoped檔名、A1..An只是檔內元素，不會跨feature覆蓋"
+  },
+  {
+    "id": "C-53",
+    "title": "藍軍 drive-by／既存死 code 全列阻擋 ship：範圍外歷史問題進 red flag 導致出貨成本膨脹（與使用者 durable 偏好衝突，誤報體質高）",
+    "category": "over-regulation",
+    "severity": "low",
+    "status": "refuted",
+    "worth": "no",
+    "members": {
+      "fable": [],
+      "codex": [],
+      "gemini": [
+        "GM-g3-004",
+        "GM-g7-002"
+      ]
+    },
+    "problem_short": "GM 主張歷史問題應只 yellow/backlog 不阻擋。強懷疑點：極簡清理＋死 code 全 repo grep 確認後主動清是使用者明定的 durable 偏好（Karpathy 原則 3 bake-in）、drive-by 全列是刻意設計；waiver 出口存在。…",
+    "recommendation_short": "若驗證發現實際 ship 被無關歷史問題卡死的案例：為 drive-by 類 finding 增設 backlog 終局動詞（記錄不阻擋）；否則維持現制。",
+    "verify_note_short": "refuted；yellow天生記錄不擋已覆蓋drive-by，新增終局動詞會模糊red=完成謂詞語意"
+  },
+  {
+    "id": "C-54",
+    "title": "Git Worktree 環境下 pre-commit 兜底裝錯位置：rev-parse --git-dir 指向 worktrees/<name>，hook 不會被執行",
+    "category": "precision",
+    "severity": "low",
+    "status": "confirmed",
+    "worth": "yes",
+    "members": {
+      "fable": [],
+      "codex": [],
+      "gemini": [
+        "GM-g10-003"
+      ]
+    },
+    "problem_short": "技術上合理的邊界 bug；但 Flow 已裁決 worktree hybrid 休眠、主流程不用 worktree，命中面限於使用者自行開 worktree 的場景。",
+    "recommendation_short": "installPrecommit 改用 git rev-parse --git-common-dir 定位 hooks/，一行級修正、順手做。",
+    "verify_note_short": "確認；一行改用--git-common-dir取代--git-dir，零回歸風險，需Git 2.5+(無虞)"
+  },
+  {
+    "id": "C-55",
+    "title": "isDestructiveDB 對整個命令字串關鍵字匹配：grep \"DELETE FROM\"、echo \"TRUNCATE\" 等輔助命令被誤攔",
+    "category": "over-regulation",
+    "severity": "low",
+    "status": "confirmed",
+    "worth": "no",
+    "members": {
+      "fable": [],
+      "codex": [],
+      "gemini": [
+        "GM-g8-004"
+      ]
+    },
+    "problem_short": "除錯時 grep SQL 關鍵字會觸發 T1 硬擋彈窗；誤殺屬安全側（多彈窗非漏放行）但傷自駕流暢度。與 C-5（同 hook 的漏攔面）互為鏡像。",
+    "recommendation_short": "檢查前先識別執行主體，排除 grep/echo/cat/git 等輔助工具，或限縮於 DB CLI（psql/mysql）與含 -e/-c 執行旗標的情境。",
+    "verify_note_short": "確認但與已裁決「正則寬鬆是刻意取捨」同源，細修引號內判斷太瑣碎、ROI低不建議"
+  },
+  {
+    "id": "C-56",
+    "title": "「compaction 先刪最新的尾巴」被解讀為會刪掉當前 active 任務（強懷疑誤讀：該原則講 context cache prefix，非 spec 檔案尾）",
+    "category": "precision",
+    "severity": "low",
+    "status": "refuted",
+    "worth": "no",
+    "members": {
+      "fable": [],
+      "codex": [],
+      "gemini": [
+        "GM-g1-005"
+      ]
+    },
+    "problem_short": "GM 主張 requirements/tasks 的新增內容在檔尾、刪尾會失明。強懷疑點：原則講的是 conversation context 的 compaction 順序（保 cache prefix、cache hit 價=miss 的 1/10），flow-compact …",
+    "recommendation_short": "若驗證確認文件語意易誤導：在 flow-compact.md 補一句「尾巴指 context 尾、spec 檔案歸檔以已完成段落為準」；無需改行為。",
+    "verify_note_short": "refuted；「刪尾巴」指cache prefix非spec檔案尾，三份文件語意已明確無需澄清"
+  },
+  {
+    "id": "C-57",
+    "title": "自駕下波次策略偏離平行仍須同步彈窗，無人值守會卡在 T1 停等（懷疑點：此為憲法刻意保留的 Ask-first）",
+    "category": "efficiency",
+    "severity": "low",
+    "status": "refuted",
+    "worth": "no",
+    "members": {
+      "fable": [],
+      "codex": [],
+      "gemini": [
+        "GM-g1-009"
+      ]
+    },
+    "problem_short": "GM 建議納入自決範圍。懷疑點：「禁在 thinking/散文裡自決波次降級」是憲法明文刻意設計（token↔速度 trade-off 屬使用者拍板權），且 T1 停等 loop＋推播即為配套；屬設計取捨非缺陷。",
+    "recommendation_short": "維持現制為主；若過夜自駕實測常卡此點，可在 policy.json 加預核准的降級策略白名單（比照 deps allowlist 模式，留 decision 審計）。",
+    "verify_note_short": "refuted；同步彈窗是憲法刻意保留的Ask-first邊界，納自決會侵蝕使用者決策權"
+  },
+  {
+    "id": "C-58",
+    "title": "Step 0.4 自駕護欄前置檢查的 Windows 指令只寫「Windows PS 對應路徑」未給可執行命令",
+    "category": "precision",
+    "severity": "low",
+    "status": "confirmed",
+    "worth": "maybe",
+    "members": {
+      "fable": [],
+      "codex": [],
+      "gemini": [
+        "GM-g1-010"
+      ]
+    },
+    "problem_short": "Windows 上啟動自駕時模型需自行猜路徑；小而具體的文件補全。",
+    "recommendation_short": "補全為 node \"$env:USERPROFILE\\.claude\\skills\\flow-toolkit\\flow-state.mjs\" guardrail-check，與 flow-resume.md 同風格。",
+    "verify_note_short": "確認缺可執行命令；補全時需對齊flow-resume風格+UTF-8 console前綴，需同步安裝區"
+  },
+  {
+    "id": "C-59",
+    "title": "文件指定 PowerShell -Encoding utf8 在 PS 5.1 產 BOM，可能影響跨平台工具鏈（註：使用者全域規範對 .ps1 刻意要求 BOM）",
+    "category": "precision",
+    "severity": "low",
+    "status": "partial",
+    "worth": "maybe",
+    "members": {
+      "fable": [],
+      "codex": [],
+      "gemini": [
+        "GM-g2-004"
+      ]
+    },
+    "problem_short": "PS 5.1 的 utf8 帶 BOM，部分 linter/工具讀 BOM 會報錯。部分有效：使用者全域編碼規範明定 .ps1 須 BOM（PS 5.1 無 BOM 整檔當 cp950），但非 .ps1 的 web 資產（html/js/json）帶 BOM 確實可能踩坑。",
+    "recommendation_short": "文件補一句分流：.ps1 保留 BOM；其他檔案優先用 Node 腳本寫檔或 PS7 的 utf8NoBOM。",
+    "verify_note_short": "若做：prototype-guide補一句「.ps1須BOM、web資產用Write/Node無BOM」，command檔不動保持薄"
+  },
+  {
+    "id": "C-60",
+    "title": "未裝 ui-ux-pro-max 時只提示安裝、不提供 fallback，原型步驟在離線/受限環境卡死",
+    "category": "over-regulation",
+    "severity": "low",
+    "status": "partial",
+    "worth": "maybe",
+    "members": {
+      "fable": [],
+      "codex": [],
+      "gemini": [
+        "GM-g2-005"
+      ]
+    },
+    "problem_short": "fail-closed 設計在無網路/權限受限環境無出路。註：150 套 design-systems 索引是內建的、可作天然 fallback，實務卡死機率待驗證。",
+    "recommendation_short": "未裝時 fallback 到內建 design-systems 基底＋shadcn 預設樣式，並照常提示安裝。",
+    "verify_note_short": "建議大致等於現有Step 0預設路徑、多餘；至多Step 5.1補一句缺套件時繼續走base tokens"
+  },
+  {
+    "id": "C-61",
+    "title": "Prelude (P-*) 限 0–3 個：大型專案被迫把多個基礎模組硬打包成臃腫單一 task（懷疑點：上限是防 P 波膨脹的刻意 forcing）",
+    "category": "over-regulation",
+    "severity": "low",
+    "status": "refuted",
+    "worth": "no",
+    "members": {
+      "fable": [],
+      "codex": [],
+      "gemini": [
+        "GM-g2-007"
+      ]
+    },
+    "problem_short": "GM 主張大型專案需更多基礎 task。懷疑點：上限是垂直切片哲學的刻意 forcing function（基礎建設最小化、features 才是主體），放寬會回到 horizontal-layer 反模式；真大型專案可用多波 P 或把基礎併入首個 feature 垂直切片。",
+    "recommendation_short": "維持預設 3；文件補一句「超過 3 個 P 需求＝訊號：考慮把基礎建設併入垂直切片或分階段出貨」，不放寬硬限制。",
+    "verify_note_short": "refuted；finding自己反駁維持預設3上限的理由成立，訊號提示已被既有文字覆蓋"
+  },
+  {
+    "id": "C-62",
+    "title": "無效能敏感路徑仍須彈窗拍板 perf-waiver：簡單工具/Demo 專案的儀式成本（懷疑點：防散文自決 N/A 的刻意設計）",
+    "category": "over-regulation",
+    "severity": "low",
+    "status": "refuted",
+    "worth": "no",
+    "members": {
+      "fable": [],
+      "codex": [],
+      "gemini": [
+        "GM-g2-010"
+      ]
+    },
+    "problem_short": "GM 主張允許模型自判 N/A。懷疑點：彈窗＋decision 留檔正是防模型自決降標的刻意設計（模型自判 N/A＝效能閘門形同自選）；成本是一題彈窗，可併入既有訪談批次（見 C-14）。",
+    "recommendation_short": "不開放模型自判；把 perf N/A 確認併入 C-14 的批次彈窗方案降低邊際成本。",
+    "verify_note_short": "refuted；模型自判N/A會破壞反自決語意，違反確定性閘門原則，成本僅一次彈窗"
+  },
+  {
+    "id": "C-63",
+    "title": "requirements.md 全文 hash 當驗證新鮮度基準：排版/錯字微調也讓已過驗證全失效、雪崩重驗",
+    "category": "efficiency",
+    "severity": "low",
+    "status": "refuted",
+    "worth": "no",
+    "members": {
+      "fable": [],
+      "codex": [],
+      "gemini": [
+        "GM-g4-002"
+      ]
+    },
+    "problem_short": "粗粒度全文校驗使非實質修改引發重驗。註：凍結後 spec 本不應再改、改了要重驗是刻意語意，但「修錯字＝全部重跑 E2E」的成本確實存在；與 C-7 的方向相反（C-7 嫌太鬆、本條嫌太嚴），宜一起設計粒度。",
+    "recommendation_short": "改對單條 REQ-E2E-* 內容做局部 hash，只失效受影響 journey；與 C-7 的新鮮度強化統一成同一套「證據↔內容 hash」粒度設計。",
+    "verify_note_short": "refuted；per-record reqHash只是metadata非新鮮度閘門，不會雪崩重驗，屬Gemini誤讀"
+  },
+  {
+    "id": "C-64",
+    "title": "退出閘門把 tdd 寫死 green，覆蓋 verification-playbook 定義的合法 refactored 狀態",
+    "category": "precision",
+    "severity": "low",
+    "status": "refuted",
+    "worth": "no",
+    "members": {
+      "fable": [],
+      "codex": [],
+      "gemini": [
+        "GM-g4-004"
+      ]
+    },
+    "problem_short": "重構語意記錄被強制退回 green，狀態記錄與文件不一致；實害輕微（兩值都代表通過）。",
+    "recommendation_short": "寫入前讀現值、refactored 則保留；或兩值皆列合法通過標籤，文件對齊。",
+    "verify_note_short": "refuted；tdd latch是跨階段共用欄位被誤讀成矛盾，改read-modify-preserve風險大於零收益"
+  },
+  {
+    "id": "C-65",
+    "title": "journey-check 強制 playwright retries=0：E2E 固有 flakiness 下偶發抖動即誤殺（註：反 flake 掩蓋是刻意設計）",
+    "category": "over-regulation",
+    "severity": "low",
+    "status": "refuted",
+    "worth": "no",
+    "members": {
+      "fable": [],
+      "codex": [],
+      "gemini": [
+        "GM-g6-002"
+      ]
+    },
+    "problem_short": "GM 主張允許 1-2 次重試。懷疑點：retries=0 是「flaky 測試＝真 bug 訊號、禁用重試掩蓋」的刻意取捨；放寬與 journey 真實性閘門哲學衝突。實務痛點（本地偶發抖動）存在但有 retry-waiver 類出口可查。",
+    "recommendation_short": "維持 0 為預設；若驗證確認無豁免出口，補 scoped retry-waiver decision（留檔可稽核）而非放寬預設。",
+    "verify_note_short": "refuted；retry-waiver逃生艙已存在，CI-gated重試已只警告，動閘門零收益"
+  },
+  {
+    "id": "C-66",
+    "title": "orchestration-guide 的 1-hour prompt cache（cache_control ttl:1h）被指為虛構參數（強懷疑誤報：Anthropic API 實支援 1h TTL）",
+    "category": "precision",
+    "severity": "low",
+    "status": "refuted",
+    "worth": "no",
+    "members": {
+      "fable": [],
+      "codex": [],
+      "gemini": [
+        "GM-g6-003"
+      ]
+    },
+    "problem_short": "GM 稱 API 不支援自訂 TTL、5 分鐘固定。強懷疑 Gemini 知識過期：Anthropic prompt caching 的 extended TTL（ttl:\"1h\"）實存（beta header），文件描述大概率正確。驗證＝查一次官方最新文件即結案。",
+    "recommendation_short": "對照官方文件確認 ttl 參數現況與 beta header 要求；若文件缺 beta header 說明則補一句，其餘不動。",
+    "verify_note_short": "refuted；1h TTL為Anthropic實支援參數；文件1.25x/2x倍率小誤植可順手修但非本finding重點"
+  },
+  {
+    "id": "C-67",
+    "title": "對抗審查釘死 Opus+xhigh 被指過貴應降級（與憲法「對抗審查不降級」刻意取捨正面衝突，誤報體質高）",
+    "category": "efficiency",
+    "severity": "low",
+    "status": "refuted",
+    "worth": "no",
+    "members": {
+      "fable": [],
+      "codex": [],
+      "gemini": [
+        "GM-g6-004"
+      ]
+    },
+    "problem_short": "GM 建議 evaluator/code-reviewer 依複雜度降 Sonnet。此與憲法及使用者全域偏好「對抗性審查角色維持高階不降級」明文衝突，屬刻意取捨；成本面真問題已由 C-24（波級批次驗證）承接。",
+    "recommendation_short": "維持釘死不降級；成本優化走 C-24 的呼叫次數槓桿而非降模型檔位。",
+    "verify_note_short": "refuted；對抗審查釘Opus+xhigh是憲法明文取捨，降級成本走C-24叫用次數槓桿而非降模型"
+  },
+  {
+    "id": "C-68",
+    "title": "code-resolve 以 file:line 當 fixed 證據：行號漂移使對賬失效或誤報",
+    "category": "precision",
+    "severity": "low",
+    "status": "refuted",
+    "worth": "no",
+    "members": {
+      "fable": [],
+      "codex": [],
+      "gemini": [
+        "GM-g7-007"
+      ]
+    },
+    "problem_short": "同 PR 後續插行導致行號對不上。註：fixed 證據已允許 commit/測試名等替代形式，行號僅其一，實害待驗證。",
+    "recommendation_short": "文件建議 fixed 證據優先用 commit sha 或測試名；不必上 AST 錨點（與已裁決不做的 DOM 錨點同哲學）。",
+    "verify_note_short": "refuted；fixed只驗非空、行號漂移只致保守重問終局，非對賬失效，屬Gemini切片誤讀"
+  },
+  {
+    "id": "C-69",
+    "title": "非受控環境硬量 p50/p95 易因環境抖動誤殺 FAIL（註：效能硬閘門＋嚴謹量測留 ship 是刻意設計）",
+    "category": "precision",
+    "severity": "low",
+    "status": "refuted",
+    "worth": "no",
+    "members": {
+      "fable": [],
+      "codex": [],
+      "gemini": [
+        "GM-g7-009"
+      ]
+    },
+    "problem_short": "GM 建議改黃燈/趨勢監控——與「效能是硬閘門」憲法取捨衝突；憲法已把嚴謹量測收斂到 ship 量一次、feature 級只跑便宜 smoke，抖動誤殺面已被設計壓縮。",
+    "recommendation_short": "維持硬閘門；可補「多次取中位數」的量測紀律句子（成本低、不弱化閘門）。",
+    "verify_note_short": "refuted；效能硬閘門+嚴謹量測留ship本就是刻意設計，recommendation其實已實作"
+  },
+  {
+    "id": "C-70",
+    "title": "強制 Playwright --headed 在無頭 CI 環境崩潰（註：Flow 驗證是本地 headed 走查的刻意設計，CI 非目標場景）",
+    "category": "over-regulation",
+    "severity": "low",
+    "status": "refuted",
+    "worth": "no",
+    "members": {
+      "fable": [],
+      "codex": [],
+      "gemini": [
+        "GM-g7-010"
+      ]
+    },
+    "problem_short": "GM 以 CI 場景批評；Flow 的 evaluator 驗證明確設計為本地 headed 真點擊（使用者可肉眼見），CI 自動化非其目標場景。若未來要進 CI 才需分流。",
+    "recommendation_short": "暫不改；若日後接 CI，加環境偵測降級 headless＋xvfb 的分支即可。",
+    "verify_note_short": "refuted；headed走查是刻意設計、禁偷換headless，無display環境已有保底階梯"
+  },
+  {
+    "id": "C-71",
+    "title": "spec 審查 findings 由 LLM 自生流水號（SR-CS-001）：跨輪次 ID 漂移使 ledger 終局追蹤失準",
+    "category": "precision",
+    "severity": "low",
+    "status": "partial",
+    "worth": "no",
+    "members": {
+      "fable": [],
+      "codex": [],
+      "gemini": [
+        "GM-g7-011"
+      ]
+    },
+    "problem_short": "重跑 lens 時同一矛盾點可能換編號、不同點撞編號，ledger 追蹤前輪終局狀態失準。註：實際碰撞機率與 docHash 週期綁定，實害待驗證。",
+    "recommendation_short": "由 CLI 依 finding 內容 hash 派生 id（或 orchestrator 落檔時重編號），LLM 只出內容不出編號。",
+    "verify_note_short": "危險碰撞面已在CLI intake硬擋、漂移軟守護且有round cap；content-hash ID方案改動核心太大不值"
+  },
+  {
+    "id": "C-72",
+    "title": "scope --wave 無非代碼檔白名單：README/.env.example 等合法輔助變更可能被越界誤殺",
+    "category": "over-regulation",
+    "severity": "low",
+    "status": "refuted",
+    "worth": "no",
+    "members": {
+      "fable": [],
+      "codex": [],
+      "gemini": [
+        "GM-g5-007"
+      ]
+    },
+    "problem_short": "任務附帶改文件/設定範本時可能被擋，或被迫把公共檔硬塞 conflictZone。註：越界擋下後有人工放行路徑，實害待驗證。",
+    "recommendation_short": "為 *.md、.env.example 等非代碼檔加預設豁免 glob（可由 manifest 覆寫），保持代碼檔互斥不動。",
+    "verify_note_short": "refuted；豁免glob會弱化scope閘門對shared-file衝突的核心防護，與已宣告conflictZone正解重複"
+  }
+]

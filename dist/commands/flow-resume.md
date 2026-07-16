@@ -25,8 +25,15 @@ node ~/.claude/skills/flow-toolkit/flow-state.mjs resume
 
 ## Step 1.5：模式感知續跑（自駕斷線重連別退回每階段問）
 
-`flow-state resume` 輸出已**確定性印出「推進模式」**（讀 `.flow/state.json.mode`，不靠記憶）：
+`flow-state resume` 輸出已**確定性印出「推進模式」**（reconstruct 優先讀 git-tracked `.flow/manifest.json.mode`、相容舊的 `state.json.mode`，不靠記憶）：
 - **🤖 自駕（`mode:"auto"`）**：續跑自駕——**不每階段問**，從 `下一步` 的斷點自動推進 `plan→build→verify→ship`，只在 **T1 必停集合**（見 `references/autonomous-mode.md`）同步彈窗。掃 `.flow/decisions/` 把自駕期間的自決摘要列給使用者掃一眼（可事後翻、要改再說）。發 COMPLETE 前 SHALL 跑 `flow-state complete-check`。
+  - **續跑自駕前 SHALL 重跑 `flow-state guardrail-check`（C-2）**：換機 clone / 當機接手時 `state.json` 可能不存在，護欄若沒在線就等於裸奔。缺護欄（exit 2）→ 退回每階段停（manual 行為）並在主文一句醒目告知使用者「護欄未在線、已暫不自駕」，別默默續跑。
+    ```bash
+    node ~/.claude/skills/flow-toolkit/flow-state.mjs guardrail-check   # mac/linux
+    ```
+    ```powershell
+    [Console]::OutputEncoding=[Text.Encoding]::UTF8; node "$env:USERPROFILE\.claude\skills\flow-toolkit\flow-state.mjs" guardrail-check   # Windows
+    ```
 - **🙋 每階段停（`mode:"manual"` 或無 mode 欄，向後相容）**：維持下方 Step 4 人工閘門行為。
 
 ## Step 2：呈現進度

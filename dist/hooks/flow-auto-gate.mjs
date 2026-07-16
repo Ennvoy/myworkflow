@@ -70,9 +70,14 @@ async function main() {
   const cwd = input.cwd ?? process.cwd();
   if (!existsSync(join(cwd, '.flow'))) process.exit(0);
 
+  // C-2：mode 讀取與 reconstruct 同優先序（git-tracked manifest 先、state.json 後）——換機 clone 後 state.json
+  // 不存在也讀得到 auto，三道自駕硬擋不再靜默下線（原本只讀 state.json、缺檔即 fail-open exit 0＝護欄全滅）。
+  let manifestMode = '';
+  try { manifestMode = String(JSON.parse(stripBom(readFileSync(join(cwd, '.flow', 'manifest.json'), 'utf8'))).mode || ''); } catch { /* 無 manifest → 退 state.json */ }
   let state = {};
-  try { state = JSON.parse(stripBom(readFileSync(join(cwd, '.flow', 'state.json'), 'utf8'))); } catch { process.exit(0); }
-  if (String(state.mode || '') !== 'auto') process.exit(0);   // 只在自駕模式啟用，manual 不干擾
+  try { state = JSON.parse(stripBom(readFileSync(join(cwd, '.flow', 'state.json'), 'utf8'))); } catch { state = {}; }
+  const mode = manifestMode || String(state.mode || '');
+  if (mode !== 'auto') process.exit(0);   // 只在自駕模式啟用，manual 不干擾
 
   if (isNewDependency(command)) {
     let allowed = false, pkgs = [];

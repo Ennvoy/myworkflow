@@ -420,6 +420,8 @@ async function frozenRoot(root, reqMd = READY_REQ) {
   await passLenses(root);
   const r = run(['spec-ready', '--freeze'], root);
   assert.equal(r.code, 0, 'frozenRoot 凍結失敗：' + r.err);
+  // C-9：complete-check 現要求 plan-check.json 實存——最小凍結 root 走 plan-check-waiver 逃生口（不測計畫對賬的用例免建 manifest scope）。
+  run(['decision', 'plan-check-waiver', '--choice', '略過計畫對賬', '--why', '最小 fixture'], root);
 }
 
 test('spec-ready --freeze：落 .flow/trace/req-index.json（REQ 全集＋hash）；凍結後偷改 → 消費閘門 hash 對賬擋（W2-1）', async () => {
@@ -525,6 +527,7 @@ test('verify-perf/complete-check：非量測型 REQ-PERF（無 budget）走 perf
     await writeFile(path.join(root, 'specs', 'tasks.md'), '- [x] **F-1**\n', 'utf8');
     run(['verify-e2e', 'REQ-E2E-001', '--status', 'pass', '--evidence', await evid(root)], root);
     run(['decision', 'code-review-waiver', '--choice', '本測不驗藍軍', '--why', 'x'], root);
+    run(['decision', 'plan-check-waiver', '--choice', '略過計畫對賬', '--why', '最小 fixture'], root);
     assert.equal(run(['complete-check'], root).code, 0, '非量測型有 waiver → complete-check 放行');
   });
 });
@@ -868,6 +871,7 @@ test('complete-check：tasks 全 [x] 但 REQ-E2E 無驗證記錄 → exit 2（�
     // 補 REQ-PERF 達標 → 放行（本測不驗藍軍，補 code-review-waiver）
     run(['verify-perf', 'REQ-PERF-001', '--value', '2.0', '--evidence', await evid(root, 'lighthouse.json')], root);
     run(['decision', 'code-review-waiver', '--choice', '本測不驗藍軍', '--why', 'x'], root);
+    run(['decision', 'plan-check-waiver', '--choice', '略過計畫對賬', '--why', '最小 fixture'], root);
     assert.equal(run(['complete-check'], root).code, 0, '補齊 REQ-E2E＋REQ-PERF 後放行');
   });
 });
@@ -964,6 +968,7 @@ test('complete-check（web 類）：全綠但缺 journey-check 記錄 → exit 2
     run(['verify-e2e', 'REQ-E2E-001', '--status', 'pass', '--evidence', await evid(root)], root);
     run(['verify-perf', 'REQ-PERF-001', '--value', '2.0', '--evidence', await evid(root, 'lh.json')], root);
     run(['decision', 'code-review-waiver', '--choice', '本測不驗藍軍', '--why', 'x'], root);
+    run(['decision', 'plan-check-waiver', '--choice', '略過計畫對賬', '--why', '最小 fixture'], root);
     const r = run(['complete-check'], root);
     assert.equal(r.code, 2, 'web 類缺 journey-check 記錄 → 擋');
     assert.match(r.err, /journey/);
@@ -1166,5 +1171,101 @@ test('W3-3①：scope --wave 在非 git 目錄 → fail-closed exit 2（查不�
     const r = run(['scope', '--wave', 'F-1'], root);
     assert.equal(r.code, 2);
     assert.match(r.err, /git 不可用|fail-closed/);
+  });
+});
+
+// ── Batch 1（Wave 0 止血）：8 道門新行為 ─────────────────────────────────────
+
+test('pending：add/list/resolve roundtrip；complete-check 對 pending 非空擋（C-8 待決單）', async () => {
+  await withRoot(async (root) => {
+    await frozenRoot(root);
+    await writeFile(path.join(root, 'specs', 'tasks.md'), '- [x] **F-1**\n', 'utf8');
+    run(['verify-e2e', 'REQ-E2E-001', '--status', 'pass', '--evidence', await evid(root)], root);
+    run(['verify-perf', 'REQ-PERF-001', '--value', '2.0', '--evidence', await evid(root, 'lh.json')], root);
+    run(['decision', 'code-review-waiver', '--choice', '本測不驗藍軍', '--why', 'x'], root);
+    assert.equal(run(['complete-check'], root).code, 0, '基線綠（frozenRoot 已含 plan-check-waiver）');
+    // 記待決單 → complete-check 擋
+    assert.equal(run(['pending', 'add', 'perf-issue', '--why', 'p95 過不了、待使用者拍板'], root).code, 0);
+    const blocked = run(['complete-check'], root);
+    assert.equal(blocked.code, 2, '有待決單 → 不得 COMPLETE');
+    assert.match(blocked.err, /待決/);
+    assert.match(run(['pending', 'list'], root).out, /perf-issue/);
+    // 結案 → 放行
+    assert.equal(run(['pending', 'resolve', 'perf-issue'], root).code, 0);
+    assert.equal(run(['complete-check'], root).code, 0, '待決單結案後放行');
+  });
+});
+
+test('pending add：缺 --why → exit 1；不安全 id → exit 1', async () => {
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [] });
+    assert.equal(run(['pending', 'add', 'x'], root).code, 1, '缺 --why');
+    assert.equal(run(['pending', 'add', '../evil', '--why', 'x'], root).code, 1, '不安全 id');
+  });
+});
+
+test('decision：自駕下不可自建 waiver/signoff → exit 2 指向 pending（C-8）；manual 照常', async () => {
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [] });
+    await S.writeManifest(root, { ...(await S.readManifest(root)), mode: 'auto' });   // 直寫繞 guardrail（測試用）
+    const r = run(['decision', 'journey-waiver', '--choice', '跳過', '--why', 'x'], root);
+    assert.equal(r.code, 2, '自駕下不可自建豁免');
+    assert.match(r.err, /pending|待決/);
+    await S.writeManifest(root, { ...(await S.readManifest(root)), mode: 'manual' });
+    assert.equal(run(['decision', 'journey-waiver', '--choice', '跳過', '--why', 'x'], root).code, 0, 'manual 照常可記');
+  });
+});
+
+test('complete-check：ledger 非空且 tasks.md [x] 未 delivered → exit 2（C-17 reconcile 對賬）', async () => {
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [{ id: 'F-1' }, { id: 'F-2' }] });
+    await S.writeStateJson(root, { mode: 'manual', verify: 'ok:e2e', tdd: 'green' });
+    await mkdir(path.join(root, 'specs'), { recursive: true });
+    await writeFile(path.join(root, 'specs', 'tasks.md'), '- [ ] **F-1**\n- [x] **F-2**\n', 'utf8');  // 先建檔（done 會讀 tasks.md）
+    assert.equal(run(['done', 'F-1'], root).code, 0);                       // done 翻 F-1→[x]、ledger F-1 delivered（ledger 非空）；F-2 手翻 [x] 未 delivered
+    const r = run(['complete-check'], root);
+    assert.equal(r.code, 2, '翻勾≠真交付');
+    assert.match(r.err, /F-2/);
+  });
+});
+
+test('complete-check：缺 plan-check 且無 waiver → exit 2（C-9）；補 waiver 後綠＋manifest.phase=shipped（C-26）', async () => {
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [] });
+    await S.writeStateJson(root, { mode: 'manual' });
+    await writeReq(root, READY_REQ);
+    run(['project-type', 'api'], root);
+    await passLenses(root);
+    assert.equal(run(['spec-ready', '--freeze'], root).code, 0);
+    await writeFile(path.join(root, 'specs', 'tasks.md'), '- [x] **F-1**\n', 'utf8');
+    run(['verify-e2e', 'REQ-E2E-001', '--status', 'pass', '--evidence', await evid(root)], root);
+    run(['verify-perf', 'REQ-PERF-001', '--value', '2.0', '--evidence', await evid(root, 'lh.json')], root);
+    run(['decision', 'code-review-waiver', '--choice', '本測不驗藍軍', '--why', 'x'], root);
+    const noPlan = run(['complete-check'], root);
+    assert.equal(noPlan.code, 2, '缺 plan-check 且無 waiver → 擋（C-9）');
+    assert.match(noPlan.err, /plan-check/);
+    run(['decision', 'plan-check-waiver', '--choice', '略過計畫對賬', '--why', 'x'], root);
+    assert.equal(run(['complete-check'], root).code, 0, '補 plan-check-waiver → 放行');
+    assert.equal((await S.readManifest(root)).phase, 'shipped', 'C-26：完成謂詞達成即寫 manifest.phase=shipped');
+  });
+});
+
+test('spec-ready --freeze：requirements 命中高風險面但無 security-review → exit 2；補記後凍結（C-22）', async () => {
+  const RISK_REQ = ['# 需求',
+    'REQ-001：系統應防止未授權者繞過登入竊取他人帳號資料（權限/token）。',
+    'REQ-E2E-001：登入 → 首頁 → 操作 → 斷言。',
+    'REQ-PERF-001：dashboard LCP < 2.5s（p95）。',
+    '### 開放問題', '無'].join('\n');
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [] });
+    await S.writeStateJson(root, { mode: 'manual' });
+    await writeReq(root, RISK_REQ);
+    run(['project-type', 'api'], root);
+    await passLenses(root);
+    const r0 = run(['spec-ready', '--freeze'], root);
+    assert.equal(r0.code, 2, '高風險面無 security-review → 擋凍結');
+    assert.match(r0.err, /security-review/);
+    run(['decision', 'security-review', '--choice', '已審 SQLi/authz', '--why', 'auth/權限/token 高風險'], root);
+    assert.equal(run(['spec-ready', '--freeze'], root).code, 0, '補 security-review 後凍結');
   });
 });

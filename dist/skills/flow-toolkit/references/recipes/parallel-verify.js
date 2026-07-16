@@ -15,11 +15,12 @@ export const meta = {
 // args.targets: [{ id, kind: 'web'|'api'|'e2e'|'perf', req, journey }]
 // 成本路由（兩軸皆「不降級」——Reasoning Sandwich 的 verify 端＝高）：
 //   model 軸——Evaluator 是高價值對抗審查，預設繼承 orchestrator 級別；args.evaluatorModel 可覆寫（守 model 可抽換）。
-//   effort 軸——預設 'high'；args.evaluatorEffort 可覆寫但不該降級（降級＝與「對抗審查不降級」自相矛盾）。
+//   effort 軸——C-21：預設不覆寫，讓 dist/agents/evaluator.md frontmatter 的 effort:xhigh 生效（原本硬填 'high'
+//   會靜默把對抗審查降級，與「對抗審查不降級」自相矛盾）；args.evaluatorEffort 可覆寫但不該降級。
 const targets = (args && args.targets) || []
 if (!targets.length) { log('parallel-verify: 無 target'); return [] }
 const EVAL_MODEL  = args && args.evaluatorModel
-const EVAL_EFFORT = (args && args.evaluatorEffort) || 'high'
+const EVAL_EFFORT = args && args.evaluatorEffort
 
 const VERDICT_SCHEMA = {
   type: 'object', additionalProperties: false,

@@ -851,6 +851,33 @@ export async function readJourneyCheck(root) { return readJSON(journeyCheckPath(
 export async function writeCompleteCheck(root, obj) { await writeJSON(completeCheckPath(root), { ...obj, at: nowISO() }); }
 export async function readCompleteCheck(root) { return readJSON(completeCheckPath(root), null); }
 
+// ── 待決單（pending tickets，C-8）─────────────────────────────────────────────
+// 自駕碰到「重試仍過不了」的關卡 → 記一張待決單、繼續其他工作不中斷；收尾一批彈窗請使用者拍板。
+// 取代「AI 自建 waiver 冒使用者名義關掉出貨安全門」的舊路徑。pending/ 進 git（耐久、可稽核）。
+// complete-check 對 pending 非空 exit 2（有待決＝不得自稱出貨完成）。
+const pendingDir = root => path.join(dir(root), 'pending');
+export async function addPending(root, id, { why = '', task = '' } = {}) {
+  const sid = safeId(id);
+  await writeJSON(path.join(pendingDir(root), sid + '.json'), { id: sid, why, task, at: nowISO() });
+  await appendJournal(root, { ev: 'pending.add', id: sid, why });
+  return sid;
+}
+export async function listPending(root) {
+  const d = pendingDir(root);
+  if (!existsSync(d)) return [];
+  const out = [];
+  for (const f of await readdir(d)) if (f.endsWith('.json')) out.push(await readJSON(path.join(d, f), {}));
+  return out;
+}
+export async function resolvePending(root, id, how = '') {
+  const sid = safeId(id);
+  const p = path.join(pendingDir(root), sid + '.json');
+  if (!existsSync(p)) return false;
+  await unlink(p);
+  await appendJournal(root, { ev: 'pending.resolve', id: sid, how });
+  return true;
+}
+
 // 純函式：--wave 傳入的一組 id 是否對應 wave-plan 的「某一波」（成員集合相等，順序無關）＋ manifest hash 一致。
 // scope --wave / checkpoint --phase dispatched 增驗用（堵 H6：dispatch/整合時自行併波或用漂移 manifest）。
 // 回 null＝相符或無 wave-plan（向後相容：沒跑過 wave --compute 就跳過本增驗，只做原本的 conflictZone 檢查）。
@@ -1307,13 +1334,15 @@ export async function reconstruct(root) {
 
 // 下一個可推進 task：非 delivered/needs-decision、且 blockedBy 已全 delivered（純函式；resume 與 hook 共用）。
 // 順序來源：manifest（若有，帶 conflictZone-aware 排序）否則 reconstruct 合併出的 order（含 state.json 未交付 task）。
-export function pickNext(view) {
+export function pickNext(view, excludeIds = []) {
   const done = id => (view.tasks[id] || {}).state === 'delivered';
+  const skip = new Set(excludeIds || []);   // C-8：有待決單的 task 不算「可推進」（stop-gate 傳入，防已放棄的關卡被誤判成活口）
   const manifestById = Object.fromEntries(((view.manifest || {}).tasks || []).map(t => [t.id, t]));
   const ids = ((view.manifest || {}).tasks && view.manifest.tasks.length)
     ? view.manifest.tasks.map(t => t.id)
     : (view.order && view.order.length ? view.order : Object.keys(view.tasks || {}));
   for (const id of ids) {
+    if (skip.has(id)) continue;
     const t = (view.tasks || {})[id] || { state: 'pending' };
     const s = t.state || 'pending';
     if (s === 'delivered' || s === 'needs-decision') continue;

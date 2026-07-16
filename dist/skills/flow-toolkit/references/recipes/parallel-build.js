@@ -23,11 +23,13 @@ export const meta = {
 //   ① model 軸——平行苦工 worker 走較便宜 model（預設 'sonnet'，args.workerModel 可覆寫），省 token＝同預算 fan-out 更寬的波。
 //   ② effort 軸（同 model 內的 reasoning_effort）——機械性 generate 用中檔（worker），高價值對抗審查（紅軍）維持高檔不降級。
 //      inverse-scaling：對明確任務強拉 effort 反降準、均一高 effort 比 balanced 差。兩軸皆可覆寫、不 hardcode model/effort 行為。
+//   C-21：紅軍 effort 預設「不覆寫」，讓 dist/agents/red-team.md frontmatter 的 effort:xhigh 生效（原本硬填 'high'
+//   會靜默把對抗審查降級，與憲法「對抗審查不降級」矛盾）；args.redTeamEffort 仍可覆寫（但不該降級）。
 const wave = (args && args.wave) || []
 if (!wave.length) { log('parallel-build: 空波次，無事可做'); return [] }
 const WORKER_MODEL  = (args && args.workerModel)  || 'sonnet'
 const WORKER_EFFORT = (args && args.workerEffort)  || 'medium'   // 平行苦工 generate：中檔
-const RED_EFFORT    = (args && args.redTeamEffort) || 'high'     // 紅軍對抗審查：高檔不降級
+const RED_EFFORT    = args && args.redTeamEffort                 // 紅軍：預設不覆寫、吃 frontmatter xhigh
 
 const ATTACK_SCHEMA = {
   type: 'object', additionalProperties: false,
@@ -92,7 +94,7 @@ const results = await pipeline(
   (f) => agent(
     `你是 red-team 攻擊面分析者。針對 feature「${f.title}」(${f.id})，讀 ${args.reqPath} 對應 REQ 與現有 code，` +
     `列 3–5 個破壞情境（邊界值 / 併發 / 惡意輸入 / 相依故障 / 配置漂移），每個給編號 id（A1..An）、標 severity，並給「該先寫成哪個失敗安全測試」。`,
-    { label: `red:${f.id}`, phase: 'RedTeam', schema: ATTACK_SCHEMA, agentType: 'red-team', effort: RED_EFFORT }
+    { label: `red:${f.id}`, phase: 'RedTeam', schema: ATTACK_SCHEMA, agentType: 'red-team', ...(RED_EFFORT ? { effort: RED_EFFORT } : {}) }
   ),
   // Stage 2：同 repo 生成（吃上一步攻擊面）——平行寫各自不重疊的檔，不 commit、不跑整包 build
   (attack, f) => agent(

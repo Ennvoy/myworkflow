@@ -83,3 +83,28 @@ test('餵垃圾 stdin → exit 0（fail-open）', () => {
   const r = spawnSync('node', [HOOK], { input: '{bad', encoding: 'utf8' });
   assert.equal(r.status, 0);
 });
+
+// ── Batch 1：C-2 mode 從 manifest 讀、C-1 可推進即擋 ─────────────────────────
+
+test('C-2：mode 從 git-tracked manifest 讀（無 state.json）——manifest auto、全 [x] 無 cc → exit 2', async () => {
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [] });
+    await S.writeManifest(root, { ...(await S.readManifest(root)), mode: 'auto' });   // 只寫 manifest，不寫 state.json
+    await writeTasks(root, '- [x] **F-1**\n');
+    const r = run({ cwd: root });
+    assert.equal(r.code, 2, 'manifest.mode=auto 也要判得出自駕（原本只讀 state.json＝護欄靜默下線）');
+  });
+});
+
+test('C-1：自駕還有可推進 task 卻收工 → exit 2；記待決單後放行', async () => {
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [{ id: 'F-1' }] });
+    await S.writeManifest(root, { ...(await S.readManifest(root)), mode: 'auto' });
+    await writeTasks(root, '- [ ] **F-1**\n');
+    const r = run({ cwd: root });
+    assert.equal(r.code, 2, 'pickNext 有 F-1（可推進）→ 擋收工');
+    assert.match(r.err, /可推進|F-1/);
+    await S.addPending(root, 'F-1', { why: '卡住待拍板' });
+    assert.equal(run({ cwd: root }).code, 0, '有待決單＝該 task 不算可推進、仍有 [ ]＝合法停等 → 放行');
+  });
+});

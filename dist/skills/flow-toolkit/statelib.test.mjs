@@ -6,6 +6,7 @@ import { mkdtemp, rm, readFile, writeFile, mkdir, readdir } from 'node:fs/promis
 import { existsSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import * as S from './statelib.mjs';
 
 async function withRoot(fn) {
@@ -1547,4 +1548,24 @@ test('isGateThrash：flow-state 閘門連紅偵測（C-13）——只給 stall �
   assert.ok(!S.isGateThrash('flow-state done F-1'), 'done 不是閘門');
   assert.ok(!S.isGateThrash('npm test'));
   assert.ok(!S.isRunnerCommand('flow-state complete-check'), '閘門不進 isRunnerCommand（否則 auto-gate 硬擋掉 complete-check）');
+});
+
+// ── C-20 非字面 goto 警告、C-3③ syncFingerprint ──
+test('auditJourneyTest：page.goto(變數) 非字面＋另一 goto → 警告（C-20，非阻擋）', () => {
+  const c = "import {test} from '@playwright/test'\ntest('x', async ({page}) => { await page.goto('/login'); await page.goto(target); await page.getByRole('button').click() })";
+  const r = S.auditJourneyTest(c);
+  assert.ok(r.isJourney);
+  assert.ok(r.warnings.some(w => /非字面 goto/.test(w)), '有非字面 goto 警告');
+  // 單一字面入口 goto ＋點擊 → 不噴非字面警告
+  const clean = "import {test} from '@playwright/test'\ntest('x', async ({page}) => { await page.goto('/login'); await page.getByRole('button').click() })";
+  assert.ok(!S.auditJourneyTest(clean).warnings.some(w => /非字面 goto/.test(w)), '單一字面入口不誤噴');
+});
+
+test('syncFingerprint：回穩定字串、內容不變同指紋（C-3③）', async () => {
+  const here2 = path.dirname(fileURLToPath(import.meta.url));   // skills/flow-toolkit
+  const fp1 = await S.syncFingerprint(here2, here2);
+  const fp2 = await S.syncFingerprint(here2, here2);
+  assert.equal(typeof fp1, 'string');
+  assert.equal(fp1, fp2, '同輸入同指紋（stat-only 冪等）');
+  assert.match(fp1, /^\d+:\d+:\d+$/, 'count:maxMtime:totalSize 格式');
 });

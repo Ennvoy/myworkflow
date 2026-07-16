@@ -17,7 +17,7 @@ compaction **先壓縮/歸檔最新的尾巴與已完成段落**，保住開頭�
 
 ## 做什麼
 
-**歸檔搬移與清單整理 SHALL 交給便宜 subagent 執行；主迴圈只確認結果與彈窗。**
+**委派門檻（C-44，非無條件 SHALL）**：**純機械搬移優先走確定性路徑**——journal 用 `flow-state journal-archive`（CLI，見下 3）、檔案搬移用 shell `mv`/`git mv`（別叫 LLM 逐字搬、避免幻覺漏內容）。**需要判斷的摘要壓縮**（把冗長段落收成一行、決定哪些章節可歸檔）才委派便宜 subagent，且**僅在收束量大時**（多檔 >50KB 或章節眾多）；小收束主迴圈直接做。主迴圈只確認結果與彈窗。
 
 1. **已 delivered 的 task 詳情**：`tasks.md` 已 `[x]` 段的冗長子步驟 → 收成一行摘要，詳情移 `specs/archive/tasks-<date>.md`。
 2. **過長 design/requirements**：已凍結、已實作的章節 → 摘要留主檔，全文移 `specs/archive/`。**接縫契約、未完成 REQ、open questions 一律留主檔**（還在用，不歸檔）；**requirements.md 主檔摘要 SHALL 保留全部 `REQ-E2E-*` id 行**——收束成零 REQ-E2E 的殼會被 `complete-check` exit 2 擋（完成謂詞不能被歸檔關閉）。

@@ -460,6 +460,11 @@ switch (cmd) {
     if (problems.length) {
       console.error('✗ 紅軍對賬未過：');
       for (const x of problems) console.error('  ' + x);
+      // C-49：擋因透明化——分兩類觸發，讓使用者一眼看懂為何連標 low 的攻擊也要處理（floor 硬度不變、只把「為何被擋」講清）：
+      console.error('  ┌ 擋因分兩類：');
+      console.error('  │ ① severity 觸發：high（或 severity 非法值比照 high）攻擊必須 covered。');
+      console.error('  │ ② 高危關鍵字觸發：攻擊文字命中 auth/注入/權限/金流… 即使標 low 也不准無痕跳過（fail-safe，誤中代價＝多留一筆可稽核豁免）。');
+      console.error('  └ ② 類確實不適用：flow-state decision redteam-waiver-<id>-<attackId> --choice skip --why "<理由>"（正式波次仍維持攻擊 ≥3）。');
       console.error('  暫停整合：補測試/落檔後重跑。別跳過本閘門硬整合（high 攻擊面沒防禦＝出貨即漏洞）。');
       process.exit(2);
     }
@@ -721,101 +726,68 @@ switch (cmd) {
     // 檔案實存但被收束成 0 條 REQ-E2E 的殼（/flow-compact 歸檔變體）＝完成謂詞 0/0 空轉，同擋。
     if (cov.audit.total === 0) { console.error('✗ specs/requirements.md 實存但查無任何 REQ-E2E-*——spec 被收束成殼？（凍結底線＝至少 1 條）從 specs/archive/ 還原完整版再對賬，不准發 COMPLETE。'); process.exit(2); }
     printCoverage(cov.audit);
-    if (!cov.audit.ok) {
-      console.error('✗ 完成謂詞未達：上列 REQ-E2E-* 未全部驗綠，不准發 COMPLETE。');
-      console.error('  每條 REQ-E2E journey 經 /flow-verify 真跑綠後，用 flow-state verify-e2e <id> --status pass --evidence "<ref>" 記錄；無法自動化的標 --status n/a 並附原因。');
-      process.exit(2);
-    }
-    // W2-1 hash 對賬：現行 requirements.md 須等於凍結 index（凍結後被改過＝完成謂詞對的是舊分母）
-    // W3-3③：凍結分母 SHALL 實存——快照被誤刪時 reqHashProblem(null) 會靜默放行，這裡 fail-closed 補死。
+    // W3-3③：凍結分母 SHALL 實存（後續 hash/perf 對賬要用）——結構前置，維持 fail-fast。
     const idx = await S.readReqIndex(root);
     if (!idx) { console.error('✗ 查無 .flow/trace/req-index.json（凍結分母）——凍結後被刪，或從未走 spec-ready --freeze 正門。重跑 flow-state spec-ready --freeze 重建分母再對賬。'); process.exit(2); }
     const reqMd = readFileSync(path.join(root, 'specs', 'requirements.md'), 'utf8');
+    // C-23：以下品質閘門「收集全部未達項、最後一次列印」，不逐類 fail-fast——自駕下不必每類多跑一輪「修→重跑→發現下一類」。
+    // 結構前置（tasks/requirements/req-index 缺）已在上面 fail-fast（後續分析依賴它們）。
+    const fails = [];
+    if (!cov.audit.ok) fails.push('REQ-E2E 未全部驗綠：每條 journey 經 /flow-verify 真跑綠後 flow-state verify-e2e <id> --status pass --evidence …；無法自動化標 --status n/a 附原因。');
     const hp = S.reqHashProblem(idx, reqMd);
-    if (hp) { console.error('✗ ' + hp); process.exit(2); }
+    if (hp) fails.push(hp);
     // W2-3 n/a 醒目列出（每條都該有 decision 撐著）
     for (const r of await S.listVerifyRecords(root)) if (String(r.status) === 'n/a') console.log(`  ⚠ ${r.id} 標 n/a（decision=${r.decision || '?'}）——ship 前確認此 journey 真的無法自動化`);
     // W2-4 REQ-PERF 對賬：量測型 SHALL 有 verify-perf pass；非量測型（無 budget/N/A）SHALL 有 perf-waiver。
-    // 「非量測型」判定與 spec-ready 同源（perfIsNonMeasurable 掃整塊），消除「freeze 認 N/A、ship 卻要 verify-perf」的死鎖。
     const perfIds = S.extractReqPerf(reqMd);
-    const perfMiss = [];
     const perfWaived = existsSync(path.join(root, '.flow', 'decisions', 'perf-waiver.json'));
     for (const pid of perfIds) {
-      if (S.perfIsNonMeasurable(reqMd, pid)) { if (!perfWaived) perfMiss.push(`${pid} 非量測型/N/A 但無 perf-waiver decision（flow-state decision perf-waiver …）`); continue; }
+      if (S.perfIsNonMeasurable(reqMd, pid)) { if (!perfWaived) fails.push(`REQ-PERF ${pid} 非量測型/N/A 但無 perf-waiver decision（flow-state decision perf-waiver …）`); continue; }
       const rec = await S.readPerfRecord(root, pid);
-      if (!rec || rec.status !== 'pass') perfMiss.push(`${pid} 缺達標記錄——flow-state verify-perf ${pid} --value <實測> --evidence <ref>`);
+      if (!rec || rec.status !== 'pass') fails.push(`REQ-PERF ${pid} 缺達標記錄——flow-state verify-perf ${pid} --value <實測> --evidence <ref>`);
     }
-    if (perfMiss.length) {
-      console.error('✗ 完成謂詞未達：REQ-PERF 未全部達標驗證：');
-      for (const m of perfMiss) console.error('  - ' + m);
-      process.exit(2);
-    }
-    // W2-4 plan-check 對賬：manifest 在 plan-check 後不得被改（scope/wave 事實來源）
     // C-9：plan-check.json SHALL 實存（計畫出口對賬從未跑或被刪＝可整段略過）。舊專案相容＝plan-check-waiver 逃生口。
     const pc = await S.readPlanCheck(root);
     const planWaived = existsSync(path.join(root, '.flow', 'decisions', 'plan-check-waiver.json'));
-    if (!pc && !planWaived) {
-      console.error('✗ 完成謂詞未達：查無 .flow/trace/plan-check.json——計畫出口對賬（REQ↔task／manifest scope）從未跑或被刪。');
-      console.error('  → 跑 flow-state plan-check（會落 plan-check.json）；舊專案相容：flow-state decision plan-check-waiver --choice "略過計畫對賬" --why "<原因>"。');
-      process.exit(2);
-    }
+    if (!pc && !planWaived) fails.push('查無 .flow/trace/plan-check.json（計畫出口對賬從未跑/被刪）——跑 flow-state plan-check；舊專案相容：flow-state decision plan-check-waiver …。');
     if (pc && pc.manifestHash && pc.manifestHash !== S.manifestScopeHash(await S.readManifest(root)))
-      { console.error('✗ manifest 的 blockedBy/conflictZone 在 plan-check 後被改過（scope/wave 的事實來源漂移）——重跑 flow-state plan-check 重新對賬。'); process.exit(2); }
-    // C：藍軍 code-review forcing function——ship 出貨 SHALL 過藍軍。缺 code-review 且無明確豁免 → exit 2
-    //（與 complete-check 其他項「缺即擋」一致、與 build 端 redteam --wave 對稱；逃生口＝code-review-waiver decision，不 brick）。
+      fails.push('manifest 的 blockedBy/conflictZone 在 plan-check 後被改過（scope/wave 事實來源漂移）——重跑 flow-state plan-check。');
+    // C：藍軍 code-review forcing function——ship 出貨 SHALL 過藍軍（缺 code-review 且無豁免即擋；逃生口＝code-review-waiver）。
     const codeReview = await S.readCodeReview(root);
     const codeWaived = existsSync(path.join(root, '.flow', 'decisions', 'code-review-waiver.json'));
-    if (!codeReview && !codeWaived) {
-      console.error('✗ 完成謂詞未達：未跑藍軍 code-review。ship 前 SHALL 過藍軍（/flow-ship Step 1）：');
-      console.error('  跑 code-reviewer subagent → flow-state review-code --file <findings.json>（零 red flag 也落空陣列＝證明審過）；');
-      console.error('  真要跳過藍軍 → flow-state decision code-review-waiver --choice "跳過 code-review" --why "<原因>" 留一筆可稽核豁免。');
-      process.exit(2);
-    }
-    const codeProblems = S.codeReviewAudit(codeReview, await S.readCodeResolutions(root),
-      (did) => existsSync(path.join(root, '.flow', 'decisions', did + '.json')));
-    if (codeProblems.length) {
-      console.error('✗ 完成謂詞未達：藍軍 code-review red flag 未全終局：');
-      for (const p of codeProblems) console.error('  - ' + p);
-      process.exit(2);
-    }
-    // C-7：code-review 新鮮度——review 記錄的 HEAD 之後又改了原始碼（非測試/文件）＝驗的是舊 code、「先驗綠後改壞仍出貨」。
-    // 只在 git 可用（review 有記 head）＋真的動到 source 時擋；改測試/文件不算。逃生口＝code-review-waiver（沿用同一張）。
+    if (!codeReview && !codeWaived) fails.push('未跑藍軍 code-review——review-code --file <findings.json>（零 red flag 也落空陣列＝證明審過）；真要跳過：flow-state decision code-review-waiver …。');
+    for (const p of S.codeReviewAudit(codeReview, await S.readCodeResolutions(root), (did) => existsSync(path.join(root, '.flow', 'decisions', did + '.json'))))
+      fails.push('藍軍 code-review red flag 未終局：' + p);
+    // C-7：code-review 新鮮度——review 記錄的 HEAD 之後又改了原始碼（非測試/文件/.flow）＝驗的是舊 code。逃生口＝code-review-waiver。
     if (codeReview && codeReview.head && !codeWaived) {
       const headNow = gitHead(root);
       if (headNow && codeReview.head !== headNow) {
         const src = sourceChanged(gitDiffNames(root, codeReview.head));
-        if (src.length) {
-          console.error('✗ 完成謂詞未達：code-review 之後又改了原始碼（review 驗的是舊 code）——重跑藍軍 review-code 再對賬：');
-          for (const f of src.slice(0, 8)) console.error('  - ' + f);
-          console.error('  真有理由沿用舊審查（改的是無關檔）→ flow-state decision code-review-waiver --choice … --why … 留可稽核豁免。');
-          process.exit(2);
-        }
+        if (src.length) fails.push(`code-review 之後又改了原始碼（驗的是舊 code）：${src.slice(0, 8).join('、')}——重跑 review-code，或改的是無關檔則 code-review-waiver。`);
       }
     }
-    // W3-1 journey 真實性納完成謂詞：web 類 projectType SHALL 有「當前 HEAD」的 journey-check 通過記錄（靜態掃描秒級，ship 前重跑即可）。
-    // C-19：journey-waiver 不再讓整段 journey-check@HEAD 要求「被略過」——waiver 只在 journey-check 內部把特定
-    // mock/goto 違規降級成警告（合法外部服務 mock）；real-browser 走查記錄仍 SHALL 存在且綁當前 HEAD。
-    // 堵「一張 waiver＝永久全庫關掉 journey 檢查」。有 waiver 時印複核提醒（含建立時間），提示定期回看是否仍該豁免。
+    // W3-1/C-19 journey 真實性：web 類 SHALL 有「當前 HEAD」的 journey-check 通過記錄；journey-waiver 只降級 mock/goto 違規、不略過整段。
     const cm = await S.readManifest(root);
     const journeyWaiverPath = path.join(root, '.flow', 'decisions', 'journey-waiver.json');
     const journeyWaivedCC = existsSync(journeyWaiverPath);
     if (S.WEB_PROJECT_TYPES.includes(cm.projectType)) {
       const jc = await S.readJourneyCheck(root);
-      if (!jc) {
-        console.error('✗ 完成謂詞未達：web 專案未過 journey 真實性閘門（防 mock 假綠）——跑 flow-state journey-check（通過會落 .flow/trace/journey-check.json）；');
-        console.error('  合法外部服務 mock（金流/analytics sandbox）→ flow-state decision journey-waiver …（降級違規為警告，但仍須跑 journey-check）。');
-        process.exit(2);
+      if (!jc) fails.push('web 專案未過 journey 真實性閘門——flow-state journey-check（合法外部服務 mock 另加 journey-waiver 降級違規，但仍須跑）。');
+      else {
+        const headNow = gitHead(root);
+        if (jc.head && headNow && jc.head !== headNow) fails.push('journey-check 記錄不是當前 HEAD（驗的是舊 code）——重跑 flow-state journey-check（秒級）。');
+        else if (journeyWaivedCC) {
+          let wat = '';
+          try { wat = (JSON.parse(readFileSync(journeyWaiverPath, 'utf8')).at || '').slice(0, 10); } catch { /* 時戳非關鍵 */ }
+          console.log(`  ⚠ journey-waiver 生效${wat ? `（${wat} 建立）` : ''}——只豁免特定 mock/goto 違規，非跳過走查；ship 前確認豁免的外部服務 mock 仍合理。`);
+        }
       }
-      const headNow = gitHead(root);
-      if (jc.head && headNow && jc.head !== headNow) {
-        console.error('✗ journey-check 記錄不是當前 HEAD（驗的是舊 code）——重跑 flow-state journey-check（靜態掃描、秒級）再 complete-check。');
-        process.exit(2);
-      }
-      if (journeyWaivedCC) {
-        let wat = '';
-        try { wat = (JSON.parse(readFileSync(journeyWaiverPath, 'utf8')).at || '').slice(0, 10); } catch { /* 時戳非關鍵 */ }
-        console.log(`  ⚠ journey-waiver 生效${wat ? `（${wat} 建立）` : ''}——只豁免特定 mock/goto 違規，非跳過走查；ship 前確認豁免的外部服務 mock 仍合理。`);
-      }
+    }
+    // C-23：一次列印所有未達項（不逐類擋）。
+    if (fails.length) {
+      console.error(`✗ 完成謂詞未達（共 ${fails.length} 項，全部處理完才能 COMPLETE）：`);
+      for (const f of fails) console.error('  - ' + f);
+      process.exit(2);
     }
     // Stop hook（W3-5）據此判「收工前完成謂詞真的過了」——成功即落機讀記錄（綁 HEAD）。
     await S.writeCompleteCheck(root, { head: gitHead(root) });
@@ -1163,7 +1135,7 @@ switch (cmd) {
     break;
   }
   default:
-    console.log(`flow-state <resume|status|done|checkpoint|mode|project-type|scope|wave|redteam|journey-check|run|verify-ok|verify-e2e|verify-perf|plan-check|review-code|code-resolve|code-check|coverage|lesson|decision|pending|guardrail-check|complete-check|spec-ready|spec-review|review-resolve|review-check|mockup-check> [--root <path>]
+    console.log(`flow-state <resume|status|done|checkpoint|mode|project-type|scope|wave|redteam|journey-check|run|verify-ok|verify-e2e|verify-perf|plan-check|review-code|code-resolve|code-check|coverage|lesson|decision|pending|journal-archive|guardrail-check|complete-check|spec-ready|spec-review|review-resolve|review-check|mockup-check> [--root <path>]
   resume | status        冷啟動：reconstruct 印現況 + 下一步 + mid-task 進度 + 對帳 + 已知死路（換 session/電腦/中斷後接手；平行波看 /workflows）
   done <id> [--commit]   標一個 task 完成：翻 tasks.md [x] + ledger→delivered（自帶 verify 閘門；先標、再 commit）
   checkpoint <id> --phase <red|green|refactor|integrated> [--note]   記 mid-task 進度（開發中當機 → resume 帶出「上次做到第幾步」，只補沒做完的）

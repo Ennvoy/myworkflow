@@ -1280,6 +1280,7 @@ function journeyTestBlocks(c) {
   return blocks;
 }
 const gotoTargets = block => [...String(block).matchAll(/\.goto\s*\(\s*[`'"]([^`'"]*)[`'"]/g)].map(m => m[1]);
+const gotoAllCount = block => (String(block).match(/\.goto\s*\(/g) || []).length;   // C-20：含非字面（page.goto(變數)）
 export function auditJourneyTest(content) {
   const c = String(content || '');
   if (!JOURNEY_SIGNAL.test(c)) return { isJourney: false, problems: [], warnings: [] };
@@ -1288,8 +1289,13 @@ export function auditJourneyTest(content) {
   let totalGoto = 0;
   for (const b of journeyTestBlocks(c)) {
     const gts = gotoTargets(b);
-    totalGoto += gts.length;
+    const allGoto = gotoAllCount(b);
+    totalGoto += allGoto;
     if (gts.length > 1) problems.push(`單一 test 內有 ${gts.length} 個 goto（${gts.join(', ')}）——應只有一個入口 goto、其後用真實點擊串接（第五鐵則）`);
+    // C-20：非字面 goto（page.goto(變數/表達式)）靜態抓不到目標——一個 block 內有非字面 goto 且 goto 總數 >1 → 警告
+    //（維持非阻擋，避免「單一入口用變數」被誤殺；只提醒人工確認不是 deep-link 串接）。
+    const nonLiteral = allGoto - gts.length;
+    if (nonLiteral > 0 && allGoto > 1) warnings.push(`單一 test 內有 ${nonLiteral} 個非字面 goto（page.goto(變數/表達式)）——靜態無法確認是否只有單一入口，請人工確認非 deep-link 跳關（第五鐵則）`);
     for (const t of gts) {
       const segs = t.replace(/^https?:\/\/[^/]+/, '').split(/[?#]/)[0].split('/').filter(Boolean);
       if (segs.length >= 2) warnings.push(`goto('${t}') 指向深層路徑——確認是真實入口，而非 deep-link 跳關（第五鐵則）`);
@@ -1480,4 +1486,27 @@ export async function syncDrift(srcDist, claudeHome) {
     }
   }
   return { missing, differing };
+}
+
+// C-3③：dist↔安裝區的「便宜指紋」（stat-only、兩側都算，不 read+hash）——session-start 據此決定要不要跑全量 syncDrift。
+// 版本不變但任一側被熱修（mtime 前進）→ 指紋變 → 照樣全量比對（保留 W0-5「同版本熱修偵測」，使用者臨場改安裝區也抓得到）；
+// 兩側都沒動 → 指紋同 → 略過全量（省每 session 的 60–120 檔 read+hash 開機稅）。缺檔也進指紋（missing 會變化）。
+export async function syncFingerprint(srcDist, claudeHome) {
+  const skipDirs = new Set(['design-systems', 'install']);
+  let count = 0, maxMtime = 0, totalSize = 0;
+  async function walk(rel) {
+    let ents;
+    try { ents = await readdir(path.join(srcDist, rel), { withFileTypes: true }); } catch { return; }
+    for (const e of ents) {
+      if (e.isDirectory()) { if (!skipDirs.has(e.name)) await walk(rel ? `${rel}/${e.name}` : e.name); continue; }
+      if (e.name.endsWith('.test.mjs') || e.name === 'settings.flow.json') continue;
+      const relFile = rel ? `${rel}/${e.name}` : e.name;
+      for (const base of [srcDist, claudeHome]) {
+        try { const st = await stat(path.join(base, relFile)); count++; totalSize += st.size; if (st.mtimeMs > maxMtime) maxMtime = st.mtimeMs; }
+        catch { count++; /* 缺檔也影響指紋（count 少一） */ }
+      }
+    }
+  }
+  await walk('');
+  return `${count}:${Math.round(maxMtime)}:${totalSize}`;
 }

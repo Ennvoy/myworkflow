@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync, execSync } from 'node:child_process';
-import { mkdtemp, rm, mkdir, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, mkdir, writeFile, readFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -1324,4 +1324,16 @@ test('complete-check：code-review 後又改原始碼（HEAD 變）→ exit 2；
     execSync('git add -A && git -c user.email=t@t -c user.name=t -c commit.gpgsign=false commit -q -m doc', { cwd: root });
     assert.equal(run(['complete-check'], root).code, 0, '只改 .md/測試 → 不要求重審');
   });
+});
+
+// ── Batch 3：C-51 help ↔ switch-case 對賬（防手冊漂移）──
+test('help ↔ switch-case 對賬：help 列的子命令集合＝實際 case 集合（C-51）', async () => {
+  const src = await readFile(CLI, 'utf8');
+  const cases = new Set([...src.matchAll(/^\s*case\s+'([a-z][a-z0-9-]*)':/gm)].map(m => m[1]));
+  const helpLine = (src.match(/flow-state <([^>]+)>/) || [])[1] || '';
+  const listed = new Set(helpLine.split('|').map(s => s.trim()).filter(Boolean));
+  const missingFromHelp = [...cases].filter(c => !listed.has(c));
+  assert.deepEqual(missingFromHelp, [], 'help 漏列這些 case（手冊漂移）：' + missingFromHelp.join(','));
+  const missingCase = [...listed].filter(c => !cases.has(c));
+  assert.deepEqual(missingCase, [], 'help 列了不存在的子命令：' + missingCase.join(','));
 });

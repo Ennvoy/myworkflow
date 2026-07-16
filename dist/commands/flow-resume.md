@@ -8,7 +8,7 @@ description: Flow 換手/接手 — 純從檔案狀態（.flow/state.json + spec
 
 ## Step 1：純讀檔重建現況（statelib reconstruct）
 
-**reconstruct 輸出的讀取與白話轉述 SHALL 交給便宜 subagent（Haiku/Sonnet 級）執行、只回 1-2k 摘要；主迴圈只負責彈窗待決策。**
+**委派門檻（C-44，非無條件 SHALL）**：reconstruct 輸出的讀取與白話轉述——**只有狀態夠大才下放便宜 subagent**（Haiku/Sonnet 級，回 1-2k 摘要）：`reconstruct` 輸出 >2-3k token 或未交付 task 數 >10 時委派；**小狀態直接主迴圈讀**（spawn 往返比直讀還貴）。此外 `flow-session-start` hook 換 session 時已把現況注入開場——**若無 stale 疑慮（本 session 內狀態沒大改）直接沿用那份、不必再 spawn**。主迴圈始終只負責彈窗待決策。
 
 用 statelib 冷啟動 reconstruct 印現況 + 下一步（**只讀 `.flow/`，不讀對話**）：
 ```bash

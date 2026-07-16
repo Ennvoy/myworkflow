@@ -4,7 +4,7 @@
 //   這個選項，確定性地注入主模型 context——不限走不走 /flow-spec，任何 UI/視覺工作都會被提醒到。
 // 設計鐵則（與 commit-gate 的硬擋不同）：
 //   1) 永不阻擋——UI 迭代不該被打斷，所以用 exit 0 + additionalContext 注入，絕不 exit 2。
-//   2) 一專案一次——記到 ~/.claude/.flow-design-base-seen.json，之後同專案不再煩。
+//   2) 每個前端檔一次（刻意 per-file，非 per-專案）——絕對檔路徑記到 ~/.claude/.flow-design-base-seen.json，同檔迭代覆寫不重複煩；新增新 UI 檔＝新提醒。
 //   3) 只攔 Write（新建檔＝最該選基底的時機）；Edit 既有檔不擾。
 //   4) fail-open——解析失敗 / 沒裝設計系統 / 取不到家目錄 → 一律 exit 0 放行不注入。
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';

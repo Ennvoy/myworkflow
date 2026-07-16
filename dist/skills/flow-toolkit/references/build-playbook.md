@@ -9,6 +9,7 @@
 - **foundation/共用檔先序列**：全域 router / 共享型別 / DB schema / auth（`P-*`）**SHALL 先做完並 merge 進 trunk**，features 才 fan-out——否則大家改同一個檔 = merge 地獄。
 - **釘契約**：跨 worker 的接縫用 design.md 釘好的單一 type/schema，各 worker import 同一份。
 - **波次寬度合理控制**：多工 ~15x token，只把「真互不依賴＋夠份量」的放進同一波。簡單/相依的別硬塞平行。
+- **波級批次窄驗證（C-24，選配、Ask-first）**：預設每 feature 各自 spawn 一個 evaluator＋各自 production build 驗 happy-path smoke——N features＝N 次最貴配置。**當一波 features 共用同一份 production build 時**，可改用 `parallel-verify.js` 的 `args.batch=true`：整波整合完 spawn「一次」evaluator 逐條驗全部 target 的 happy path（同一份 build 只起一次，省重複開銷）。**偏離預設 → SHALL 先 `AskUserQuestion` 彈窗拍板**（省 token/速度 ↔ 隔離度/單 feature 失敗即時性），宜與「波級 tsc 重用」一起評估、別各彈一次窗。嚴謹 p50/p95 仍留 `/flow-ship` 量一次。
 - **fan-out 前就緒探針（fail-fast，研究 LocalContextMiddleware）**：先確認環境就緒——依專案 package manager 跑一次 deps install/ci（如 `npm ci`）。lockfile drift / 裝不起來 / 缺工具 → **停下回報**，別讓整波 worker 在壞環境上空轉一輪才一起失敗（這一輪重跑成本 = 整波 ~15x token）。
 
 ## 二、worker fan-out prompt 模板（`parallel-build.js` Stage 2 內容）

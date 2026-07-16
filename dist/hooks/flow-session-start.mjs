@@ -4,12 +4,26 @@
 // 全部出貨完 → 靜默不打擾。完整進度（計數/checkpoint/對帳/下一步）一律只有打 /flow-resume 才印。
 // 純讀檔、不靠記憶；非 flow 專案一律 no-op；reconstruct/import 失敗退回 phase 粗判一行（絕不 brick session）。
 
-import { readFileSync, existsSync, readdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 function stripBom(s) {
   return s && s.charCodeAt(0) === 0xfeff ? s.slice(1) : s;
+}
+
+// C-3③①：hook 冷啟＋執行耗時碼表——記本 node process 從 timeOrigin 到收尾的總 ms（含 import statelib 等 Flow hook 主成本），
+// 滾動保留最近 30 筆，給「安檢門四合一（C-3①）前後對照」用實測數字（不臆測）。全程 fail-silent、寫失敗不影響 session。
+function recordTiming(claudeHome, hook) {
+  try {
+    const ms = Math.round(performance.now());
+    const p = join(claudeHome, '.flow-hook-timing.json');
+    let arr = [];
+    try { if (existsSync(p)) arr = JSON.parse(stripBom(readFileSync(p, 'utf8'))).samples || []; } catch { arr = []; }
+    arr.push({ hook, ms });
+    if (arr.length > 30) arr = arr.slice(-30);
+    writeFileSync(p, JSON.stringify({ samples: arr }));
+  } catch { /* 碼表非關鍵 */ }
 }
 
 let raw = '';
@@ -60,11 +74,22 @@ process.stdin.on('end', async () => {
           driftLine = `- ⚠️ Flow 安裝漂移：已裝 v${instVer}，來源 ${prov.source} 已是 v${srcVer} → 改了 dist 沒重裝？跑 install 或精準複製改動檔到 ~/.claude。`;
         }
         if (S) {
-          const d = await S.syncDrift(join(prov.source, 'dist'), claudeHome);
-          if (d.differing.length || d.missing.length) {
-            const eg = d.differing[0];
-            const hint = eg ? `如 ${eg.rel}（${eg.newer === 'installed' ? '安裝區較新→回寫 dist' : 'dist 較新→重裝'}）` : '';
-            syncLine = `- ⚠️ Flow 同步漂移：${d.differing.length} 檔 dist↔安裝區內容不一致${hint ? '，' + hint : ''}${d.missing.length ? `；另 ${d.missing.length} 檔 dist 有、安裝區沒有` : ''}。`;
+          // C-3③：便宜 stat-only 指紋 gate——版本或兩側任一 mtime 沒動就沿用上次「無漂移」結論，略過 60–120 檔 read+hash（開機稅）。
+          // 熱修改了 dist 或安裝區 → mtime 前進 → 指紋變 → 照樣全量比對（保留 W0-5 同版本熱修偵測）。指紋讀寫失敗一律退回「照跑全量」。
+          const srcDist = join(prov.source, 'dist');
+          const fpPath = join(claudeHome, '.flow-syncfp.json');
+          let cachedFp = null, curFp = null;
+          try { curFp = await S.syncFingerprint(srcDist, claudeHome); } catch { curFp = null; }
+          try { if (existsSync(fpPath)) cachedFp = JSON.parse(stripBom(readFileSync(fpPath, 'utf8'))).fp || null; } catch { cachedFp = null; }
+          if (!curFp || curFp !== cachedFp) {
+            const d = await S.syncDrift(srcDist, claudeHome);
+            if (d.differing.length || d.missing.length) {
+              const eg = d.differing[0];
+              const hint = eg ? `如 ${eg.rel}（${eg.newer === 'installed' ? '安裝區較新→回寫 dist' : 'dist 較新→重裝'}）` : '';
+              syncLine = `- ⚠️ Flow 同步漂移：${d.differing.length} 檔 dist↔安裝區內容不一致${hint ? '，' + hint : ''}${d.missing.length ? `；另 ${d.missing.length} 檔 dist 有、安裝區沒有` : ''}。`;
+            }
+            // 只在「無漂移」時把當前指紋記為 clean baseline——有漂移不更新，讓下次仍全量抓到（別把漂移狀態當 baseline 靜默掉）。
+            if (curFp && !syncLine) { try { writeFileSync(fpPath, JSON.stringify({ fp: curFp, at: new Date().toISOString() })); } catch { /* 快取寫失敗不致命 */ } }
           }
         }
       }
@@ -127,6 +152,7 @@ process.stdin.on('end', async () => {
       : '';
   }
 
+  recordTiming(claudeHome, 'session-start');   // C-3③①：收尾記碼表
   const additionalContext = [body, wiringLine, driftLine, syncLine, envLine, precommitLine].filter(Boolean).join('\n');
   if (!additionalContext) process.exit(0);   // 全部完成出貨、無漂移、pre-commit 已裝（無首裝告知）→ 真靜默、不打擾
   const out = {

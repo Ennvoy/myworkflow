@@ -51,6 +51,25 @@ const EVALUATOR_PERSONA =
   '你是對抗性 QA Evaluator。你的工作是【找失敗】，不是核准。預設懷疑：除非有客觀證據，否則判 FAIL。\n' +
   '你看不到、也不要相信 builder 的說法——只信你自己跑出來的 artifact。\n'
 
+// C-24：波級批次窄驗證（args.batch=true）——整波整合完 spawn「一次」evaluator 驗全部 target 的 happy path、逐條回 PASS/FAIL，
+// 省「N features 各自 spawn 最貴配置 evaluator＋各自 production build」的重複開銷（同一份 build 只起一次）。
+// trade-off：單一 feature 的失敗會晚一點浮現（跟整批一起回），且深度不如 per-target 獨立驗。**偏離「每 feature 獨立 evaluator」
+// 預設 → SHALL 經 Ask-first 彈窗拍板**（省 token/速度 ↔ 隔離度/即時性）；宜與波級 tsc 重用一起評估、別各彈一次窗。
+// 嚴謹 p50/p95 仍留 /flow-ship 量一次；批次只驗 happy-path smoke（與 flow-build.md「每 feature 只跑便宜 smoke」同調）。
+if (args && args.batch) {
+  const BATCH_SCHEMA = { type: 'object', additionalProperties: false, required: ['results'],
+    properties: { results: { type: 'array', items: VERDICT_SCHEMA } } }
+  log(`parallel-verify: 波級批次模式——一次 evaluator 驗 ${targets.length} 個 target 的 happy path`)
+  const r = await agent(
+    EVALUATOR_PERSONA +
+    `一次 production build（非 dev）＋Playwright headed，逐一走完下列 ${targets.length} 個 target 的 happy path（真實資料鏈路、禁 mock 假綠、從入口導航禁 deep-link），每個 target 獨立回一筆 verdict：\n` +
+    targets.map((t, i) => `  ${i + 1}. ${t.id}（kind=${t.kind}）${t.journey ? '：' + t.journey : ''}`).join('\n') +
+    `\n對照契約 ${args.contractPath}。任一 target 任一維度 FAIL 則該 target FAIL（不准平均）；抓到 mock/攔截 → 該 target mockDetected=true+FAIL。回 { results: [每 target 一筆 verdict] }。`,
+    { label: 'verify:batch', phase: 'Verify', schema: BATCH_SCHEMA, ...(EVAL_MODEL ? { model: EVAL_MODEL } : {}), ...(EVAL_EFFORT ? { effort: EVAL_EFFORT } : {}), agentType: 'evaluator' }
+  )
+  return (r && r.results) || []
+}
+
 const results = await parallel(
   targets.map(t => () => agent(
     EVALUATOR_PERSONA +

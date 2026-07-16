@@ -19,31 +19,41 @@ process.stdin.on('error', () => process.exit(0));
 process.stdin.on('data', c => (raw += c));
 process.stdin.on('end', () => { main().catch(() => process.exit(0)); });
 
-// 裝新相依（排除 bare install/ci 還原 lockfile）。
-function isNewDependency(s) {
-  if (/\bpip3?\s+install\s+[^\s\-]/i.test(s)) return true;
-  if (/\bcargo\s+add\s+\S/i.test(s)) return true;
-  if (/\bgo\s+get\s+\S/i.test(s)) return true;
-  if (/\bgem\s+install\s+\S/i.test(s)) return true;
-  if (/\b(poetry|composer)\s+(add|require)\s+\S/i.test(s)) return true;
-  const m = s.match(/\b(npm|pnpm|yarn|bun)\s+(add|install|i)\b(.*)$/i);
+// C-45：單一相依管理表——detect（isNewDependency）與 extract（extractDepNames）同源，杜絕兩份平行 regex
+// 漏同步一邊即 allowlist 靜默失效的漂移。每條 re 的 group 1 = 套件參數串。npm 家族帶特殊邏輯（add 一定加相依、
+// install/i 帶名才算、bare install＝還原 lockfile 放行），故單獨處理但仍在同一 depMatch 出口。
+// 刻意「不」在 extract 截斷 && 後串接命令：chained `npm i <allowed> && npm i <evil>` 若截斷成 [<allowed>]
+// 會讓整條命令被 allowlist 放行（evil 跟著跑）；保留整串 → 含 &&/命令 token → allowlist 必 miss → 硬擋（fail-safe）。
+// detect 語意逐一保留原行為：pip 須 install 後緊接非 dash（排除 `pip install -r req.txt` 還原）；
+// cargo add / go get / gem install / poetry·composer add|require 任何非空參數即算（\S 觸發，fail-safe 從嚴）。
+const DEP_ARG_RES = [
+  /\bpip3?\s+install\s+(?=[^\s\-])(.+)$/i,
+  /\bcargo\s+add\s+(\S.*)$/i,
+  /\bgo\s+get\s+(\S.*)$/i,
+  /\bgem\s+install\s+(\S.*)$/i,
+  /\b(?:poetry|composer)\s+(?:add|require)\s+(\S.*)$/i,
+];
+const NPM_DEP_RE = /\b(npm|pnpm|yarn|bun)\s+(add|install|i)\b(.*)$/i;
+const argTokens = a => String(a || '').trim().split(/\s+/).filter(t => t && !t.startsWith('-'));
+
+// 回 { pkgs } / { pkgs, forceAdd } / null。null＝非裝新相依（含 bare install / pip restore）。
+function depMatch(s) {
+  const str = String(s);
+  for (const re of DEP_ARG_RES) { const m = str.match(re); if (m) return { pkgs: argTokens(m[1]) }; }
+  const m = str.match(NPM_DEP_RE);
   if (m) {
-    const args = (m[3] || '').trim().split(/\s+/).filter(Boolean).filter(t => !t.startsWith('-'));
-    if (/^add$/i.test(m[2])) return true;          // add 一定是加相依
-    return args.length > 0;                        // install/i 帶套件名＝新相依；bare＝還原 lockfile（放行）
+    const pkgs = argTokens(m[3]);
+    if (/^add$/i.test(m[2])) return { pkgs, forceAdd: true };   // add 一定是加相依（即使抓不到 token）
+    return pkgs.length ? { pkgs } : null;                       // install/i 帶套件名＝新相依；bare＝還原 lockfile（放行）
   }
-  return false;
+  return null;
 }
+function isNewDependency(s) { return !!depMatch(s); }
 
 // W4-2：dependency 預核准——.flow/policy.json（進 git、使用者拍板維護）：{ "deps": { "allow": ["lodash", "@types/*"] } }。
 // 命令裡「全部」套件名都命中 allowlist → 放行＋自動落 decision 審計；任一不在清單 → 照原樣硬擋彈窗。
 // 讀不到 policy＝無白名單（維持硬擋）——放鬆只能來自實存的使用者政策檔。
-function extractDepNames(s) {
-  const grab = (re) => { const m = s.match(re); return m ? m[1].split(/\s+/).filter(t => t && !t.startsWith('-')) : null; };
-  return grab(/\bpip3?\s+install\s+(.+)$/i) || grab(/\bcargo\s+add\s+(.+)$/i) || grab(/\bgo\s+get\s+(.+)$/i)
-    || grab(/\bgem\s+install\s+(.+)$/i) || grab(/\b(?:poetry|composer)\s+(?:add|require)\s+(.+)$/i)
-    || grab(/\b(?:npm|pnpm|yarn|bun)\s+(?:add|install|i)\b(.+)$/i) || [];
-}
+function extractDepNames(s) { const d = depMatch(s); return d ? d.pkgs : []; }
 function depAllowed(pkgs, allow) {
   if (!Array.isArray(allow) || !allow.length || !pkgs.length) return false;
   const names = pkgs.map(p => String(p).toLowerCase().replace(/(.)@[^@]+$/, '$1'));   // 去版本後綴（scoped 開頭的 @ 不受影響）

@@ -119,3 +119,15 @@ test('C-5：mode:manual 編輯 package.json → 放行（不干擾非自駕）',
     assert.equal(run({ tool_name: 'Edit', tool_input: { file_path: path.join(root, 'package.json') }, cwd: root }), 0);
   }, 'manual');
 });
+
+// ── C-45：detect/extract 單一表；pip restore 不誤攔；chained 命令 fail-safe ──
+test('C-45：pip install -r（還原）放行；cargo/npm 裝新相依擋；chained && 命令 allowlist 仍 fail-safe 硬擋', async () => {
+  await withAuto(async (root) => {
+    assert.equal(run(bash(root, 'pip install -r requirements.txt')), 0, 'pip -r 還原＝非新相依，放行');
+    assert.equal(run(bash(root, 'pip install flask')), 2, 'pip 裝具名套件＝新相依');
+    // policy 放行 lodash，但 chained 命令 → extract 抓到 && 後的 token → allowlist miss → 硬擋（fail-safe，不放 evil 跟著跑）
+    await writeFile(path.join(root, '.flow', 'policy.json'), JSON.stringify({ deps: { allow: ['lodash'] } }), 'utf8');
+    assert.equal(run(bash(root, 'npm install lodash')), 0, '單一 allowed 套件放行');
+    assert.equal(run(bash(root, 'npm install lodash && npm install evil')), 2, 'chained 命令不因 lodash 命中就放行整串');
+  });
+});

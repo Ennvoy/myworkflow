@@ -105,6 +105,12 @@ process.stdin.on('end', async () => {
         readFileSync(join(claudeHome, 'settings.json'), 'utf8'),
       );
       if (missing.length) wiringLine = `- 🚨 Flow hook 接線缺失：settings.json 沒掛 ${missing.join('、')}——對應閘門完全不會觸發。重跑 install 或手動補回註冊。`;
+      // C-3①：dispatch 接線對賬——flow-dispatch.mjs 真的引用三道合併閘門（漏掉一道＝合併後靜默失效，同 W0-1 教訓）。
+      const dp = join(claudeHome, 'hooks', 'flow-dispatch.mjs');
+      if (existsSync(dp)) {
+        const miss = S.dispatchWiringProblems(readFileSync(dp, 'utf8'));
+        if (miss.length) wiringLine += (wiringLine ? '\n' : '') + `- 🚨 Flow dispatch 漏接：flow-dispatch.mjs 沒引用 ${miss.join('、')}——該閘門合併後完全不會觸發。`;
+      }
     }
   } catch { /* fail-silent */ }
 

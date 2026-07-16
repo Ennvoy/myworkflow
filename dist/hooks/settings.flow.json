@@ -12,30 +12,12 @@
         ]
       },
       {
-        "matcher": "Bash|PowerShell",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"{{CLAUDE_HOME}}/hooks/flow-commit-gate.mjs\""
-          }
-        ]
-      },
-      {
-        "_comment": "C-5：auto-gate 擴到 Write|Edit——自駕下攔相依 manifest 編輯（改 package.json 加套件繞過命令列 install 偵測）。",
+        "_comment": "C-3① 安檢門四合一：commit-gate/auto-gate/spec-gate 合併成 flow-dispatch 一次 node 冷啟跑完（省每工具呼叫 spawn 3 支的冷啟稅）。各道邏輯仍在原檔、可單跑；dispatch 接線完整性由 session-start 對賬。",
         "matcher": "Write|Edit|Bash|PowerShell",
         "hooks": [
           {
             "type": "command",
-            "command": "node \"{{CLAUDE_HOME}}/hooks/flow-auto-gate.mjs\""
-          }
-        ]
-      },
-      {
-        "matcher": "Write|Edit|Bash|PowerShell",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"{{CLAUDE_HOME}}/hooks/flow-spec-gate.mjs\""
+            "command": "node \"{{CLAUDE_HOME}}/hooks/flow-dispatch.mjs\""
           }
         ]
       },

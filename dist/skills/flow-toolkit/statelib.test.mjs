@@ -1500,13 +1500,13 @@ test('#11：extractAllReqIds 不吞尾 ASCII 句點（task 行 REQ id 接句號�
   assert.deepEqual(S.extractAllReqIds('REQ-E2E-001, REQ-PERF-002'), ['REQ-E2E-001', 'REQ-PERF-002']);
 });
 
-test('W0-2 hookWiringProblems：實存 flow hook 未註冊即回報；test/非註冊型/非 flow 檔排除', () => {
-  const files = ['flow-auto-gate.mjs', 'flow-commit-gate.mjs', 'flow-commit-gate.test.mjs',
-    'flow-precommit.mjs', 'commit-gate-core.mjs', 'settings.flow.json'];
-  const settings = '{"hooks":{"PreToolUse":[{"hooks":[{"command":"node hooks/flow-commit-gate.mjs"}]}]}}';
-  assert.deepEqual(S.hookWiringProblems(files, settings), ['flow-auto-gate.mjs'],
-    'auto-gate 檔案在、沒接線 → 回報（漏接線實證）；.test/flow-precommit/commit-gate-core 不算');
-  assert.deepEqual(S.hookWiringProblems(files, settings + ' flow-auto-gate.mjs'), [], '接上即空');
+test('W0-2 hookWiringProblems：實存 flow hook 未註冊即回報；test/非註冊型/dispatch 合併門/非 flow 檔排除', () => {
+  const files = ['flow-size-check.mjs', 'flow-auto-gate.mjs', 'flow-spec-gate.mjs', 'flow-commit-gate.mjs',
+    'flow-commit-gate.test.mjs', 'flow-precommit.mjs', 'commit-gate-core.mjs', 'settings.flow.json'];
+  const settings = '{"hooks":{"PreToolUse":[{"hooks":[{"command":"node hooks/flow-dispatch.mjs"}]}]}}';
+  assert.deepEqual(S.hookWiringProblems(files, settings), ['flow-size-check.mjs'],
+    'size-check 檔案在、沒接線 → 回報；C-3① 經 dispatch 合併的 auto/spec/commit-gate 豁免；.test/precommit/core 不算');
+  assert.deepEqual(S.hookWiringProblems(files, settings + ' flow-size-check.mjs'), [], '接上即空');
   assert.deepEqual(S.hookWiringProblems([], settings), [], '空清單不炸');
 });
 

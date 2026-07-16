@@ -10,14 +10,20 @@
 // 一律 fail-open：任何錯 / 非 Flow / 非 auto → exit 0 放行，絕不誤擋。
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 const stripBom = s => (s && s.charCodeAt(0) === 0xfeff ? s.slice(1) : s);
 
+// C-3①：本 gate 的邏輯抽成 autoGateCheck(input) → { block, message }，供 flow-dispatch 合併呼叫（一次 node 冷啟跑完三道門）；
+// 保留獨立 main() 讓本檔仍可單獨當 hook 跑（測試/相容）。**只有直接執行本檔時才掛 stdin/跑 main**——被 dispatch import 時
+// 不可自動跑（否則 import 就註冊一組 stdin 監聽、跑自己的 main、搶先 exit，把 dispatcher 短路）。fail-open 由呼叫端 try-catch。
 let raw = '';
-process.stdin.setEncoding('utf8');
-process.stdin.on('error', () => process.exit(0));
-process.stdin.on('data', c => (raw += c));
-process.stdin.on('end', () => { main().catch(() => process.exit(0)); });
+if (import.meta.url === pathToFileURL(process.argv[1] || '').href) {
+  process.stdin.setEncoding('utf8');
+  process.stdin.on('error', () => process.exit(0));
+  process.stdin.on('data', c => (raw += c));
+  process.stdin.on('end', () => { main().catch(() => process.exit(0)); });
+}
 
 // C-45：單一相依管理表——detect（isNewDependency）與 extract（extractDepNames）同源，杜絕兩份平行 regex
 // 漏同步一邊即 allowlist 靜默失效的漂移。每條 re 的 group 1 = 套件參數串。npm 家族帶特殊邏輯（add 一定加相依、
@@ -71,22 +77,22 @@ function isDestructiveDB(s) {
   return false;
 }
 
-function block(msg) { process.stderr.write(msg + '\n'); process.exit(2); }
+const PASS = { block: false };
+const BLOCK = msg => ({ block: true, message: msg });
 
 // C-5：相依 manifest 檔（編輯它加套件 → 之後 bare install 還原＝繞過命令列 install 偵測）。
 const isDepManifest = p => /(^|[\/\\])(package\.json|package-lock\.json|pnpm-lock\.yaml|yarn\.lock|requirements\.txt|pyproject\.toml|Pipfile|Cargo\.toml|go\.mod|Gemfile|composer\.json)$/i.test(String(p || ''));
 
-async function main() {
-  let input = {};
-  try { input = JSON.parse(stripBom(raw).trim() || '{}'); } catch { process.exit(0); }
+// C-3①：純判定（不碰 stdin/exit）——回 { block, message }。dispatch 與 main 共用。
+export async function autoGateCheck(input) {
   const tool = input.tool_name ?? input.toolName ?? '';
   const isCmd = tool === 'Bash' || tool === 'PowerShell';
   const isEdit = tool === 'Write' || tool === 'Edit';
-  if (!isCmd && !isEdit) process.exit(0);
+  if (!isCmd && !isEdit) return PASS;
   const ti = input.tool_input ?? input.toolInput ?? {};
   const command = String(ti.command ?? '');
   const cwd = input.cwd ?? process.cwd();
-  if (!existsSync(join(cwd, '.flow'))) process.exit(0);
+  if (!existsSync(join(cwd, '.flow'))) return PASS;
 
   // C-2：mode 讀取與 reconstruct 同優先序（git-tracked manifest 先、state.json 後）——換機 clone 後 state.json
   // 不存在也讀得到 auto，三道自駕硬擋不再靜默下線（原本只讀 state.json、缺檔即 fail-open exit 0＝護欄全滅）。
@@ -95,17 +101,17 @@ async function main() {
   let state = {};
   try { state = JSON.parse(stripBom(readFileSync(join(cwd, '.flow', 'state.json'), 'utf8'))); } catch { state = {}; }
   const mode = manifestMode || String(state.mode || '');
-  if (mode !== 'auto') process.exit(0);   // 只在自駕模式啟用，manual 不干擾
+  if (mode !== 'auto') return PASS;   // 只在自駕模式啟用，manual 不干擾
 
   // C-5：自駕下編輯相依 manifest＝變更相依（T1）。攔在 PreToolUse，堵「改 package.json 加套件 → bare install 還原」。
   // 純字串偵測抓不到的間接執行（npm run setup / node migrate.mjs）仍留 T1 散文（autonomous-mode.md 誠實標注）。
   if (isEdit) {
     const target = String(ti.file_path ?? ti.filePath ?? '');
-    if (isDepManifest(target)) block(
+    if (isDepManifest(target)) return BLOCK(
       `Flow 自駕閘門：偵測到編輯相依 manifest（${target.split(/[\/\\]/).pop()}）——改相依是 T1 必停集合（會影響安裝/供應鏈）。\n` +
       '  → 先 AskUserQuestion 同步彈窗問使用者（要動什麼相依、為何），拍板後再改；\n' +
       '  或真的卡住：flow-state pending add <id> --why "<需要改的相依與原因>"，收尾一批請使用者拍板。');
-    process.exit(0);   // 非相依 manifest 的 Write/Edit → 放行
+    return PASS;   // 非相依 manifest 的 Write/Edit → 放行
   }
 
   if (isNewDependency(command)) {
@@ -122,26 +128,34 @@ async function main() {
         const slug = pkgs.join('-').replace(/[^\w.\-]+/g, '-').slice(0, 60) || 'pkg';
         await S0.recordDecision(cwd, `dep-auto-${slug}`, { choice: `allowlist 放行安裝：${pkgs.join(' ')}`, why: '.flow/policy.json deps.allow 命中（W4-2 預核准）', by: 'auto-gate' });
       } catch { /* 審計非關鍵 */ }
-    } else block(
+    } else return BLOCK(
       'Flow 自駕閘門：裝新相依是 T1 必停集合，自駕下不可靜默裝' + (pkgs.length ? `（${pkgs.join(' ')} 不在 .flow/policy.json 的 deps.allow）` : '') + '。\n' +
       '  → 先 AskUserQuestion 同步彈窗問使用者（白話講要裝什麼套件、為何需要、有無更輕方案），拍板後再裝。\n' +
       '  常用可信套件可請使用者拍板加進 .flow/policy.json：{ "deps": { "allow": ["<pkg>", "@scope/*"] } }（支援尾 * 前綴），下次免停。');
   }
-  if (isDestructiveDB(command)) block(
+  if (isDestructiveDB(command)) return BLOCK(
     'Flow 自駕閘門：偵測到破壞性 DB 操作（DROP/TRUNCATE / 無 WHERE 的 DELETE/UPDATE），是 T1 必停集合。\n' +
     '  → 先 AskUserQuestion 同步彈窗確認（會毀哪些資料、可否回復、是否真要），拍板後再執行。');
 
   // doom-loop 硬天花板：軟 STALL 連續被忽略到 hardThreshold → 硬擋下一次同 runner 重跑
   let S;
-  try { S = await import('../skills/flow-toolkit/statelib.mjs'); } catch { process.exit(0); }
+  try { S = await import('../skills/flow-toolkit/statelib.mjs'); } catch { return PASS; }
   if (S.isRunnerCommand(command)) {
     const bucket = S.runnerBucket(command);
     const soft = Number(state.stallThreshold) > 0 ? Number(state.stallThreshold) : 3;
     const hard = soft + 3;
     const n = S.stallCount(await S.readJournal(cwd), bucket);
-    if (n >= hard) block(
+    if (n >= hard) return BLOCK(
       `Flow 自駕閘門：同一個失敗（${bucket}）已連續 ${n} 輪、軟 STALL 升級被忽略。硬擋本次重跑。\n` +
       '  → 不准再跑同一條死路。立刻：標 BLOCKED 跳下一個 task，或 AskUserQuestion 同步升級給使用者拍板。');
   }
+  return PASS;
+}
+
+async function main() {
+  let input = {};
+  try { input = JSON.parse(stripBom(raw).trim() || '{}'); } catch { process.exit(0); }
+  let r; try { r = await autoGateCheck(input); } catch { process.exit(0); }   // fail-open
+  if (r && r.block) { process.stderr.write(r.message + '\n'); process.exit(2); }
   process.exit(0);
 }

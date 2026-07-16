@@ -10,14 +10,22 @@
 // 非此一律 fail-open exit 0，絕不誤擋非 Flow 專案。
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 const stripBom = s => (s && s.charCodeAt(0) === 0xfeff ? s.slice(1) : s);
 
+// C-3①：本 gate 邏輯抽成 specGateCheck(input) → { block, message }，供 flow-dispatch 合併呼叫；保留獨立 main() 可單跑。
+const PASS = { block: false };
+const BLOCK = msg => ({ block: true, message: msg });
+
+// C-3①：只有直接執行本檔時才掛 stdin/跑 main（被 dispatch import 時不可自動跑，否則會搶先 exit 短路 dispatcher）。
 let raw = '';
-process.stdin.setEncoding('utf8');
-process.stdin.on('error', () => process.exit(0));
-process.stdin.on('data', c => (raw += c));
-process.stdin.on('end', () => { try { main(); } catch { process.exit(0); } });
+if (import.meta.url === pathToFileURL(process.argv[1] || '').href) {
+  process.stdin.setEncoding('utf8');
+  process.stdin.on('error', () => process.exit(0));
+  process.stdin.on('data', c => (raw += c));
+  process.stdin.on('end', () => { try { main(); } catch { process.exit(0); } });
+}
 
 // C-4：先把 JSON \uXXXX 跳脫解回字元（堵「phase:"spec-done" 這種轉義繞過字串偵測」），再判。best-effort、失敗回原字串。
 const decodeUnicodeEsc = s => String(s || '').replace(/\\u([0-9a-fA-F]{4})/g, (_, h) => { try { return String.fromCharCode(parseInt(h, 16)); } catch { return _; } });
@@ -35,14 +43,13 @@ const targetsLedger = s => /(^|[\s'"/])\.flow\/(spec-review|trace|verify|code-re
 // 裸寫防的是竄改檔案內容，讀與 staging 動不了內容；CLI 正門走 fs 內部寫、命令字串不含重導進該目錄）。
 const hasWriteIntent = s => /(^|[^0-9])>>?|\btee\b|\bSet-Content\b|\bOut-File\b|\bAdd-Content\b|\bNew-Item\b|\b(cp|mv|rm|rmdir|touch)\b|\b(Copy-Item|Move-Item|Remove-Item)\b|\bdel\b|\bsed\s+-i/i.test(String(s || ''));
 
-function main() {
-  let input = {};
-  try { input = JSON.parse(stripBom(raw).trim() || '{}'); } catch { process.exit(0); }
+// C-3①：純判定（不碰 stdin/exit）——回 { block, message }。dispatch 與 main 共用。
+export function specGateCheck(input) {
   const tool = input.tool_name ?? input.toolName ?? '';
-  if (tool !== 'Write' && tool !== 'Edit' && tool !== 'Bash' && tool !== 'PowerShell') process.exit(0);
+  if (tool !== 'Write' && tool !== 'Edit' && tool !== 'Bash' && tool !== 'PowerShell') return PASS;
   const ti = input.tool_input ?? input.toolInput ?? {};
   const cwd = input.cwd ?? process.cwd();
-  if (!existsSync(join(cwd, '.flow'))) process.exit(0);          // 非 Flow 專案 → 不干擾
+  if (!existsSync(join(cwd, '.flow'))) return PASS;          // 非 Flow 專案 → 不干擾
 
   // 取「這次工具呼叫要寫什麼、寫去哪」
   let target = '', content = '';
@@ -51,44 +58,41 @@ function main() {
   else { content = String(ti.command ?? ''); target = content; }  // Bash/PowerShell：命令字串同時當目標與內容
 
   // 第一道：CLI-only ledger（spec-review/trace/verify）竄改/刪除。Write/Edit 本質是寫，命中路徑即擋；
-  // Bash/PowerShell 只在有寫入/刪除意圖時擋（唯讀 cat/ls/git add/diff/commit 放行——它們動不了檔案內容，
-  // 誤殺會撞 v0.20.0「ledger 進版控」政策與 git-tools 逐檔 staging）。CLI 正門走 fs 內部寫、不經重導，自然放行。
+  // Bash/PowerShell 只在有寫入/刪除意圖時擋（唯讀 cat/ls/git add/diff/commit 放行——它們動不了檔案內容）。
   if (targetsLedger(target)) {
     const isCmd = tool === 'Bash' || tool === 'PowerShell';
-    if (isCmd && !hasWriteIntent(content)) process.exit(0);        // 純讀取/staging → 放行
-    process.stderr.write([
+    if (isCmd && !hasWriteIntent(content)) return PASS;        // 純讀取/staging → 放行
+    return BLOCK([
       'Flow ledger 閘門：禁止裸寫/刪除 .flow/{spec-review,trace,verify,code-review}/（hash/終局由 CLI 自算，裸改＝偽造或蒸發對賬證據）。',
       '  → 收 lens findings：flow-state spec-review …／終局：flow-state review-resolve …',
       '  → 凍結分母：flow-state spec-ready --freeze／計畫對賬：flow-state plan-check',
       '  → REQ-E2E 驗證：flow-state verify-e2e …／效能：flow-state verify-perf …',
       '  → 藍軍 code-review：flow-state review-code …／終局：flow-state code-resolve …',
       '  （唯讀請用 Read 工具；staging 用 git add——它們不動內容，不會被擋。）',
-    ].join('\n') + '\n');
-    process.exit(2);
+    ].join('\n'));
   }
-  if (!targetsState(target)) process.exit(0);                    // 不是寫 .flow/state.json → 放行
+  if (!targetsState(target)) return PASS;                    // 不是寫 .flow/state.json → 放行
   const isCmd = tool === 'Bash' || tool === 'PowerShell';
   // C-4：命令列放行正門偵測錨定「flow-state 為執行主體」（排除尾綴註解冒充：`echo x # flow-state verify-ok` 這類）。
   const invokesCli = (subs) => isCmd && new RegExp(`(^|[;&|]|\\bnode\\b)[^#\\n]*flow-state(\\.mjs)?\\s+(${subs})\\b`, 'i').test(content);
   // C-10：擋裸寫 verify/tdd 到 state.json（正門＝flow-state verify-ok / run；裸寫繞過真跑檢查、洗假綠燈）。
   if (setsVerifyTdd(content) && !invokesCli('verify-ok|run|done')) {
-    process.stderr.write([
+    return BLOCK([
       'Flow verify 閘門：禁止直接寫 .flow/state.json 的 verify/tdd（會洗掉「真跑綠燈」檢查、假裝驗證過）。',
       '  → 有 runner：flow-state run --task <id> -- <測試命令>（真跑、捕真 exit code）。',
       '  → 手動/無法自動化：flow-state verify-ok <id> --ref "<真證據>" [--tdd <green|refactored|n/a>]（留審計）。',
       '  別手改 state.json 假裝過關（系統性違規）。',
-    ].join('\n') + '\n');
-    process.exit(2);
+    ].join('\n'));
   }
   const phase = setsGatedPhase(content);
-  if (!phase) process.exit(0);                                   // 沒要把 phase 設成 spec-done/plan-done → 放行
-  // 放行正門：spec-ready（凍結）／plan-check（計畫）子命令內部用 fs 寫，不經工具呼叫；此為防禦性放行（錨定執行主體、排除註解冒充）
-  if (invokesCli('spec-ready|plan-check')) process.exit(0);
+  if (!phase) return PASS;                                   // 沒要把 phase 設成 spec-done/plan-done → 放行
+  // 放行正門：spec-ready（凍結）／plan-check（計畫）子命令內部用 fs 寫，不經工具呼叫；防禦性放行（錨定執行主體、排除註解冒充）
+  if (invokesCli('spec-ready|plan-check')) return PASS;
 
   // 已是該 phase 的再存（非轉移）放行——只擋「轉移成該 phase」那一刻
   try {
     const st = JSON.parse(stripBom(readFileSync(join(cwd, '.flow', 'state.json'), 'utf8')));
-    if (String(st.phase ?? '').toLowerCase() === phase) process.exit(0);
+    if (String(st.phase ?? '').toLowerCase() === phase) return PASS;
   } catch { /* 無/壞 state.json：視為尚未轉移，繼續擋這次裸寫轉移 */ }
 
   const gate = phase === 'spec-done'
@@ -96,6 +100,13 @@ function main() {
        '  → 改跑正門：node ~/.claude/skills/flow-toolkit/flow-state.mjs spec-ready --freeze（驗收斂＋lens 對賬通過才凍結）。']
     : ['Flow 計畫閘門：禁止直接寫 phase="plan-done" 繞過計畫對賬。',
        '  → 改跑正門：node ~/.claude/skills/flow-toolkit/flow-state.mjs plan-check（驗 REQ↔task 覆蓋＋tasks.md↔manifest 一致才過）。'];
-  process.stderr.write([...gate, '  別手改 state.json 假裝過關（系統性違規）。'].join('\n') + '\n');
-  process.exit(2);   // exit 2 → Claude Code 擋下此工具呼叫，把 stderr 餵回模型
+  return BLOCK([...gate, '  別手改 state.json 假裝過關（系統性違規）。'].join('\n'));
+}
+
+function main() {
+  let input = {};
+  try { input = JSON.parse(stripBom(raw).trim() || '{}'); } catch { process.exit(0); }
+  let r; try { r = specGateCheck(input); } catch { process.exit(0); }   // fail-open
+  if (r && r.block) { process.stderr.write(r.message + '\n'); process.exit(2); }
+  process.exit(0);
 }

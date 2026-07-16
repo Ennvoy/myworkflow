@@ -10,27 +10,41 @@
 // 設計鐵則：fail-open（解析不出 / 非 flow 專案 / 非 git commit / git 或 import 失敗 → 一律放行，絕不誤擋）。
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import * as core from './commit-gate-core.mjs';
 
 const exit0 = () => process.exit(0);
 function stripBom(s) { return s && s.charCodeAt(0) === 0xfeff ? s.slice(1) : s; }
 
-let raw = '';
-process.stdin.setEncoding('utf8');
-process.stdin.on('data', (c) => (raw += c));
-process.stdin.on('end', async () => {
-  let input;
-  try { input = JSON.parse(stripBom(raw).trim() || '{}'); } catch { return exit0(); }
+// C-3①：本 gate 邏輯抽成 commitGateCheck(input) → { block, message }，供 flow-dispatch 合併呼叫；保留獨立 stdin 入口可單跑。
+const PASS = { block: false };
+const BLOCK = msg => ({ block: true, message: msg });
 
+// C-3①：只有直接執行本檔時才掛 stdin/跑（被 dispatch import 時不可自動跑，否則會搶先 exit 短路 dispatcher）。
+let raw = '';
+if (import.meta.url === pathToFileURL(process.argv[1] || '').href) {
+  process.stdin.setEncoding('utf8');
+  process.stdin.on('data', (c) => (raw += c));
+  process.stdin.on('end', async () => {
+    let input;
+    try { input = JSON.parse(stripBom(raw).trim() || '{}'); } catch { return exit0(); }
+    let r; try { r = await commitGateCheck(input); } catch { return exit0(); }   // fail-open
+    if (r && r.block) { process.stderr.write(r.message + '\n'); process.exit(2); }
+    exit0();
+  });
+}
+
+// 純判定（不碰 exit/stderr）。呼叫端負責 fail-open（try-catch）與輸出。
+export async function commitGateCheck(input) {
   const tool = input.tool_name ?? input.toolName ?? '';
-  if (tool !== 'Bash' && tool !== 'PowerShell') return exit0();
+  if (tool !== 'Bash' && tool !== 'PowerShell') return PASS;
   const ti = input.tool_input ?? input.toolInput ?? {};
   const cmd = String(ti.command ?? '');
   // 只攔真正的 commit；放行非 commit / 唯讀 git（--amend 不豁免，見檔頭）。
-  if (!/\bgit\b[^\n]*\bcommit\b/.test(cmd)) return exit0();
+  if (!/\bgit\b[^\n]*\bcommit\b/.test(cmd)) return PASS;
 
   const cwd = input.cwd ?? process.cwd();
-  if (!existsSync(join(cwd, '.flow'))) return exit0(); // 非 flow 專案
+  if (!existsSync(join(cwd, '.flow'))) return PASS; // 非 flow 專案
 
   // ── W3-3：模型端補堵「繞過 git pre-commit 兜底」的旗標 ──
   // 只挖「-m/-F 的值」（含 here-string 與雙引號轉義），再去掉殘餘引號「字元」（非內容）：
@@ -48,28 +62,27 @@ process.stdin.on('end', async () => {
   const noVerify = /(^|\s)--no-verify(\s|$)/.test(cmdFlags) || /(^|\s)-[a-z]*n[a-z]*(\s|$)/.test(cmdFlags);
   const hooksPathBypass = /-c\s+core\.hooksPath\b/i.test(cmdFlags) || /\bconfig\b[^\n]*\bcore\.hooksPath\b/i.test(cmdFlags);
   if (noVerify || hooksPathBypass) {
-    process.stderr.write([
+    return BLOCK([
       'Flow commit gate：擋下 commit —— 命令帶了 --no-verify/-n 或改向 core.hooksPath（會繞過 git pre-commit 兜底）。',
       '  Flow 的 secrets/驗證垃圾防護要靠 pre-commit 兜住整批繞法，別在自動流程裡關掉它（-n 是 --no-verify 短式、git config core.hooksPath 持久改向同理）。',
       '  真有正當理由跳過（例如 hook 本身壞了）→ 回報使用者由人拍板，別自行繞過。',
-    ].join('\n') + '\n');
-    process.exit(2);
+    ].join('\n'));
   }
 
   // ── 三道閘門（判定在 commit-gate-core，與 flow-precommit.mjs 共用）──
   const staged = core.stagedFiles(cwd); // 取一次，閘門〇/一共用；取不到＝null＝兩道 fail-open
   const secret = core.secretsReason(cwd, staged);
-  if (secret) { process.stderr.write(secret + '\n'); process.exit(2); }
+  if (secret) return BLOCK(secret);
   const artifact = await core.artifactsReason(cwd, staged);
-  if (artifact) { process.stderr.write(artifact + '\n'); process.exit(2); }
+  if (artifact) return BLOCK(artifact);
 
   // 閘門二取 commit 訊息：PowerShell here-string @'…'@/@"…"@、-m "..."/'...'、或 -F <file>。取不到就 fail-open。
   let msg = '';
   for (const m of cmd.matchAll(/-m\s*@(['"])([\s\S]*?)\1@/g)) msg += ' ' + m[2];
   for (const m of cmd.matchAll(/-m\s*("([^"]*)"|'([^']*)'|((?!@)\S+))/g)) msg += ' ' + (m[2] ?? m[3] ?? m[4] ?? ''); // (?!@)：不重吃 here-string 殘渣
   const fm = cmd.match(/-F\s+("([^"]*)"|'([^']*)'|(\S+))/);
-  if (fm) { const f = fm[2] ?? fm[3] ?? fm[4]; try { msg += ' ' + readFileSync(f, 'utf8'); } catch {} }
+  if (fm) { const f = fm[2] ?? fm[3] ?? fm[4]; try { msg += ' ' + readFileSync(f, 'utf8'); } catch { /* 讀不到 -F 檔 → 略過 */ } }
   const task = await core.taskDeliveredReason(cwd, msg);
-  if (task) { process.stderr.write(task + '\n'); process.exit(2); }
-  exit0();
-});
+  if (task) return BLOCK(task);
+  return PASS;
+}

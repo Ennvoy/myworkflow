@@ -7,7 +7,7 @@
 ## 一、技術形式（零依賴，鐵則）
 
 - 純 HTML＋Tailwind CDN＋vanilla JS＋`localStorage`。**禁** framework／build step／npm 依賴／dev server——`file://` 雙擊直接開，0 摩擦。
-- 含中文寫檔一律 UTF-8（PowerShell 加 `-Encoding utf8`）。
+- 含中文寫檔一律 UTF-8。**C-59 編碼分流**：`.ps1` 腳本檔用 PowerShell `-Encoding utf8`（PS 5.1 會帶 BOM，`.ps1` 刻意要 BOM，見全域規範）；但**原型 web 資產（`.html`/`.js`/`.css`/`.json`）別用 PS 5.1 `-Encoding utf8`（BOM 會讓部分 linter/打包工具讀壞）——改用 Write 工具或 Node 寫（無 BOM）、或 PS7 的 `utf8NoBOM`。
 - 有品牌基底時：該套 `tokens.css` 的 `:root` 變數 **verbatim inline** 進共用 `<style>`／`tokens.css`，不臆造。
 
 ## 二、檔案佈局（`specs/ui-mockups/`）
@@ -31,7 +31,7 @@ specs/ui-mockups/
 
 - **全旅程覆蓋**：所有 `REQ-E2E-*` 途經的**每個畫面**都有頁；每條 journey 從入口可一路點到終點（真實 `<a>`/JS 跳轉，不是「請想像下一頁」）。
 - **互動元素真的動**：表單可填＋驗證回饋（錯誤訊息長怎樣）、modal/dropdown/tab 可開合、按鈕有 hover/active/disabled/loading 態（完整狀態機，對齊 ui-ux-pro-max 規範）。
-- **異常路徑看得到**：每頁右下角固定一個「原型狀態切換器」小工具（`app.js` 提供），一鍵切換**空狀態／載入中／錯誤／權限不足**檢視——spec 訪談問出來的異常處置（EARS Unwanted 條）在這裡變成看得見的畫面。
+- **異常路徑看得到**：每頁右下角固定一個「原型狀態切換器」小工具（`app.js` 提供），一鍵切換**空狀態／載入中／錯誤／權限不足**檢視——spec 訪談問出來的異常處置（EARS Unwanted 條）在這裡變成看得見的畫面。**C-43 條件化**：狀態切換器只在「該頁真有這些異常態」時放（純展示頁/無資料互動的靜態頁免放）；**純 API / headless（無 UI）專案**由 `flow-state project-type` 判定為非 web 類 → freeze 自動跳過互動原型與 `mockup-check`，**不必手動 mockup-waiver**（有畫面的 web 類才強制原型）。
 - 響應式至少驗 desktop＋mobile 寬度不破版。
 
 ## 五、journey 走查台（`index.html`，mockup-check 閘門機檢）

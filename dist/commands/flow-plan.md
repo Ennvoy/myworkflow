@@ -32,6 +32,7 @@ requirements 含 LLM / 雲端 / 支付 / 行動 / 前端框架關鍵字 → **We
 
 - **關鍵技術決策**：每個決策寫「選什麼／為什麼／不這樣會怎樣」（白話一段）。
 - **接縫契約釘一處（鐵則）**：跨層/跨模組的介面（API ↔ UI、模組間）用 **type/schema 定義在單一檔**（zod / pydantic / TS type / Protobuf），兩邊 import 同一份。**編譯期**就擋掉「API 回的形狀 ≠ UI 期望」。這是並行交付不發散的關鍵。
+  - **C-33 跨語言專案（Python 後端＋TS 前端等，兩端無法 import 同一實體檔）**：改用 **codegen 從單一權威來源生兩端定義**——OpenAPI/JSON Schema/Protobuf `.proto` 當唯一真相，跑產生器輸出各語言型別（如 openapi→zod/pydantic、protobuf→ts+py）。「釘一處」精神不變（真相仍在單一 schema 檔），只是兩端拿的是**生成物**而非同一檔；design.md 記明「權威 schema 檔＋各端生成路徑」，並把「schema 改了要重跑 codegen」列進接縫維護紀律。
 - **Decision Log**：含時間戳的決策紀錄（含 Step 1.5 查證結果）。
 - **資料模型 + scope 規則**：誰能讀寫誰的資料（餵 Phase 4 的 scope 驗證）。
 
@@ -65,7 +66,7 @@ requirements 含 LLM / 雲端 / 支付 / 行動 / 前端框架關鍵字 → **We
 flow-state plan-check
 ```
 
-它機檢（全數確定性、模型偽造不了）：① **REQ↔task 覆蓋**——凍結 index（`.flow/trace/req-index.json`）的每條 REQ id 都要在 tasks.md 出現（被某 task 承接），tasks.md 引用的 REQ id 都要實存於 index（防幻覺）；② **tasks.md↔manifest 逐欄一致**——task 集合／`blockedBy`／`conflictZone` 不一致就 exit 2（堵「manifest 比 tasks.md 寬＝scope/wave 閘門被靜默調鬆」）；③ requirements.md hash 對賬凍結分母（凍結後偷改在這裡就被抓）。通過才落 `.flow/trace/plan-check.json`（記 manifest hash，complete-check 對賬）＋寫 `phase="plan-done"`。它也順手印一張 **REQ↔design 對照表**給你在凍結彈窗掃一眼（design 語意矛盾機器驗不了、留人工）。
+它機檢（全數確定性、模型偽造不了）——**C-15 誠實邊界：只驗「REQ id 有沒有被承接」的字面覆蓋，不驗 task 描述的實質品質/深度**（實質由 lens 審查、紅軍、TDD、藍軍那幾層人工智慧把關；別把 plan-check 綠當成「需求真的被完整實作」的保證）：① **REQ↔task 覆蓋**——凍結 index（`.flow/trace/req-index.json`）的每條 REQ id 都要在 tasks.md 出現（被某 task 承接），tasks.md 引用的 REQ id 都要實存於 index（防幻覺）；② **tasks.md↔manifest 逐欄一致**——task 集合／`blockedBy`／`conflictZone` 不一致就 exit 2（堵「manifest 比 tasks.md 寬＝scope/wave 閘門被靜默調鬆」）；③ requirements.md hash 對賬凍結分母（凍結後偷改在這裡就被抓）。通過才落 `.flow/trace/plan-check.json`（記 manifest hash，complete-check 對賬）＋寫 `phase="plan-done"`。它也順手印一張 **REQ↔design 對照表**給你在凍結彈窗掃一眼（design 語意矛盾機器驗不了、留人工）。
 
 - **機讀版每個 task SHALL 帶 `blockedBy` + `conflictZone`**：`/flow-build` 據此算波次，且 `flow-state scope --wave` 會讀 `manifest.json` 的 `conflictZone` 擋 worker 越界。**tasks.md 與 manifest 對不上、或有 REQ 沒被任何 task 承接，plan-check 直接 exit 2**——把「計畫完整承接需求」從散文升級成硬閘門。
 - 別手改 state.json 裸寫 `phase=plan-done` 繞過——`flow-spec-gate` hook 會 exit 2 擋（與 spec-done 同構）。

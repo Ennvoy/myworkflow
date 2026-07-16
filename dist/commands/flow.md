@@ -26,13 +26,14 @@ description: Flow 一鍵總控 — 偵測起始 phase，選自駕（spec 定版�
 
 拍板後跑 `flow-state mode <auto|manual>` 寫入推進模式——它寫進 **`.flow/manifest.json`（進 git，換機 clone 後自駕不掉回 manual）** ＋ state.json（相容既有讀取），讓 `/flow-resume` 知道用哪種模式續跑。
 
-**自駕護欄前置檢查（SHALL，確定性閘門）**：寫 `mode:"auto"` 前 **SHALL 跑 `flow-state guardrail-check`**（mac/linux `node ~/.claude/skills/flow-toolkit/flow-state.mjs guardrail-check`、Windows PS 對應路徑）。它驗 `settings.json` 含 `flow-stall-monitor`（斷路器在線）——**exit 2 即護欄缺失：提醒使用者重跑 `install`、本次退回「每階段停」，不假裝自駕**（無花費上限＋無斷路器＝可能整夜燒錢，Ask-first 等級風險）。
+**自駕護欄前置檢查（SHALL，確定性閘門）**：寫 `mode:"auto"` 前 **SHALL 跑 `flow-state guardrail-check`**（mac/linux `node ~/.claude/skills/flow-toolkit/flow-state.mjs guardrail-check`；Windows PS `[Console]::OutputEncoding=[Text.Encoding]::UTF8; node "$env:USERPROFILE\.claude\skills\flow-toolkit\flow-state.mjs" guardrail-check`）。它驗 `settings.json` 含 `flow-stall-monitor`（斷路器在線）——**exit 2 即護欄缺失：提醒使用者重跑 `install`、本次退回「每階段停」，不假裝自駕**（無花費上限＋無斷路器＝可能整夜燒錢，Ask-first 等級風險）。
 
 ## Step 0.5：小功能輕量路徑（跳訪談、仍寫 SDD）
 
 使用者明說「小調整 / 不用訪談」**或** `/flow` 判斷改動範圍小（單一既有 feature 的局部調整、**無新實體 / 無新角色 / 無新外部整合**）→ 走輕量分支，貫徹 SDD 但不重：
 - **跳過**：`/flow-spec` 蘇格拉底全套訪談、互動原型對焦、lens 審查矩陣（spec-redteam/spec-consistency）。
 - **仍 SHALL 寫 SDD**：往 `specs/requirements.md` 的「當前迭代」段補一條精簡 `REQ-XXX`（EARS）+ 往 `specs/tasks.md` 補一個 `F-*` task。
+  - **design.md（C-29 澄清「沒 design.md 不寫 code」對輕量路徑的適用）**：輕量路徑是**既有 feature 的局部調整**，SHALL **沿用既有 `specs/design.md`**——不必為小改動另起完整設計；若既有 design.md 缺這塊接縫，補**一小節**（動到的接縫/契約）即可，不寫全套。真的無任何 design.md 可沿用（＝其實是新東西）就不算小改動、升回完整 `/flow-spec`。code-reviewer 會抓「實作與 design 漂移」補洞。
 - **照走 build 紀律**：紅軍（針對小範圍）→ TDD 三相 → 真實資料鏈路驗證 → per-task commit → 狀態落 `.flow/`。
 - **安全閘門（升回完整 `/flow-spec`）**：偵測到**需求級**變動——新實體 / 新角色 / auth / RBAC / payment / 個資 scope——**強制升回完整 `/flow-spec`**（自駕下這也是 T1 必停）。
 

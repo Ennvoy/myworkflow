@@ -10,6 +10,8 @@ description: Flow Phase 5 — 出貨收束。跨 feature 整合 e2e + 完整效�
 
 對 `main..HEAD` 全 diff 跑獨立 `code-reviewer` subagent（另開 context）：紅軍攻擊面（讀 `.flow/redteam/*.json`，build 落檔的機讀清單，**必有輸入**——缺檔＝build 流程缺陷，列為問題）是否真有防禦、每個 REQ 找不找得到對應實作、code smell、安全/效能潛在問題。**finding 不論是否在本次 diff 範圍 SHALL 全列**（順手修紀律）；安全 red flag 一律暫停。diff 含 auth/RBAC/migration/payment/金錢/個資 → 建議跑 codex 獨立對抗審查（裝了才問）。
 
+**C-37 自駕 T1 決策事後對賬（必查維度）**：自駕模式下，藍軍 SHALL 把 `.flow/decisions/` 逐筆掃過對賬——比對自駕期間的 C 類自決（`ev:decision`）與 T1 停等記錄，特別看**有沒有「碰到需求骨架變動／安全紅旗（①④ 語義型 T1）該停卻自決了」**的痕跡（那是 auto-gate 硬擋抓不到、只能事後審的面）。發現越權自決 → 列為 red flag 暫停。這把 `autonomous-mode.md`「①④ 由 ship 全 diff 審查＋decisions 對賬事後抓」的散文承諾落成藍軍的實際必查項（原本無對應檢查）。
+
 **散文 report SHALL 落檔**：藍軍回的完整 markdown report（品質分級、red/yellow 逐條、REQ 對賬表）原文寫入 `.flow/reports/code-review-<yyyymmddHHmm>.md`（UTF-8）——findings JSON 只留精簡欄位，敘述不落檔就讀完即逝。落檔是人讀留底，機讀 findings 仍是 complete-check 對賬來源。
 
 **red flag SHALL 落機讀檔**：把 code-reviewer 回的結構化 findings 存暫存檔 → `flow-state review-code --file <findings.json>` 落 `.flow/code-review/findings.json`（零 red flag 也落空陣列＝證明審過）。接著逐條把 red flag 走終局：修了 → `flow-state code-resolve <CR-id> --as fixed:<file:line/commit/測試名>`；使用者拍板不修 → `--as waiver:<decisionId>`（先 `flow-state decision` 留檔）。**Step 5 的 complete-check 逐條對賬，未終局的 red flag 擋 ship**——把「藍軍 red flag」從散文清單升級成完成謂詞的一部分（yellow flag 記錄不擋）。

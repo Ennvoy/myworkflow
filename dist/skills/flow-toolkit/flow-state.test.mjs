@@ -194,6 +194,16 @@ test('guardrail-check：settings 缺 stall 斷路器或 auto-gate → exit 2；�
     await writeFile(path.join(home, 'settings.json'),
       JSON.stringify({ hooks: { PreToolUse: [{ matcher: 'Bash|PowerShell', hooks: [{ command: 'node hooks/flow-auto-gate.mjs' }] }], PostToolUse: [{ matcher: 'Bash', hooks: [{ command: 'node hooks/flow-stall-monitor.mjs' }] }] } }), 'utf8');
     assert.equal(run(['guardrail-check', '--claude-home', home], root).code, 0, '兩者齊放行');
+    // C-3①：三道併入 flow-dispatch 後 settings 只掛 dispatch——dispatch 真引用 auto-gate 視同在線；沒引用仍擋（防合併後漏一道靜默失效）
+    await mkdir(path.join(home, 'hooks'), { recursive: true });
+    await writeFile(path.join(home, 'settings.json'),
+      JSON.stringify({ hooks: { PreToolUse: [{ matcher: 'Write|Edit|Bash|PowerShell', hooks: [{ command: 'node hooks/flow-dispatch.mjs' }] }], PostToolUse: [{ matcher: 'Bash', hooks: [{ command: 'node hooks/flow-stall-monitor.mjs' }] }] } }), 'utf8');
+    await writeFile(path.join(home, 'hooks', 'flow-dispatch.mjs'), "import { autoGateCheck } from './flow-auto-gate.mjs';\n", 'utf8');
+    assert.equal(run(['guardrail-check', '--claude-home', home], root).code, 0, 'dispatch 真引用 auto-gate → 視同在線');
+    await writeFile(path.join(home, 'hooks', 'flow-dispatch.mjs'), '// dispatch 漏引用 auto-gate\n', 'utf8');
+    const r2 = run(['guardrail-check', '--claude-home', home], root);
+    assert.equal(r2.code, 2, 'dispatch 沒引用 auto-gate → 仍擋');
+    assert.match(r2.err, /flow-auto-gate/);
   });
 });
 

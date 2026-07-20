@@ -104,9 +104,16 @@ function guardrailProblem(home) {
   let raw = '';
   try { raw = readFileSync(path.join(home, 'settings.json'), 'utf8'); }
   catch { return `找不到 ${path.join(home, 'settings.json')}——無法確認護欄在線。先跑 install 裝 Flow hooks 再啟用自駕。`; }
+  // C-3①：auto-gate 併入 flow-dispatch 後不直接註冊 settings.json——「settings 掛 dispatch ＋ dispatch 真引用 auto-gate」視同在線
+  // （同 statelib dispatchWiringProblems 的對賬思路）；直連舊接線向後相容。
+  let autoGateOn = /flow-auto-gate\.mjs/.test(raw);
+  if (!autoGateOn && /flow-dispatch\.mjs/.test(raw)) {
+    try { autoGateOn = readFileSync(path.join(home, 'hooks', 'flow-dispatch.mjs'), 'utf8').includes('flow-auto-gate.mjs'); }
+    catch { /* dispatch 檔讀不到＝不得視同在線 */ }
+  }
   const missing = [];
   if (!/flow-stall-monitor\.mjs/.test(raw)) missing.push('flow-stall-monitor（doom-loop 斷路器）');
-  if (!/flow-auto-gate\.mjs/.test(raw)) missing.push('flow-auto-gate（自駕三道硬擋：裝新相依/破壞性 DB/doom-loop 天花板）');
+  if (!autoGateOn) missing.push('flow-auto-gate（自駕三道硬擋：裝新相依/破壞性 DB/doom-loop 天花板；直連或經 flow-dispatch 引用皆可）');
   if (!missing.length) return null;
   return `自駕護欄缺失：settings.json 沒有 ${missing.join('、')}。無花費上限下這是唯一剎車——重跑 install 裝齊 hooks 再啟用自駕，或本次走「每階段停」。`;
 }

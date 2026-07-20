@@ -114,6 +114,38 @@ test('C-5：mode:auto 編輯 package.json/requirements.txt → exit 2；非 mani
   });
 });
 
+// ── C-5b：dep manifest 的內容級 allowlist（與命令列路徑對稱；解析不出/未全命中/非 package.json 一律 fail-safe 硬擋）──
+test('C-5b：package.json 宣告的相依全命中 allowlist → 放行且留審計；未命中/摻雜/解析不出 → 仍硬擋', async () => {
+  await withAuto(async (root) => {
+    const pj = path.join(root, 'package.json');
+    const write = (content) => ({ tool_name: 'Write', tool_input: { file_path: pj, content }, cwd: root });
+    const edit = (new_string) => ({ tool_name: 'Edit', tool_input: { file_path: pj, new_string }, cwd: root });
+    const allowed = JSON.stringify({ name: 'app', dependencies: { next: '^16.0.0' }, devDependencies: { '@types/node': '^24.0.0' } });
+
+    // 無 policy → 即使內容乾淨也硬擋（放鬆只能來自實存的使用者政策檔）
+    assert.equal(run(write(allowed)), 2, '無 policy.json → 維持硬擋');
+    await writeFile(path.join(root, '.flow', 'policy.json'), JSON.stringify({ deps: { allow: ['next', '@types/*'] } }), 'utf8');
+
+    assert.equal(run(write(allowed)), 0, 'Write：宣告的相依全命中 allowlist → 放行');
+    const decisions = await readdir(path.join(root, '.flow', 'decisions'));
+    assert.ok(decisions.some(f => f.startsWith('dep-auto-')), '放行須留 decision 審計線');
+
+    assert.equal(run(write(JSON.stringify({ name: 'app', scripts: { dev: 'next dev' } }))), 0, '純 metadata（無相依欄位）→ 放行');
+    assert.equal(run(write(JSON.stringify({ dependencies: { next: '^16.0.0', evil: '1.0.0' } }))), 2, '摻一個未核准套件 → 整個硬擋');
+    assert.equal(run(edit('"next": "^16.1.0"')), 0, 'Edit 片段：命中 allowlist → 放行');
+    assert.equal(run(edit('"evil": "^1.0.0"')), 2, 'Edit 片段：未核准 → 硬擋');
+    assert.equal(run(edit('"scripts": { "build": "next build" }')), 2, '抓不到相依條目＝看不出在改什麼 → fail-safe 硬擋');
+    assert.equal(run({ tool_name: 'Edit', tool_input: { file_path: pj }, cwd: root }), 2, '無內容可解析 → 硬擋');
+
+    // 涵蓋邊界：lockfile 與其他生態 manifest 不做內容解析，一律硬擋
+    const other = (fp, content) => ({ tool_name: 'Write', tool_input: { file_path: path.join(root, fp), content }, cwd: root });
+    assert.equal(run(other('pnpm-lock.yaml', 'next: ^16.0.0')), 2, 'lockfile 不解析、硬擋');
+    assert.equal(run(other('requirements.txt', 'next==16.0.0')), 2, '非 package.json 生態 → 硬擋');
+    // 巢狀 package.json（monorepo 子套件）走同一判定
+    assert.equal(run(other('packages/contracts/package.json', JSON.stringify({ name: 'c', dependencies: { next: '^16.0.0' } }))), 0, 'monorepo 子套件同樣適用');
+  });
+});
+
 test('C-5：mode:manual 編輯 package.json → 放行（不干擾非自駕）', async () => {
   await withAuto(async (root) => {
     assert.equal(run({ tool_name: 'Edit', tool_input: { file_path: path.join(root, 'package.json') }, cwd: root }), 0);

@@ -83,6 +83,44 @@ const BLOCK = msg => ({ block: true, message: msg });
 // C-5：相依 manifest 檔（編輯它加套件 → 之後 bare install 還原＝繞過命令列 install 偵測）。
 const isDepManifest = p => /(^|[\/\\])(package\.json|package-lock\.json|pnpm-lock\.yaml|yarn\.lock|requirements\.txt|pyproject\.toml|Pipfile|Cargo\.toml|go\.mod|Gemfile|composer\.json)$/i.test(String(p || ''));
 
+// C-5b：dep manifest 的**內容級** allowlist——與命令列路徑對稱。原本 isEdit 一律硬擋，等於使用者在 policy.json
+// 預核准過的套件，改走 Write/Edit 仍逐次停（scaffold 這種必須手寫 package.json 的場景直接卡死），與 W4-2 預核准意圖矛盾。
+// **涵蓋邊界（誠實標注）**：只解析 package.json——格式已知、能精確抽出相依 key。lockfile 與其他生態 manifest
+// （requirements.txt/Cargo.toml/go.mod…）格式雜、片段解析不可靠，維持原樣硬擋（fail-safe，寧可多停一次）。
+// 回 { pkgs }＝本次宣告的相依集合（空集＝這次編輯沒宣告任何相依）；回 null＝無法可靠判定 → 呼叫端維持硬擋。
+const VERSION_VAL_RE = /^(?:\^|~|>=?|<=?|=|\*|\d|workspace:|npm:|file:|link:|catalog:|git\+|https?:)/;
+const DEP_FIELDS = ['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies'];
+function declaredDeps(ti, target) {
+  if (!/(^|[\/\\])package\.json$/i.test(String(target || ''))) return null;
+  const content = ti.content ?? ti.new_string ?? ti.newString;
+  if (typeof content !== 'string') return null;
+  try {
+    const j = JSON.parse(content);                     // Write：完整 JSON → 精確取四個相依欄位的 key
+    if (j && typeof j === 'object' && !Array.isArray(j)) {
+      const out = [];
+      for (const f of DEP_FIELDS) if (j[f] && typeof j[f] === 'object') out.push(...Object.keys(j[f]));
+      return { pkgs: out };
+    }
+  } catch { /* 非完整 JSON（Edit 片段）→ 退回片段掃描 */ }
+  const found = [];                                    // Edit 片段：抓 "pkg": "<版本樣式>" 條目
+  for (const m of content.matchAll(/"([^"]+)"\s*:\s*"([^"]*)"/g)) if (VERSION_VAL_RE.test(m[2])) found.push(m[1]);
+  return found.length ? { pkgs: found } : null;        // 一條都抓不到＝看不出在改什麼 → 維持硬擋
+}
+
+// 讀 .flow/policy.json 的 deps.allow（讀不到＝無白名單，維持硬擋）。命令列與 manifest 兩條路徑共用。
+function policyAllow(cwd) {
+  try { const p = JSON.parse(stripBom(readFileSync(join(cwd, '.flow', 'policy.json'), 'utf8'))); return (p && p.deps && p.deps.allow) || null; }
+  catch { return null; }
+}
+// 放行時留審計線（policy 放行不是無痕跳過）。審計失敗不擋放行。
+async function recordDepAllowed(cwd, pkgs, via) {
+  try {
+    const S0 = await import('../skills/flow-toolkit/statelib.mjs');
+    const slug = pkgs.join('-').replace(/[^\w.\-]+/g, '-').slice(0, 60) || 'pkg';
+    await S0.recordDecision(cwd, `dep-auto-${slug}`, { choice: `allowlist 放行${via}：${pkgs.join(' ')}`, why: '.flow/policy.json deps.allow 命中（W4-2 預核准）', by: 'auto-gate' });
+  } catch { /* 審計非關鍵 */ }
+}
+
 // C-3①：純判定（不碰 stdin/exit）——回 { block, message }。dispatch 與 main 共用。
 export async function autoGateCheck(input) {
   const tool = input.tool_name ?? input.toolName ?? '';
@@ -107,28 +145,26 @@ export async function autoGateCheck(input) {
   // 純字串偵測抓不到的間接執行（npm run setup / node migrate.mjs）仍留 T1 散文（autonomous-mode.md 誠實標注）。
   if (isEdit) {
     const target = String(ti.file_path ?? ti.filePath ?? '');
-    if (isDepManifest(target)) return BLOCK(
+    if (!isDepManifest(target)) return PASS;                    // 非相依 manifest 的 Write/Edit → 放行
+    // C-5b：能精確解析出本次宣告的相依，且全部命中 policy allowlist（或根本沒宣告相依）→ 放行，與命令列路徑對稱。
+    const declared = declaredDeps(ti, target);
+    if (declared && !declared.pkgs.length) return PASS;         // 純 metadata 的 package.json（無任何相依欄位）
+    if (declared && depAllowed(declared.pkgs, policyAllow(cwd))) {
+      await recordDepAllowed(cwd, declared.pkgs, `編輯 ${target.split(/[\/\\]/).pop()}`);
+      return PASS;
+    }
+    return BLOCK(
       `Flow 自駕閘門：偵測到編輯相依 manifest（${target.split(/[\/\\]/).pop()}）——改相依是 T1 必停集合（會影響安裝/供應鏈）。\n` +
+      (declared && declared.pkgs.length ? `  本次宣告的相依：${declared.pkgs.join(' ')}（未全部命中 .flow/policy.json 的 deps.allow）\n` : '') +
       '  → 先 AskUserQuestion 同步彈窗問使用者（要動什麼相依、為何），拍板後再改；\n' +
+      '  常用可信套件可請使用者拍板加進 .flow/policy.json：{ "deps": { "allow": ["<pkg>", "@scope/*"] } }（支援尾 * 前綴），下次免停。\n' +
       '  或真的卡住：flow-state pending add <id> --why "<需要改的相依與原因>"，收尾一批請使用者拍板。');
-    return PASS;   // 非相依 manifest 的 Write/Edit → 放行
   }
 
   if (isNewDependency(command)) {
-    let allowed = false, pkgs = [];
-    try {
-      const pol = JSON.parse(stripBom(readFileSync(join(cwd, '.flow', 'policy.json'), 'utf8')));
-      pkgs = extractDepNames(command);
-      allowed = depAllowed(pkgs, pol && pol.deps && pol.deps.allow);
-    } catch { allowed = false; }
-    if (allowed) {
-      // 放行但留審計線：自動落一筆 decision（policy 放行不是無痕跳過）。審計失敗不擋放行。
-      try {
-        const S0 = await import('../skills/flow-toolkit/statelib.mjs');
-        const slug = pkgs.join('-').replace(/[^\w.\-]+/g, '-').slice(0, 60) || 'pkg';
-        await S0.recordDecision(cwd, `dep-auto-${slug}`, { choice: `allowlist 放行安裝：${pkgs.join(' ')}`, why: '.flow/policy.json deps.allow 命中（W4-2 預核准）', by: 'auto-gate' });
-      } catch { /* 審計非關鍵 */ }
-    } else return BLOCK(
+    const pkgs = extractDepNames(command);
+    if (depAllowed(pkgs, policyAllow(cwd))) await recordDepAllowed(cwd, pkgs, '安裝');
+    else return BLOCK(
       'Flow 自駕閘門：裝新相依是 T1 必停集合，自駕下不可靜默裝' + (pkgs.length ? `（${pkgs.join(' ')} 不在 .flow/policy.json 的 deps.allow）` : '') + '。\n' +
       '  → 先 AskUserQuestion 同步彈窗問使用者（白話講要裝什麼套件、為何需要、有無更輕方案），拍板後再裝。\n' +
       '  常用可信套件可請使用者拍板加進 .flow/policy.json：{ "deps": { "allow": ["<pkg>", "@scope/*"] } }（支援尾 * 前綴），下次免停。');

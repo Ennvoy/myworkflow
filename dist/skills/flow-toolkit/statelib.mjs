@@ -471,7 +471,8 @@ export const SPEC_REVIEW_ROUND_CAP = 3;
 
 // 行尾正規化後雜湊：docHash 語意是「文字版本」非「位元組版本」——git autocrlf/Windows 編輯器翻行尾
 // 不該讓全 lens 末輪假性 stale（換機 clone 接手是本 harness 主軸，不能跟它打架）。
-export function sha256Text(s) { return createHash('sha256').update(String(s || '').replace(/\r\n?/g, '\n'), 'utf8').digest('hex'); }
+// H2-F3：開頭 UTF-8 BOM 同屬位元組雜訊（Windows 編輯器存檔加/去 BOM 常見）——一併剝除，免得同文字假漂移逼重凍。
+export function sha256Text(s) { return createHash('sha256').update(String(s || '').replace(/^﻿/, '').replace(/\r\n?/g, '\n'), 'utf8').digest('hex'); }
 
 const specReviewDir = root => path.join(dir(root), 'spec-review');
 const specResolutionsPath = root => path.join(specReviewDir(root), 'resolutions.json');
@@ -660,8 +661,11 @@ export async function writeReqIndex(root, reqMd, head) {
 export async function readReqIndex(root) { return readJSON(reqIndexPath(root), null); }
 // 現行 requirements.md hash vs 凍結 index：回 null＝相符或無 index（向後相容）；否則錯誤訊息。
 // 消費閘門（plan-check/verify-e2e/complete-check）先跑這個——凍結後偷改文字，下一道就擋。
+// H2-F2：「index 不存在」與「index 實存但 reqHash 空/缺」分開處理——後者＝索引損毀（merge 衝突/手改），
+// 靜默放行等於漂移偵測無聲失效，SHALL 明講而非裝沒事。
 export function reqHashProblem(index, currentReqMd) {
-  if (!index || !index.reqHash) return null;                      // 無 index（舊專案/尚未凍結）→ 不擋
+  if (!index) return null;                                        // 無 index（舊專案/尚未凍結）→ 不擋
+  if (!index.reqHash) return 'req-index.json 實存但 reqHash 遺失/空——索引損毀（merge 衝突或被手改？），凍結漂移偵測已失效；重跑 flow-state spec-ready --freeze 重建快照。';
   if (index.reqHash === sha256Text(currentReqMd)) return null;
   return 'requirements.md 已與凍結快照不符（凍結後被改過）——要嘛還原，要嘛重跑 flow-state spec-ready --freeze 重新凍結（會走過收斂閘門並更新快照）。';
 }

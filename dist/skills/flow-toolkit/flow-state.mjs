@@ -4,7 +4,7 @@
 // 決策/討論一律回 Claude（彈窗）；狀態都在各專案的 .flow/。進度看這支的文字輸出；平行波看 /workflows。
 import path from 'node:path';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
-import { execSync } from 'node:child_process';
+import { execSync, execFileSync } from 'node:child_process';
 import * as S from './statelib.mjs';
 
 const argv = process.argv.slice(2);
@@ -64,8 +64,12 @@ function gitHead(r) {
 }
 
 // C-7：兩個 commit 之間變動的檔名（review 新鮮度對賬用）。git 失敗回 null（無從判定→上層 fail-open，不憑空擋 ship）。
+// H2-F1：fromRef 來自 findings.json 的 head 欄位（git-tracked、可被手改/merge 汙染）——先驗 sha 格式，
+// 再走 execFileSync argv 陣列不經 shell，雙保險堵「head 欄位塞命令」的注入面。
 function gitDiffNames(r, fromRef) {
-  try { return execSync(`git diff --name-only ${fromRef}..HEAD`, { cwd: r, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).split('\n').map(s => s.trim()).filter(Boolean); }
+  const ref = String(fromRef || '');
+  if (!/^[0-9a-f]{7,40}$/i.test(ref)) return null;   // 非 sha ＝ 無從判定（同 git 失敗）
+  try { return execFileSync('git', ['diff', '--name-only', `${ref}..HEAD`], { cwd: r, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).split('\n').map(s => s.trim()).filter(Boolean); }
   catch { return null; }
 }
 // 變動檔是否含「非測試、非文件/設定、非 Flow 自身狀態」的原始碼（review 新鮮度只在真的改了 code 時要求重審）。

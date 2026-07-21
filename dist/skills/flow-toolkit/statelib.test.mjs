@@ -824,6 +824,8 @@ test('reqHashProblem：無 index→null（相容）；hash 相符→null；不�
   assert.equal(S.reqHashProblem(idx, md), null, '相符');
   assert.match(S.reqHashProblem(idx, md + '\nREQ-002：偷改'), /凍結快照不符/);
   assert.equal(S.reqHashProblem(idx, md.replace('\n', '\r\n')), null, 'CRLF 差異不誤判');
+  assert.match(S.reqHashProblem({ reqIds: ['REQ-001'] }, md), /reqHash 遺失/, 'H2-F2：index 實存但 reqHash 缺＝損毀，明講不靜默放行');
+  assert.equal(S.reqHashProblem(idx, '﻿' + md), null, 'H2-F3：BOM 差異不誤判為凍結漂移');
 });
 
 test('parseTasksMd：抽 id/blockedBy/conflictZone；planManifestDiff 抓寬窄不一致（W2-2）', () => {
@@ -977,6 +979,8 @@ test('sha256Text：行尾正規化——CRLF/LF/CR 同文字同 hash（覆核 W1
   assert.equal(S.sha256Text('a\r\nb'), S.sha256Text('a\nb'));
   assert.equal(S.sha256Text('a\rb'), S.sha256Text('a\nb'));
   assert.notEqual(S.sha256Text('a\nb'), S.sha256Text('a\nc'), '真改字仍不同');
+  assert.equal(S.sha256Text('﻿a\nb'), S.sha256Text('a\nb'), 'H2-F3：開頭 BOM 屬位元組雜訊，同文字同 hash');
+  assert.notEqual(S.sha256Text('a﻿b'), S.sha256Text('ab'), '非開頭的 FEFF 是真內容差異，不剝');
 });
 
 test('specResolutionProblem：resolved 要求文件在 finding 落檔後有變動——指回一字未改的 REQ 擋（覆核 W1）', () => {

@@ -47,6 +47,10 @@ fi
 # 卸載殘留檔。命名慣例掃描，新增 hook 自動涵蓋、零漂移。
 if [ -d "$CLAUDE_HOME/hooks" ]; then
   while IFS= read -r f; do TARGETS+=("$f"); done < <(find "$CLAUDE_HOME/hooks" -maxdepth 1 -name 'flow-*.mjs' 2>/dev/null)
+  # H3（體檢）：install 也裝了兩支不吃 flow-* 前綴的核心檔——glob 掃不到，點名清除（否則反安裝殘留）。
+  for core in commit-gate-core.mjs precommit-install.mjs; do
+    [ -f "$CLAUDE_HOME/hooks/$core" ] && TARGETS+=("$CLAUDE_HOME/hooks/$core")
+  done
 fi
 for ag in red-team.md code-reviewer.md spec-reviewer.md evaluator.md spec-redteam.md spec-consistency.md; do
   [ -f "$CLAUDE_HOME/agents/$ag" ] && TARGETS+=("$CLAUDE_HOME/agents/$ag")

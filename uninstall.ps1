@@ -67,6 +67,11 @@ if (Test-Path $rf) { $targets.Add($rf) }
 $hooksDir = Join-Path $ClaudeHome 'hooks'
 if (Test-Path $hooksDir) {
   foreach ($f in Get-ChildItem -Path $hooksDir -Filter 'flow-*.mjs' -File) { $targets.Add($f.FullName) }
+  # H3（體檢）：install 也裝了兩支不吃 flow-* 前綴的核心檔——glob 掃不到，點名清除（否則反安裝殘留）。
+  foreach ($core in 'commit-gate-core.mjs', 'precommit-install.mjs') {
+    $p = Join-Path $hooksDir $core
+    if (Test-Path $p) { $targets.Add($p) }
+  }
 }
 foreach ($ag in 'red-team.md', 'code-reviewer.md', 'spec-reviewer.md', 'evaluator.md', 'spec-redteam.md', 'spec-consistency.md') {
   $p = Join-Path $ClaudeHome "agents\$ag"

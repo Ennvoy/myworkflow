@@ -63,6 +63,26 @@ for (const [event, entries] of Object.entries(frag.hooks)) {
   }
 }
 
+// H3（體檢）：範本演進要能「刪」——settings 裡指向本安裝（{claudeHome}/hooks/flow-*.mjs）、但已不在
+// fragment「同一事件」名單裡的註冊＝舊版殘留（hook 合併/掛點移除後遺），一併剪掉。event 綁定比對：
+// 同一支 hook 在 A 事件仍在名單、在 B 事件被移除時，只剪 B 那筆。非本安裝路徑或非 flow-*.mjs 的
+// hook（使用者自有）一概不動；entry 掏空才移除（使用者併進同 entry 的 hook 不連坐）。
+const fragByEvent = {};
+for (const [event, entries] of Object.entries(frag.hooks))
+  fragByEvent[event] = new Set(entries.flatMap((e) => (e.hooks || []).map((h) => h.command)));
+const ownFlowCmd = (c) => typeof c === 'string' && c.includes(`${fwd}/hooks/flow-`) && /\bflow-[a-z0-9-]+\.mjs\b/i.test(c);
+let pruned = 0;
+for (const event of Object.keys(settings.hooks)) {
+  if (!Array.isArray(settings.hooks[event])) continue;
+  for (const entry of settings.hooks[event]) {
+    const before = (entry.hooks || []).length;
+    entry.hooks = (entry.hooks || []).filter((h) => !(ownFlowCmd(h.command) && !(fragByEvent[event] || new Set()).has(h.command)));
+    pruned += before - entry.hooks.length;
+  }
+  settings.hooks[event] = settings.hooks[event].filter((e) => (e.hooks || []).length > 0);
+  if (settings.hooks[event].length === 0) delete settings.hooks[event];
+}
+
 // BOM-less UTF-8 (Node default) so Claude Code parses it cleanly.
 writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n', 'utf8');
-console.log(`hooks merged into settings.json: +${added} added, ${updated} matcher updated, ${skipped} already present`);
+console.log(`hooks merged into settings.json: +${added} added, ${updated} matcher updated, ${skipped} already present, ${pruned} stale pruned`);

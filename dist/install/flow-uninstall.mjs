@@ -23,10 +23,11 @@ if (!settingsPath || !claudeMdPath) {
 // 註冊指向已刪檔，每次工具呼叫 spawn 失敗 node）。改用命名慣例：任何 command 引用 flow-*.mjs（Flow 所有
 // settings.json hook 一律此命名）即 Flow 註冊。新增/移除 hook 自動涵蓋、零漂移，不必再手動同步三個卸載入口。
 const FLOW_HOOK_RE = /\bflow-[a-z0-9-]+\.mjs\b/i;
-const isFlowEntry = (entry) =>
-  (entry.hooks || []).some((h) => typeof h.command === 'string' && FLOW_HOOK_RE.test(h.command));
+const isFlowHook = (h) => typeof h.command === 'string' && FLOW_HOOK_RE.test(h.command);
 
-// --- 1) settings.json: remove Flow hook entries (mirror of merge-settings.mjs) ---
+// --- 1) settings.json: remove Flow hook registrations (mirror of merge-settings.mjs) ---
+// H3（體檢）：只摘 Flow 自己的 hook「註冊」而非整條 entry——使用者若把自己的 hook 併進同一 entry，
+// 原 .some() 判定會連坐刪掉；改逐 hook 過濾、entry 掏空才移除。
 if (existsSync(settingsPath)) {
   const txt = readNoBom(settingsPath).trim();
   if (txt) {
@@ -41,15 +42,18 @@ if (existsSync(settingsPath)) {
     if (settings.hooks && typeof settings.hooks === 'object') {
       for (const event of Object.keys(settings.hooks)) {
         if (!Array.isArray(settings.hooks[event])) continue;
-        const before = settings.hooks[event].length;
-        settings.hooks[event] = settings.hooks[event].filter((e) => !isFlowEntry(e));
-        removed += before - settings.hooks[event].length;
+        for (const entry of settings.hooks[event]) {
+          const before = (entry.hooks || []).length;
+          entry.hooks = (entry.hooks || []).filter((h) => !isFlowHook(h));
+          removed += before - entry.hooks.length;
+        }
+        settings.hooks[event] = settings.hooks[event].filter((e) => (e.hooks || []).length > 0);
         if (settings.hooks[event].length === 0) delete settings.hooks[event]; // tidy empty events
       }
       if (Object.keys(settings.hooks).length === 0) delete settings.hooks;
     }
     writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n', 'utf8');
-    console.log(`settings.json: removed ${removed} Flow hook ${removed === 1 ? 'entry' : 'entries'}`);
+    console.log(`settings.json: removed ${removed} Flow hook ${removed === 1 ? 'registration' : 'registrations'}`);
   }
 }
 

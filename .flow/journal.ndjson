@@ -1,0 +1,18 @@
+{"t":"2026-07-21T06:47:14.006Z","ev":"verify.attempt","id":"node dist/skills/flow-toolkit/statelib.test.mjs 2>&1 | grep \"^ℹ (tests|pass|fail)\"","sig":"ok","exit":0}
+{"t":"2026-07-21T06:49:10.325Z","ev":"verify.attempt","id":"node dist/hooks/flow-spec-gate.test.mjs 2>&1 | grep \"^ℹ (tests|pass|fail)|✖\" | head","sig":"ok","exit":0}
+{"t":"2026-07-21T07:45:46.787Z","ev":"verify.attempt","id":"node dist/skills/flow-toolkit/statelib.test.mjs dist/skills/flow-toolkit/flow-state.test.mjs 2>&1 | tail","sig":"ok","exit":0}
+{"t":"2026-07-21T07:47:25.669Z","ev":"verify.attempt","id":"node dist/hooks/flow-commit-gate.test.mjs 2>&1 | grep \"^ℹ (tests|pass|fail)\"","sig":"ok","exit":0}
+{"t":"2026-07-21T07:50:17.789Z","ev":"verify.attempt","id":"node dist/skills/flow-toolkit/flow-state.test.mjs 2>&1 | grep \"^ℹ (tests|pass|fail)|^✖\"","sig":"ok","exit":0}
+{"t":"2026-07-21T07:53:30.529Z","ev":"verify.attempt","id":"node dist/install/*.test.mjs 2>&1 | grep \"^ℹ (tests|pass|fail)|✖|not ok\" | head","sig":"ok","exit":0}
+{"t":"2026-07-21T07:56:58.677Z","ev":"verify.attempt","id":"node dist/hooks/flow-dispatch.test.mjs dist/hooks/flow-size-check.test.mjs dist/skills/flow-toolkit/statelib.test.mjs 2>&1 | grep \"^ℹ (tests|pass|fail)|^✖\" | head","sig":"ok","exit":0}
+{"t":"2026-07-21T07:58:04.515Z","ev":"verify.attempt","id":"node dist/hooks/flow-verify-gate.test.mjs 2>&1 | grep \"^ℹ (tests|pass|fail)\"","sig":"ok","exit":0}
+{"t":"2026-07-21T08:00:40.418Z","ev":"verify.attempt","id":"eof","sig":"ok","exit":0}
+{"t":"2026-07-21T08:01:11.395Z","ev":"verify.attempt","id":"node dist/skills/flow-toolkit/flow-state.test.mjs dist/skills/flow-toolkit/statelib.test.mjs 2>&1 | grep \"^ℹ (tests|pass|fail)|^✖\"","sig":"ok","exit":0}
+{"t":"2026-07-21T08:04:02.620Z","ev":"verify.attempt","id":"eof","sig":"ok","exit":0}
+{"t":"2026-07-21T08:05:53.363Z","ev":"verify.attempt","id":"node dist/skills/flow-toolkit/flow-state.test.mjs dist/skills/flow-toolkit/statelib.test.mjs 2>&1 | grep \"^ℹ (tests|pass|fail)|^✖ \" | tail","sig":"ok","exit":0}
+{"t":"2026-07-21T08:07:24.876Z","ev":"verify.attempt","id":"ls dist/hooks/flow-session-start.test.mjs 2>/dev/null || echo \"no session-start test file\"","sig":"ok","exit":0}
+{"t":"2026-07-21T08:09:08.294Z","ev":"verify.attempt","id":"node dist/hooks/*.test.mjs dist/skills/flow-toolkit/*.test.mjs dist/install/*.test.mjs 2>&1 | tail","sig":"ok","exit":0}
+{"t":"2026-07-21T09:36:13.376Z","ev":"verify.attempt","id":"/c/users/ennvoy.lin/desktop/workflow/dist/skills/flow-toolkit|node statelib.test.mjs flow-state.test.mjs 2>&1 | tail","sig":"ok","exit":0}
+{"t":"2026-07-21T09:37:05.529Z","ev":"verify.attempt","id":"node dist/skills/flow-toolkit/statelib.test.mjs dist/skills/flow-toolkit/flow-state.test.mjs 2>&1 | tail","sig":"ok","exit":0}
+{"t":"2026-07-21T09:37:46.830Z","ev":"verify.attempt","id":"c:/users/ennvoy.lin/desktop/workflow/dist/skills/flow-toolkit|node flow-state.test.mjs statelib.test.mjs 2>&1 | tail","sig":"ok","exit":0}
+{"t":"2026-07-21T09:40:09.994Z","ev":"verify.attempt","id":"node dist/skills/flow-toolkit/statelib.test.mjs dist/skills/flow-toolkit/flow-state.test.mjs 2>&1 | tail","sig":"ok","exit":0}

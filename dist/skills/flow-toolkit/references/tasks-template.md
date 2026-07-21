@@ -7,7 +7,7 @@
 ```markdown
 # Tasks — <專案名>
 
-> 進度雙軌：本檔人讀（[ ]/[x]）+ TaskCreate 機讀同步。**不跨段移動**：task 從 pending 到 done 就在原段把 [ ] 改 [x]。
+> 進度雙軌：本檔人讀（[ ]/[x]）+ `.flow/manifest.json` 機讀同步（完成走 `flow-state done`，一步翻 [x]＋寫 ledger）。**不跨段移動**：task 從 pending 到 done 就在原段把 [ ] 改 [x]。
 
 ## Prelude（P-*，跨 feature 基礎建設，0–3 個）
 判準：「砍掉它任一 feature 都做不下去」才放，能 inline 進第一個用到的 feature 就 inline。

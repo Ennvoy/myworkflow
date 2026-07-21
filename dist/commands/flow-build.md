@@ -49,10 +49,9 @@ Workflow 回來後，orchestrator 依拓樸序**一個一個**收尾每個 featu
 - **驗證與 commit 解耦**：驗證 PASS 才進 commit；某 feature FAIL/BLOCKED **不擋其他已 PASS feature 的 commit**。
 - **commit 前清驗證垃圾**（雙軌流程、白名單、`flow-commit-gate` 擋法）：見 `references/verification-playbook.md` §七。
 - 完成一項（順序鐵則：**先標、再 commit**，閘門會強制）：
-  1. TaskUpdate completed（`flow-verify-gate` hook 會在 `verify` 空/`none` 時擋下）。
-  2. **跑 `flow-state done <id>`**（`<id>` 用 canonical task id）。**`verify`/`tdd` 空/`none` → exit 2 拒標**；交付成功即歸零全域 verify/tdd。展開見 `build-playbook.md` §六。
-  3. **per-task commit+push 走 `git-tools` skill**，**commit scope SHALL 帶 canonical task id**（例 `feat(F-1186-W0-5): ...`）：smart commit 後即 `git push`（失敗只警告、不中斷 build）。
-  4. **成功後補 `flow-state done <id> --commit <sha>`**（冪等記 sha 進 ledger）。
+  1. **跑 `flow-state done <id>`**（`<id>` 用 canonical task id）：一步完成翻 tasks.md `[x]`＋ledger→delivered。**`verify`/`tdd` 空/`none` → exit 2 拒標**；交付成功即歸零全域 verify/tdd。展開見 `build-playbook.md` §六。
+  2. **per-task commit+push 走 `git-tools` skill**，**commit scope SHALL 帶 canonical task id**（例 `feat(F-1186-W0-5): ...`）：smart commit 後即 `git push`（失敗只警告、不中斷 build）。
+  3. **成功後補 `flow-state done <id> --commit <sha>`**（冪等記 sha 進 ledger）。
 - **`flow-commit-gate` hook** 擋 commit scope 點名但還沒 `done` 的 task → exit 2，先跑 `flow-state done` 再 commit（**別手改 ledger/tasks.md 繞過**）；commit 成功前不領下個 task，失敗 → 整個 build 暫停告知。
 
 ## Step 6：推進下一波
@@ -71,6 +70,6 @@ Workflow 回來後，orchestrator 依拓樸序**一個一個**收尾每個 featu
 - [ ] 執行策略沒在散文裡自決：偏離預設平行有先彈窗拍板＋寫進 manifest/journal
 - [ ] 每 feature 紅軍先行、攻擊面已落檔 `.flow/redteam/<id>.json`、attackCoverage 對賬過、worker 走 TDD + 真實資料鏈路（無 mock 假綠）
 - [ ] 每 feature 便宜 sensor 先跑/fail-fast（蒸餾後回主迴圈，不灌原始輸出）、貴迴圈有界；效能只跑便宜 smoke
-- [ ] 每個完成的 task：清垃圾 → TaskUpdate completed → **`flow-state done <id>`** → per-task commit+push（scope 帶 canonical id）；被 `flow-commit-gate` 擋下＝跳過了 `flow-state done`
+- [ ] 每個完成的 task：清垃圾 → **`flow-state done <id>`** → per-task commit+push（scope 帶 canonical id）；被 `flow-commit-gate` 擋下＝跳過了 `flow-state done`
 - [ ] BLOCKED / 安全 red flag 有暫停回報，沒靜默略過
 - [ ] 跨 feature 項已記進 X-*/Backlog 留給 ship

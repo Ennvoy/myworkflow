@@ -62,7 +62,7 @@ requirements 含 LLM / 雲端 / 支付 / 行動 / 前端框架關鍵字 → **We
 
 ## Step 5：計畫對賬閘門 + 凍結
 
-先把 tasks 寫入機讀版（TaskCreate / `.flow/manifest.json`）與人讀版 `tasks.md` 雙軌同步，然後 SHALL 跑計畫出口對賬（**唯一正門**，取代裸寫 `phase=plan-done`）：
+先把 tasks 寫入機讀版 `.flow/manifest.json` 與人讀版 `tasks.md` 雙軌同步，然後 SHALL 跑計畫出口對賬（**唯一正門**，取代裸寫 `phase=plan-done`）：
 
 ```
 flow-state plan-check
@@ -81,4 +81,4 @@ flow-state plan-check
 - [ ] tasks 有 P-*/F-*/X-* 分組 + 每個 task 標了 blockedBy / conflictZone
 - [ ] 已做並行度自檢（Step 4.5）：中央檔 conflictZone 重疊評估過可否拆、型別型 blockedBy 評估過可否靠提早釘契約消解（過度拆有護欄）
 - [ ] REQ-PERF-* 有對應到能驗的 task
-- [ ] **`flow-state plan-check` 綠**（REQ↔task 全覆蓋＋tasks.md↔manifest 一致）、state.json + TaskCreate 已更新
+- [ ] **`flow-state plan-check` 綠**（REQ↔task 全覆蓋＋tasks.md↔manifest 一致）、state.json 已更新

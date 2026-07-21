@@ -26,7 +26,7 @@ async function withRoot(fn) {
   try { await fn(root); } finally { await rm(root, { recursive: true, force: true }); }
 }
 
-test('done：verify 空/none → exit 2（done 閘門，堵繞過 TaskUpdate 的權威路徑旁路）', async () => {
+test('done：verify 空/none → exit 2（done 閘門＝標完成的單點執法者）', async () => {
   await withRoot(async (root) => {
     await S.init(root, { project: 'p', tasks: [{ id: 'F-1' }] });
     await S.writeStateJson(root, { verify: 'none', tdd: 'green' });

@@ -11,7 +11,7 @@
 task 無意義的空轉關卡」，不是防護本身**。
 
 **不可讓步（任何方案都不得動）**：
-- `flow-verify-gate`（verify 空擋完成）、`flow-commit-gate`（secrets/垃圾/未 done）、TDD 紅→綠、真實資料鏈路禁 mock——這些防的失敗模式與 task 大小無關。
+- `flow-state done` 自帶閘門（verify 空擋完成）、`flow-commit-gate`（secrets/垃圾/未 done）、TDD 紅→綠、真實資料鏈路禁 mock——這些防的失敗模式與 task 大小無關。
 - 快速通道的**啟用判定 SHALL 是機檢**（CLI 算給你看），不是模型散文自稱「這是小功能」。
 - 每次啟用 SHALL 留 decision 審計（`fast-lane` decision，記判定依據快照），事後可稽核。
 
@@ -42,7 +42,7 @@ task 無意義的空轉關卡」，不是防護本身**。
 | verify-perf | 逐條 | 無 REQ-PERF 時本來就不跑；有則保留 | 不動 |
 | code-review（藍軍） | 必跑 | **降級**：不 spawn 獨立 subagent，主迴圈對 diff 自查＋落 findings（空陣列也落）；red flag 終局規則不變 | 單 task 小 diff 的獨立 context 邊際價值低；審計軌跡保留 |
 | complete-check | 必跑 | **保留**（終局對賬永不跳） | 唯一收斂點 |
-| done / commit-gate / verify-gate | 必跑 | **保留** | 與大小無關 |
+| done（自帶閘門）/ commit-gate | 必跑 | **保留** | 與大小無關 |
 
 估算：CLI 呼叫 19+ → 約 8（fast-lane --check、spec-ready --freeze、scope、journey-check、verify-e2e、
 done、complete-check、decision fast-lane）；彈窗 ~10 → 2-3（起手確認走快速通道、凍結確認、出貨確認）。

@@ -41,7 +41,7 @@ Flow 的狀態**全在磁碟**，不在對話 context（harness 鐵則：狀態�
     └── perf-<id>.json     # 逐 REQ-PERF 驗證記錄，verify-perf 對賬達標
 ```
 
-- 讀寫閘門對應：`flow-verify-gate`／`flow-state done` 讀 `state.json`+`ledger/`；`flow-state spec-ready --freeze` 讀 `spec-review/`＋落 `trace/req-index.json`；`flow-state wave --compute` 落 `manifest.json`+`trace/wave-plan.json`；`flow-state scope --wave`／`redteam --wave` 整合前分別核對 `manifest.json` 與 `redteam/`；`flow-state plan-check` 落 `trace/plan-check.json`；`flow-state complete-check` 一次核對 `trace/req-index.json`＋`verify/`＋`trace/plan-check.json`＋`code-review/findings.json`。
+- 讀寫閘門對應：`flow-state done` 讀 `state.json`+`ledger/`；`flow-state spec-ready --freeze` 讀 `spec-review/`＋落 `trace/req-index.json`；`flow-state wave --compute` 落 `manifest.json`+`trace/wave-plan.json`；`flow-state scope --wave`／`redteam --wave` 整合前分別核對 `manifest.json` 與 `redteam/`；`flow-state plan-check` 落 `trace/plan-check.json`；`flow-state complete-check` 一次核對 `trace/req-index.json`＋`verify/`＋`trace/plan-check.json`＋`code-review/findings.json`。
 - 瞬時檔（`state.json`／`*.mode`／`monitor.port`／`*.log`）由 `.flow/.gitignore` 排除；其餘（`manifest.json`／`ledger/`／`redteam/`／`verify/`／`decisions/`／`spec-review/`／`trace/`／`code-review/`／`journal.ndjson`／`lessons.ndjson`）是耐久證據，照常 track、換機 clone 即可 `reconstruct`。
 - `phase` 偵測讓 `/flow`、`/flow-resume` 從對的地方接續，不重做已 delivered 的。
 
@@ -75,7 +75,7 @@ n² attention：可用上限 ~170k、~147k 退化、>60% 變笨。ETH 實證巨�
 Anthropic Managed Agents「brain/hands/session 解耦」+ append-only event log + wake/resume。Flow：狀態進 specs/+.flow/+git，worker 是同 repo 的 cattle（只寫各自不重疊的檔），殺不死、純讀檔 resume。
 
 ### C. 確定性閘門（防假裝過關）
-Stripe「確定性節點夾住 agentic 迴圈」：git/commit/state 寫入/verify runner 是確定性 hook/script，不靠模型判斷。`flow-verify-gate` hook 在 verify 空/none 時 exit 2 擋下 TaskUpdate completed——模型沒真跑就過不了關。同理 `flow-state spec-ready`（凍結前驗 `### 開放問題` 清零）+ `flow-spec-gate` hook（擋裸寫 `phase=spec-done` 繞過）把「需求收斂才准凍結」釘成 exit 2——凍結只能走正門、自駕下模型竄改不了狀態檔。
+Stripe「確定性節點夾住 agentic 迴圈」：git/commit/state 寫入/verify runner 是確定性 hook/script，不靠模型判斷。`flow-state done` 自帶閘門在 verify 空/none 時 exit 2 拒標 delivered——模型沒真跑就過不了關。同理 `flow-state spec-ready`（凍結前驗 `### 開放問題` 清零）+ `flow-spec-gate` hook（擋裸寫 `phase=spec-done` 繞過）把「需求收斂才准凍結」釘成 exit 2——凍結只能走正門、自駕下模型竄改不了狀態檔。
 
 ## 5. 為什麼 hook 用 Node 不用 PowerShell
 

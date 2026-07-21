@@ -244,7 +244,7 @@ export function taskRunnerRed(journal, taskId) {
   for (const [bucket, sig] of byBucket) if (sig !== 'ok') return bucket;
   return null;
 }
-// verify 欄位格式（done 閘門＋flow-verify-gate 共用單一事實來源）：SHALL 是 ok:<ref>（冒號後可空白，帶真證據 ref）。
+// verify 欄位格式（done 閘門的單一事實來源）：SHALL 是 ok:<ref>（冒號後可空白，帶真證據 ref）。
 // 擋裸 'ok'/'passed'/'done' 無 ref 的自報字串；容忍 'ok: <ref>' 自然寫法（原 /^ok:\S/ 誤殺冒號後空格）。
 export function isValidVerify(v) { return /^ok:\s*\S/i.test(String(v ?? '').trim()); }
 
@@ -290,7 +290,7 @@ export async function recordDecision(root, id, decision) {
 }
 export async function readDecision(root, id) { return readJSON(path.join(decisionsDir(root), safeId(id) + '.json'), {}); }
 
-// state.json 相容 bridge：當前 task 衍生指標（既有 flow-verify-gate / flow-session-start hook 只讀這個）
+// state.json 相容 bridge：當前 task 衍生指標（既有 flow-session-start hook 只讀這個）
 export async function writeStateJson(root, state) { await writeJSON(statePath(root), state); }
 export async function readStateJson(root) { return readJSON(statePath(root), {}); }
 
@@ -1076,7 +1076,7 @@ export function codeReviewAudit(review, resolutions, decisionExists) {
 }
 
 // ── tasks.md 同步：把「task 完成」收成一個可被 hook/CLI 共用的原子操作 ──
-// 修根因：原本「翻 tasks.md [x]」「寫 ledger」「TaskUpdate」是三條各自會被漏掉的散文步驟。
+// 修根因：原本「翻 tasks.md [x]」與「寫 ledger」是各自會被漏掉的散文步驟。
 // 這裡把「翻 [x] + ledger→delivered」綁成一次呼叫，flow-state done 與 commit gate 都走它。
 const tasksMdPath = root => path.join(root, 'specs', 'tasks.md');
 const LINE_RE = /^(\s*[-*]\s*\[)([ xX])(\]\s*)(.+)$/;          // 抓 checkbox 行（保留前後綴以原樣回寫）
@@ -1121,7 +1121,7 @@ export async function resolveId(root, raw) {
 }
 const isNoneVal = v => { const s = String(v ?? '').trim(); return s === '' || /^none$/i.test(s); };
 // 原子完成：翻 tasks.md [x] + ledger transition→delivered（冪等）。供 flow-state done / PostToolUse 共用。
-// done 閘門（與 flow-verify-gate 同語意，堵「不走 TaskUpdate 直接 done」的權威路徑旁路）：
+// done 閘門（「task 標完成須有真驗證綠燈」的單點執法者）：
 //   首次 delivered SHALL 有真驗證綠燈（state.json verify/tdd 非空非 none，由 /flow-verify 真跑綠後寫入）；
 //   交付成功即把全域 verify/tdd 歸零成 none——下一個 task 必須有自己的新綠燈，堵「借上一個 task 的 stale 綠燈」。
 //   已 delivered 的冪等重呼（如補 --commit）不過閘門。

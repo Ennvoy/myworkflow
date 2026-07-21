@@ -6,12 +6,13 @@
 
 ## Hook 閘門（事件自動擋，exit 2）
 
-- ① **flow-verify-gate**（PreToolUse: TaskUpdate）——`verify` 空/`none` 擋 task 標完成。
-- ② **flow-commit-gate**（PreToolUse: Bash/PowerShell 的 git commit）三道：staged 含 **secrets**（`.env`/私鑰類）exit 2＝先移出 staging；staged 含驗證垃圾（含 Playwright MCP 的 `.playwright-mcp/` 殘留）exit 2＝先清再 commit（`--amend` 同樣過這兩道）；commit 點名某 task 但還沒 `flow-state done`（tasks.md `[x]`＋ledger delivered）exit 2＝先標再 commit。另擋 `--no-verify`/`-n`/`-c core.hooksPath`（繞過 git pre-commit 兜底）。
-- ③ **flow-spec-gate**（PreToolUse: Write/Edit/Bash/PowerShell）——擋「裸寫 `.flow/state.json` 把 phase 轉 `spec-done`/`plan-done`」與「裸寫/刪除 `.flow/{spec-review,trace,verify,code-review}/` ledger」（docHash/reqHash/manifestHash/終局只能由 CLI 自算）；階段轉移與對賬落檔只能走 `flow-state` 正門。Bash/PS 分讀寫：唯讀/git add 放行。
-- ④ **flow-auto-gate**（PreToolUse: Bash/PowerShell，僅 mode=auto）——三道硬擋：裝新相依（須彈窗）、破壞性 DB（DROP/TRUNCATE/無 WHERE 的 DELETE/UPDATE）、doom-loop 硬天花板（同 runner 連敗 ≥ 軟閾值+3 擋重跑）。**dependency 預核准**：`.flow/policy.json` `{"deps":{"allow":["<pkg>","@scope/*"]}}`（進 git、使用者拍板維護）內的套件放行＋自動落 `dep-auto-*` decision 審計；清單外照樣硬擋。
-- ⑤ **flow-stop-gate**（Stop，僅 mode=auto）——tasks.md 全 `[x]` 卻沒有「當前 HEAD 的 complete-check 通過記錄」（`.flow/trace/complete-check.json`）→ 擋收工；還有 `[ ]`（mid-run/T1 停等）不干擾。逃生口：跑 complete-check 或 `mode manual`。
-- ⑥ **flow-precompact**（PreCompact）——context 壓縮前自動對每個 building 中的 task 落 `pre-compact` checkpoint，防 auto-compact 丟「做到第幾步」。
+- ① **flow-commit-gate**（PreToolUse: Bash/PowerShell 的 git commit）三道：staged 含 **secrets**（`.env`/私鑰類）exit 2＝先移出 staging；staged 含驗證垃圾（含 Playwright MCP 的 `.playwright-mcp/` 殘留）exit 2＝先清再 commit（`--amend` 同樣過這兩道）；commit 點名某 task 但還沒 `flow-state done`（tasks.md `[x]`＋ledger delivered）exit 2＝先標再 commit。另擋 `--no-verify`/`-n`/`-c core.hooksPath`（繞過 git pre-commit 兜底）。
+- ② **flow-spec-gate**（PreToolUse: Write/Edit/Bash/PowerShell）——擋「裸寫 `.flow/state.json` 把 phase 轉 `spec-done`/`plan-done`」與「裸寫/刪除 `.flow/{spec-review,trace,verify,code-review}/` ledger」（docHash/reqHash/manifestHash/終局只能由 CLI 自算）；階段轉移與對賬落檔只能走 `flow-state` 正門。Bash/PS 分讀寫：唯讀/git add 放行。
+- ③ **flow-auto-gate**（PreToolUse: Bash/PowerShell，僅 mode=auto）——三道硬擋：裝新相依（須彈窗）、破壞性 DB（DROP/TRUNCATE/無 WHERE 的 DELETE/UPDATE）、doom-loop 硬天花板（同 runner 連敗 ≥ 軟閾值+3 擋重跑）。**dependency 預核准**：`.flow/policy.json` `{"deps":{"allow":["<pkg>","@scope/*"]}}`（進 git、使用者拍板維護）內的套件放行＋自動落 `dep-auto-*` decision 審計；清單外照樣硬擋。
+- ④ **flow-stop-gate**（Stop，僅 mode=auto）——tasks.md 全 `[x]` 卻沒有「當前 HEAD 的 complete-check 通過記錄」（`.flow/trace/complete-check.json`）→ 擋收工；還有 `[ ]`（mid-run/T1 停等）不干擾。逃生口：跑 complete-check 或 `mode manual`。
+- ⑤ **flow-precompact**（PreCompact）——context 壓縮前自動對每個 building 中的 task 落 `pre-compact` checkpoint，防 auto-compact 丟「做到第幾步」。
+
+> 「task 標完成」的驗證把關由 **`flow-state done` 自帶閘門**單點負責（`verify`/`tdd` 空/`none` exit 2、綠燈歸零防白嫖）——內建 TaskCreate/TaskUpdate 清單已自流程拔除（session-scoped 不落檔、與「狀態進檔案」原則相悖，且其前哨 hook 與 done 閘門同語意重複）。
 
 ## Script 閘門（SHALL 跑，exit 2）
 

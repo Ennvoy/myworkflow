@@ -313,7 +313,7 @@ test('markTaskDone：無 tasks.md 不炸、仍寫 ledger', async () => {
   });
 });
 
-// ── done 閘門（堵「不走 TaskUpdate 直接 flow-state done」的權威路徑旁路 + stale 綠燈白嫖）──
+// ── done 閘門（標完成的單點執法者：verify/tdd 須綠 + 堵 stale 綠燈白嫖）──
 
 test('markTaskDone：done 閘門——verify 空/none → 拒標 delivered、tasks.md 不翻', async () => {
   await withRoot(async (root) => {

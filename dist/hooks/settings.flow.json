@@ -3,15 +3,6 @@
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "TaskUpdate",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"{{CLAUDE_HOME}}/hooks/flow-verify-gate.mjs\""
-          }
-        ]
-      },
-      {
         "_comment": "C-3①② 安檢門四合一＋提示器併車：commit-gate/auto-gate/spec-gate 三道閘門與 design-base-hint 提示器合併成 flow-dispatch 一次 node 冷啟跑完（省每工具呼叫多 spawn 的冷啟稅）。各道邏輯仍在原檔、可單跑；dispatch 接線完整性由 session-start 對賬。",
         "matcher": "Write|Edit|Bash|PowerShell",
         "hooks": [

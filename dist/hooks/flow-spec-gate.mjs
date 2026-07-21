@@ -6,7 +6,7 @@
 //    （docHash/reqHash/manifestHash 由 CLI 自算，裸改＝偽造或蒸發對賬證據）。Bash/PS 分讀寫：唯讀/staging 放行。
 // ③ C-10 verify/tdd 裸寫：擋「直接寫 state.json 的 verify/tdd 洗假綠燈」——正門＝flow-state run（真跑）/ verify-ok（手動留審計）。
 // C-4：字串偵測前先解 \uXXXX 跳脫（防轉義繞過）；命令列正門偵測錨定「flow-state 為執行主體」（排除尾綴註解冒充）。
-// 自駕下模型不能靠竄改檔案跳過收斂/對賬檢查（與 done-gate + flow-verify-gate 同 belt-and-suspenders）；
+// 自駕下模型不能靠竄改檔案跳過收斂/對賬檢查（與 done-gate 同 belt-and-suspenders）；
 // 非此一律 fail-open exit 0，絕不誤擋非 Flow 專案。
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';

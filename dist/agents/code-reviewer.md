@@ -58,6 +58,11 @@ effort: xhigh
 - 嚴重達 red flag 標準（安全 / 資料正確性）→ 即使不在本次 diff 仍列為 red flag
 - 例外：`legacy/`/`archive/`/`@deprecated` 區僅提一句，不必詳列
 
+### 10. UI 忠實度（web 類、`specs/ui-mockups/` 存在時）
+- 讀 `design.md`「UI 對焦結論」＋各 task 的 `mockupPages`（tasks.md/manifest），抽 2–3 個代表頁把實作 markup 與對應 `specs/ui-mockups/pages/*.html` 對照
+- **版面結構/元件層級明顯偏離定版原型、或另創色票字體（不用定版 `tokens.css` 變數）且查無需求級變更 decision → red flag**（mockup 是使用者拍板的 UI 契約，偏離＝未經同意改需求）
+- 機讀底線由 `flow-state ui-fidelity` 守（快照/tokens 對賬）；你補的是機器判不了的「結構像不像」
+
 ## 輸出格式
 
 ```markdown

@@ -1340,6 +1340,23 @@ export function mockupPageCoverage(parsedTasks, pageFiles) {
   return { phantom, uncovered };
 }
 
+// ── UI 忠實度機檢核心（ui-fidelity 閘門用，純函式）──
+// 誠實邊界：機器只驗兩件確定性的事——「定版快照未漂移」（mockupHashProblem）＋「定版 tokens 真的被實作沿用」
+// （下面的 var 抽取與引用對賬）。「版面長得像不像原型」機器判不了，由 Evaluator（/flow-verify UI 忠實度維度）
+// 與藍軍（/flow-ship 維度 10）對照原型頁人工判——但有這道確定性底線，「tokens 整組被丟棄另起爐灶」再也混不過去。
+export function extractCssVars(cssText) {
+  return [...new Set([...String(cssText || '').matchAll(/--[A-Za-z0-9_-]+(?=\s*:)/g)].map(m => m[0]))];
+}
+// token 引用對賬：usedVars＝實作原始碼中出現過的 var 名集合（CLI 掃檔收集，specs/ 不算實作）。
+export function tokenUsageAudit(tokenVars, usedVars) {
+  const used = new Set(usedVars || []);
+  const hit = (tokenVars || []).filter(v => used.has(v));
+  return { total: (tokenVars || []).length, hit, miss: (tokenVars || []).filter(v => !used.has(v)) };
+}
+const uiFidelityPath = root => path.join(traceDir(root), 'ui-fidelity.json');
+export async function writeUiFidelity(root, obj) { await writeJSON(uiFidelityPath(root), { ...obj, at: nowISO() }); }
+export async function readUiFidelity(root) { return readJSON(uiFidelityPath(root), null); }
+
 // ── design.md「UI 對焦結論」機檢（plan-check 用，純函式）──
 // flow-plan Step 2.5 的 SHALL 原本是純散文（模型自覺、閘門不驗）。這裡驗兩件確定性的：
 // ① 該節標題存在；② 每個原型頁檔名在 design.md 被提及（畫面清單真的承接了全部畫面）。

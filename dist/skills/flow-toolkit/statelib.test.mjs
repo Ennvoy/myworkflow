@@ -815,6 +815,15 @@ test('uiFocusAudit：缺節/漏頁點名；節在＋逐頁提及 → 空', () =>
   assert.match(S.uiFocusAudit(md, ['pages/login.html', 'pages/items.html']).join('\n'), /items\.html/);
 });
 
+test('extractCssVars/tokenUsageAudit：抽 :root 定義變數（var() 引用不算定義）、引用對賬', () => {
+  const vars = S.extractCssVars(':root {\n  --color-primary: #333;\n  --font-body: sans-serif;\n}\n.x { color: var(--color-primary) }');
+  assert.deepEqual(vars, ['--color-primary', '--font-body']);
+  const a = S.tokenUsageAudit(vars, ['--color-primary']);
+  assert.deepEqual(a.hit, ['--color-primary']);
+  assert.deepEqual(a.miss, ['--font-body']);
+  assert.equal(a.total, 2);
+});
+
 test('buildWavePlan：uiCtx 附進 wave-plan.ui、per-task mockupPages 自 manifest 帶出（UI 逐字投餵）', () => {
   const manifest = { tasks: [{ id: 'F-1', blockedBy: [], conflictZone: ['api/'], mockupPages: ['pages/login.html'] }] };
   const tasksMd = '- [ ] F-1 登入（對應 REQ-E2E-001）\n      blockedBy: — | conflictZone: api/ | mockupPages: pages/login.html\n';

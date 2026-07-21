@@ -501,6 +501,59 @@ test('plan-check：mockup 鏈路對賬——UI 對焦結論缺/頁未承接 → 
   });
 });
 
+test('ui-fidelity：無原型 → 不適用 exit 0；token 零引用 → exit 2（waiver 可降級）；沿用 token → 過落 trace；偷改原型 → 擋', async () => {
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [] });
+    const na = run(['ui-fidelity'], root);
+    assert.equal(na.code, 0, 'ui-fidelity 無原型不適用');
+    assert.match(na.out, /不適用/);
+  });
+  await withRoot(async (root) => {
+    await frozenWebRoot(root);
+    // 還沒寫實作 → 定版 tokens 零引用 → 擋（UI 基準被整組丟棄）
+    const r0 = run(['ui-fidelity'], root);
+    assert.equal(r0.code, 2, '零引用擋');
+    assert.match(r0.err, /零引用/);
+    // 使用者拍板 waiver → 降級為警告
+    run(['decision', 'ui-fidelity-waiver', '--choice', '實作不走 CSS 變數', '--why', '特殊棧'], root);
+    assert.equal(run(['ui-fidelity'], root).code, 0, 'waiver 降級零引用');
+    // 實作沿用定版 token → 正路通過、trace 落檔
+    await mkdir(path.join(root, 'src'), { recursive: true });
+    await writeFile(path.join(root, 'src', 'app.css'), '.btn { color: var(--color-primary); font-family: var(--font-body) }', 'utf8');
+    const r1 = run(['ui-fidelity'], root);
+    assert.equal(r1.code, 0, r1.err);
+    const uf = await S.readUiFidelity(root);
+    assert.ok(uf && uf.tokensUsed === 2 && uf.tokensTotal === 2, 'trace 記 token 引用數');
+    // 偷改原型 → 快照漂移擋（不可豁免，還原或重定版）
+    await writeFile(path.join(root, 'specs', 'ui-mockups', 'pages', 'login.html'), PAGE_OK + '<p>改</p>', 'utf8');
+    const r2 = run(['ui-fidelity'], root);
+    assert.equal(r2.code, 2, '漂移擋');
+    assert.match(r2.err, /定版快照不符/);
+  });
+});
+
+test('complete-check（web 類有原型）：缺 ui-fidelity 記錄 → exit 2；跑過 ui-fidelity → 放行', async () => {
+  await withRoot(async (root) => {
+    await frozenWebRoot(root);
+    await writeFile(path.join(root, 'specs', 'tasks.md'), '- [x] **F-1**\n', 'utf8');
+    run(['verify-e2e', 'REQ-E2E-001', '--status', 'pass', '--evidence', await evid(root)], root);
+    run(['verify-perf', 'REQ-PERF-001', '--value', '2.0', '--evidence', await evid(root, 'lh.json')], root);
+    run(['decision', 'code-review-waiver', '--choice', 'x', '--why', 'x'], root);
+    run(['decision', 'plan-check-waiver', '--choice', 'x', '--why', 'x'], root);
+    await writeSpec(root, 'tests/e2e/ok.spec.ts',
+      "import {test, expect} from '@playwright/test'\ntest('x', async ({page}) => { await page.goto('/login'); await page.getByRole('button',{name:/登入/}).click(); await expect(page).toHaveURL(/home/) })");
+    assert.equal(run(['journey-check'], root).code, 0);
+    const r0 = run(['complete-check'], root);
+    assert.equal(r0.code, 2, '缺 ui-fidelity 記錄 → 擋（畫面走樣照樣放行的洞已封）');
+    assert.match(r0.err, /ui-fidelity/);
+    await mkdir(path.join(root, 'src'), { recursive: true });
+    await writeFile(path.join(root, 'src', 'app.css'), '.btn { color: var(--color-primary) }', 'utf8');
+    assert.equal(run(['ui-fidelity'], root).code, 0);
+    const r1 = run(['complete-check'], root);
+    assert.equal(r1.code, 0, '全謂詞齊 → 放行：' + r1.err);
+  });
+});
+
 test('wave --compute：原型存在 → 對賬定版快照（漂移 exit 2）；過了把 tokens 逐字＋designBase＋mockupPages 落 wave-plan（UI 投餵）', async () => {
   await withRoot(async (root) => {
     await frozenWebRoot(root);

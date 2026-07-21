@@ -8,7 +8,7 @@ description: Flow Phase 5 — 出貨收束。跨 feature 整合 e2e + 完整效�
 
 ## Step 1：全 diff 獨立審查（藍軍）
 
-對 `main..HEAD` 全 diff 跑獨立 `code-reviewer` subagent（另開 context）：紅軍攻擊面（讀 `.flow/redteam/*.json`，build 落檔的機讀清單，**必有輸入**——缺檔＝build 流程缺陷，列為問題）是否真有防禦、每個 REQ 找不找得到對應實作、code smell、安全/效能潛在問題。**finding 不論是否在本次 diff 範圍 SHALL 全列**（順手修紀律）；安全 red flag 一律暫停。diff 含 auth/RBAC/migration/payment/金錢/個資 → 建議跑 codex 獨立對抗審查（裝了才問）。
+對 `main..HEAD` 全 diff 跑獨立 `code-reviewer` subagent（另開 context）：紅軍攻擊面（讀 `.flow/redteam/*.json`，build 落檔的機讀清單，**必有輸入**——缺檔＝build 流程缺陷，列為問題）是否真有防禦、每個 REQ 找不找得到對應實作、code smell、安全/效能潛在問題、**UI 忠實度（web 類有 `specs/ui-mockups/` 時）——前端實作是否沿用定版原型的版面/元件/tokens（對照 design.md「UI 對焦結論」與各 task `mockupPages`），偏離定版且無需求級變更 decision → red flag**。**finding 不論是否在本次 diff 範圍 SHALL 全列**（順手修紀律）；安全 red flag 一律暫停。diff 含 auth/RBAC/migration/payment/金錢/個資 → 建議跑 codex 獨立對抗審查（裝了才問）。
 
 **C-37 自駕 T1 決策事後對賬（必查維度）**：自駕模式下，藍軍 SHALL 把 `.flow/decisions/` 逐筆掃過對賬——比對自駕期間的 C 類自決（`ev:decision`）與 T1 停等記錄，特別看**有沒有「碰到需求骨架變動／安全紅旗（①④ 語義型 T1）該停卻自決了」**的痕跡（那是 auto-gate 硬擋抓不到、只能事後審的面）。發現越權自決 → 列為 red flag 暫停。這把 `autonomous-mode.md`「①④ 由 ship 全 diff 審查＋decisions 對賬事後抓」的散文承諾落成藍軍的實際必查項（原本無對應檢查）。
 
@@ -37,7 +37,7 @@ description: Flow Phase 5 — 出貨收束。跨 feature 整合 e2e + 完整效�
 
 ## Step 5：完成謂詞（收束的終點，確定性閘門守）
 
-**發 COMPLETE 前 SHALL 跑 `flow-state complete-check`**（`flow-state` 路徑依 host 見憲法「語言與環境」）——它確定性守**全鏈**：① 掃 `specs/tasks.md` 任一未完成 `[ ]` 即 exit 2；② `requirements.md` 缺檔/查無任何 `REQ-E2E-*`（被歸檔/收束成殼）即 exit 2；③ **現行 `requirements.md` hash == 凍結 index**（凍結後被偷改即 exit 2，還原或重跑 `spec-ready --freeze`）；④ **逐條對賬 `REQ-E2E-*` vs `.flow/verify/` pass/n-a 記錄**（n/a 醒目列出）；⑤ **逐條對賬 `REQ-PERF-*` vs `flow-state verify-perf` 達標記錄**（把「仍須人工確認 REQ-PERF」的死散文換成機讀謂詞——每條 REQ-PERF 要嘛有達標記錄、要嘛標 N/A＋perf-waiver decision）；⑥ **`plan-check.json` 的 manifest hash == 現行 manifest**（plan 後 manifest 被改＝scope/wave 事實來源漂移，重跑 plan-check）；⑦ **藍軍 code-review 已跑且 red flag 全終局**——ship SHALL 過藍軍：`.flow/code-review/findings.json` 須存在（Step 1 的 review-code 落檔）且每條 red flag 都 fixed/waiver，否則 exit 2；真要跳過藍軍走 `flow-state decision code-review-waiver` 留一筆可稽核豁免（與 build 端 redteam --wave 對稱、不留「整段不跑就繞過」的洞）。任一未過 exit 2。自駕無人盯著時尤其要，防模型自報全中提早收工。
+**發 COMPLETE 前 SHALL 跑 `flow-state complete-check`**（`flow-state` 路徑依 host 見憲法「語言與環境」）——它確定性守**全鏈**：① 掃 `specs/tasks.md` 任一未完成 `[ ]` 即 exit 2；② `requirements.md` 缺檔/查無任何 `REQ-E2E-*`（被歸檔/收束成殼）即 exit 2；③ **現行 `requirements.md` hash == 凍結 index**（凍結後被偷改即 exit 2，還原或重跑 `spec-ready --freeze`）；④ **逐條對賬 `REQ-E2E-*` vs `.flow/verify/` pass/n-a 記錄**（n/a 醒目列出）；⑤ **逐條對賬 `REQ-PERF-*` vs `flow-state verify-perf` 達標記錄**（把「仍須人工確認 REQ-PERF」的死散文換成機讀謂詞——每條 REQ-PERF 要嘛有達標記錄、要嘛標 N/A＋perf-waiver decision）；⑥ **`plan-check.json` 的 manifest hash == 現行 manifest**（plan 後 manifest 被改＝scope/wave 事實來源漂移，重跑 plan-check）；⑦ **藍軍 code-review 已跑且 red flag 全終局**——ship SHALL 過藍軍：`.flow/code-review/findings.json` 須存在（Step 1 的 review-code 落檔）且每條 red flag 都 fixed/waiver，否則 exit 2；真要跳過藍軍走 `flow-state decision code-review-waiver` 留一筆可稽核豁免（與 build 端 redteam --wave 對稱、不留「整段不跑就繞過」的洞）；⑧ **web 類有互動原型 → 須有當前 HEAD 的 `ui-fidelity` 通過記錄**（mockup 定版快照未漂移＋定版 tokens 被實作沿用——UI 忠實度的機讀底線，缺記錄或 stale 即 exit 2）。任一未過 exit 2。自駕無人盯著時尤其要，防模型自報全中提早收工。
 
 **REQ-PERF 達標記錄怎麼來**：`/flow-verify` 或本階段量到 p50/p95 後，`flow-state verify-perf <REQ-PERF-id> --value <實測數字> --evidence "<k6/autocannon/lighthouse 輸出 ref>"`——CLI 從凍結 index 解析 budget、**超標拒記**（含 5% 容差），達標才落 pass。
 

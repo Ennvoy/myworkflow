@@ -524,7 +524,7 @@ switch (cmd) {
     // H2-F4（體檢）：豁免/定版檔靠字面 id 精確比對才生效——打錯字會「看起來記成功」但永遠不被閘門認得＝無聲失守。
     // 觸發二選一：id 含 waiver/signoff 字樣、或與已知豁免 id 編輯距離 ≤2（抓 perf-waver 這類掉字母型）。
     // 自由形自決 id（兩者皆否，如 D-1/e2e-na-1）不受限。redteam-waiver-<taskId>-<attackId> 動態形只驗前綴結構。
-    const KNOWN_WAIVERS = ['mockup-waiver', 'perf-waiver', 'plan-check-waiver', 'code-review-waiver', 'journey-waiver', 'retry-waiver', 'ui-signoff'];
+    const KNOWN_WAIVERS = ['mockup-waiver', 'perf-waiver', 'plan-check-waiver', 'code-review-waiver', 'journey-waiver', 'retry-waiver', 'ui-signoff', 'ui-fidelity-waiver'];
     const lev = (a, b) => {
       const d = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]);
       for (let j = 1; j <= b.length; j++) d[0][j] = j;
@@ -893,6 +893,16 @@ switch (cmd) {
         }
       }
     }
+    // mockup 鏈路完成謂詞（與 journey-check 同構的新鮮度對賬）：web 類且原型存在 → SHALL 有「當前 HEAD」的
+    // ui-fidelity 通過記錄（mockup 快照未漂移＋定版 tokens 被實作沿用的機讀證據）。原本畫面全走樣照樣放行的洞，封死。
+    if (S.WEB_PROJECT_TYPES.includes(cm.projectType) && existsSync(path.join(root, 'specs', 'ui-mockups'))) {
+      const uf = await S.readUiFidelity(root);
+      if (!uf) fails.push('web 專案有互動原型但未過 UI 忠實度閘門——flow-state ui-fidelity（mockup 快照未漂移＋定版 tokens 被實作沿用；實作端合法不用 CSS 變數走 ui-fidelity-waiver 降級，仍須跑）。');
+      else {
+        const headNow = gitHead(root);
+        if (uf.head && headNow && uf.head !== headNow) fails.push('ui-fidelity 記錄不是當前 HEAD（驗的是舊 code）——重跑 flow-state ui-fidelity（秒級）。');
+      }
+    }
     // C-23：一次列印所有未達項（不逐類擋）。
     if (fails.length) {
       console.error(`✗ 完成謂詞未達（共 ${fails.length} 項，全部處理完才能 COMPLETE）：`);
@@ -1152,6 +1162,59 @@ switch (cmd) {
     console.log('  下一步：開瀏覽器把走查台每條 journey 真點一遍，再用彈窗跟使用者定版 UI。');
     break;
   }
+  case 'ui-fidelity': {
+    // UI 忠實度閘門（web 類，verify/ship 宣稱綠前 SHALL 跑；complete-check 對賬本記錄@HEAD）：
+    // ① mockup 定版快照未漂移（hash 對賬）② 定版 tokens.css 的 CSS 變數真的被實作引用（零引用＝UI 基準被整組丟棄）。
+    // 誠實邊界：擋得住「偷改原型/另創色票」，擋不住「用了 token 但版面亂排」——後者由 Evaluator/藍軍對照原型頁人工判。
+    // 逃生口：ui-fidelity-waiver decision（實作端合法不用 CSS 變數時）只降級 token 零引用為警告；快照漂移不可豁免（還原即可）。
+    // 用法：flow-state ui-fidelity [--src <實作根目錄，預設整個 repo>]
+    const mockDir = path.join(root, 'specs', 'ui-mockups');
+    if (!existsSync(mockDir)) {
+      console.log('ⓘ 查無 specs/ui-mockups/（非 web 類或已 mockup-waiver）——ui-fidelity 不適用，未落記錄。');
+      break;
+    }
+    const mHashes = await S.mockupFileHashes(root);
+    const mhp = S.mockupHashProblem(await S.readMockupIndex(root), mHashes);
+    if (mhp) { console.error('✗ ' + mhp); process.exit(2); }
+    const tokPath = path.join(mockDir, 'tokens.css');
+    if (!existsSync(tokPath)) { console.error('✗ 查無 specs/ui-mockups/tokens.css——原型缺設計 token 檔（prototype-guide §二佈局），無從對賬 token 沿用。'); process.exit(2); }
+    const tokenVars = S.extractCssVars(readFileSync(tokPath, 'utf8'));
+    if (!tokenVars.length) { console.error('✗ tokens.css 解析不到任何 CSS 變數（--x: 形）——定版 token 空殼，回 spec 補齊再凍結。'); process.exit(2); }
+    // 掃實作原始碼收集 var 引用（specs/ 是規格不是實作；.flow/、dot 目錄、重目錄跳過）
+    const srcBase = flag('--src') ? path.resolve(root, flag('--src')) : root;
+    const used = new Set();
+    (function walkSrc(base, depth = 0) {
+      if (depth > 8 || used.size === tokenVars.length) return;
+      let ents;
+      try { ents = readdirSync(base, { withFileTypes: true }); } catch { return; }
+      for (const e of ents) {
+        if (used.size === tokenVars.length) return;
+        const p = path.join(base, e.name);
+        if (e.isDirectory()) {
+          if (SKIP_WALK.has(e.name) || e.name.startsWith('.') || e.name === 'specs') continue;
+          walkSrc(p, depth + 1);
+        } else if (/\.(css|scss|less|[jt]sx?|mjs|cjs|vue|svelte|html?)$/i.test(e.name)) {
+          let c = '';
+          try { c = readFileSync(p, 'utf8'); } catch { continue; }
+          for (const v of tokenVars) if (!used.has(v) && c.includes(v)) used.add(v);
+        }
+      }
+    })(srcBase);
+    const audit = S.tokenUsageAudit(tokenVars, [...used]);
+    const ufWaived = existsSync(path.join(root, '.flow', 'decisions', 'ui-fidelity-waiver.json'));
+    if (!audit.hit.length && !ufWaived) {
+      console.error(`✗ 定版 tokens.css 的 ${audit.total} 個 CSS 變數在實作中零引用——UI 基準被整組丟棄（worker 另創色票/字體？）。`);
+      console.error('  修正：實作沿用原型同一組 token 變數（tokens.css 併入實作樣式、元件用 var(--…) 引用）；');
+      console.error('  實作端真的不走 CSS 變數（如全 inline style 的特殊棧）→ 使用者拍板 flow-state decision ui-fidelity-waiver --choice … --why …。');
+      process.exit(2);
+    }
+    if (!audit.hit.length && ufWaived) console.log(`⚠ token 零引用但 ui-fidelity-waiver 生效——版面忠實度全靠 Evaluator/藍軍人工對照原型頁，別讓豁免變常態。`);
+    else if (audit.miss.length) console.log(`⚠ ${audit.miss.length}/${audit.total} 個 token 未見引用（提醒不擋——備用 token 合法，過半未用請人工確認沒偏離原型）：${audit.miss.slice(0, 8).join('、')}${audit.miss.length > 8 ? '…' : ''}`);
+    await S.writeUiFidelity(root, { head: gitHead(root), tokensTotal: audit.total, tokensUsed: audit.hit.length, mockupAggHash: S.mockupAggHash(mHashes), waived: ufWaived });
+    console.log(`✓ UI 忠實度機檢通過：mockup 定版快照未漂移、tokens ${audit.hit.length}/${audit.total} 被實作引用。已落 .flow/trace/ui-fidelity.json（綁 HEAD，complete-check 對賬）。`);
+    console.log('  版面像不像原型仍由 Evaluator（flow-verify UI 忠實度維度）/藍軍（flow-ship）對照原型頁人工判——本閘門只守確定性底線。');
+    break;
+  }
   case 'spec-review': {
     // 收一輪 lens 審查 findings 落機讀 ledger（第 1 波）。docHash 由本 CLI 讀現行 requirements.md 自算
     // （模型不可自填）、round 自動遞增——「哪些 lens 跑過、跑了幾輪、審的是哪版文字」變成檔案事實。
@@ -1221,7 +1284,7 @@ switch (cmd) {
     break;
   }
   default:
-    console.log(`flow-state <resume|status|done|checkpoint|mode|project-type|design-base|scope|wave|redteam|journey-check|run|verify-ok|verify-e2e|verify-perf|plan-check|review-code|code-resolve|diagnose|lesson|decision|pending|journal-archive|guardrail-check|complete-check|spec-ready|spec-review|review-resolve|mockup-check> [--root <path>]
+    console.log(`flow-state <resume|status|done|checkpoint|mode|project-type|design-base|scope|wave|redteam|journey-check|run|verify-ok|verify-e2e|verify-perf|plan-check|review-code|code-resolve|diagnose|lesson|decision|pending|journal-archive|guardrail-check|complete-check|spec-ready|spec-review|review-resolve|mockup-check|ui-fidelity> [--root <path>]
   resume | status        冷啟動：reconstruct 印現況 + 下一步 + mid-task 進度 + 對帳 + 已知死路（換 session/電腦/中斷後接手；平行波看 /workflows）
   done <id> [--commit]   標一個 task 完成：翻 tasks.md [x] + ledger→delivered（自帶 verify 閘門；先標、再 commit）
   checkpoint <id> --phase <red|green|refactor|integrated> [--note]   記 mid-task 進度（開發中當機 → resume 帶出「上次做到第幾步」，只補沒做完的）
@@ -1249,5 +1312,6 @@ switch (cmd) {
   spec-review <lens> --file <findings.json> [--exec "<cmd>"]   收一輪 lens 審查落 ledger（redteam|consistency|codex；docHash 由 CLI 自算、round 自動遞增）
   review-resolve <SR-id> --as <resolved:REQ-xxx|open|deferred:<id>|rejected:<id>>   把一條 finding 走到終局（附機器可驗指標，發現不能無痕蒸發）
   mockup-check [--dir]   互動原型走查閘門：specs/ui-mockups/index.html 缺 REQ-E2E 走查卡、本地連結 404、或連到的頁面是空殼（無 app.js/互動元素）→ exit 2（產完原型、開瀏覽器請使用者定版前跑）
+  ui-fidelity [--src]    UI 忠實度閘門（web 類 verify/ship 宣稱綠前）：mockup 定版快照漂移、或定版 tokens.css 變數在實作零引用（無 ui-fidelity-waiver）→ exit 2；通過落 trace（綁 HEAD，complete-check 對賬）
 決策/討論一律回 Claude（彈窗）；狀態都在專案的 .flow/。`);
 }

@@ -12,6 +12,7 @@ effort: xhigh
 
 主代理（/flow-verify 或 parallel-verify recipe）會給你：
 - 凍結契約：`specs/requirements.md` 的 `REQ-E2E-*`（逐條 journey）與 `REQ-PERF-*`（效能 budget）、`specs/design.md` 接縫契約段落
+- **web 類另有 UI 定版契約**：`specs/ui-mockups/`（使用者拍板的互動原型）＋ `design.md`「UI 對焦結論」＋ 各 task 的 `mockupPages`（task↔原型頁對應）
 - 驗證範圍（窄＝單 feature happy path；全＝跨 feature）
 
 你的任務：**親手把每條 journey 真跑一遍，拿客觀證據判 PASS/FAIL/BLOCKED**。完整操作範本見 `references/playwright-real-data-template.md` 與 `references/verification-playbook.md`。
@@ -32,6 +33,7 @@ effort: xhigh
 | 3 | 從入口走完整 journey：單一 `goto` 指向真實使用者起點，其後全真實點擊串到目標頁 | 直接 deep-link 跳目標頁 → journey-from-entry 維度 FAIL，記實際點擊軌跡 |
 | 4 | 永不信任 exit 0：斷言實際產物（seed 的列真的撈得到、UI 真的畫出來、API 回正確 shape） | 只看 runner 綠燈不斷言產物 → 不算驗證 |
 | 5 | 效能硬閘門：對真 DB 真資料量量 p50/p95，對照 `REQ-PERF-*` budget | 任一維度超標 → FAIL，不准用平均或其他維度的高分救 |
+| 6 | UI 忠實度（web 類、有 `specs/ui-mockups/` 時）：走 journey 途中把實作頁與該 task `mockupPages` 對應的原型頁**並排對照**——版面結構/元件層級/互動狀態（hover/disabled/loading）/異常態（空/錯誤/權限不足）是否忠於定版原型 | 版面明顯偏離定版原型且查無需求級變更記錄（decision）→ ui-fidelity 維度 FAIL，記「哪一頁哪個區塊偏離」；機檢部分先跑 `flow-state ui-fidelity`（快照/tokens 對賬，exit 2 就先修） |
 
 ## 證據落檔（確定性義務，不做＝驗證沒發生）
 

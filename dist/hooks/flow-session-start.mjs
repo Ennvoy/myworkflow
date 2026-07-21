@@ -109,7 +109,7 @@ process.stdin.on('end', async () => {
       const dp = join(claudeHome, 'hooks', 'flow-dispatch.mjs');
       if (existsSync(dp)) {
         const miss = S.dispatchWiringProblems(readFileSync(dp, 'utf8'));
-        if (miss.length) wiringLine += (wiringLine ? '\n' : '') + `- 🚨 Flow dispatch 漏接：flow-dispatch.mjs 沒引用 ${miss.join('、')}——該閘門合併後完全不會觸發。`;
+        if (miss.length) wiringLine += (wiringLine ? '\n' : '') + `- 🚨 Flow dispatch 漏接：flow-dispatch.mjs 沒引用 ${miss.join('、')}——該道（閘門/提示器）合併後完全不會觸發。`;
       }
     }
   } catch { /* fail-silent */ }

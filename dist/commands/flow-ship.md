@@ -37,7 +37,7 @@ description: Flow Phase 5 — 出貨收束。跨 feature 整合 e2e + 完整效�
 
 ## Step 5：完成謂詞（收束的終點，確定性閘門守）
 
-**發 COMPLETE 前 SHALL 跑 `flow-state complete-check`**（mac/linux `node ~/.claude/skills/flow-toolkit/flow-state.mjs complete-check`、Windows PS 對應路徑）——它確定性守**全鏈**：① 掃 `specs/tasks.md` 任一未完成 `[ ]` 即 exit 2；② `requirements.md` 缺檔/查無任何 `REQ-E2E-*`（被歸檔/收束成殼）即 exit 2；③ **現行 `requirements.md` hash == 凍結 index**（凍結後被偷改即 exit 2，還原或重跑 `spec-ready --freeze`）；④ **逐條對賬 `REQ-E2E-*` vs `.flow/verify/` pass/n-a 記錄**（n/a 醒目列出）；⑤ **逐條對賬 `REQ-PERF-*` vs `flow-state verify-perf` 達標記錄**（把「仍須人工確認 REQ-PERF」的死散文換成機讀謂詞——每條 REQ-PERF 要嘛有達標記錄、要嘛標 N/A＋perf-waiver decision）；⑥ **`plan-check.json` 的 manifest hash == 現行 manifest**（plan 後 manifest 被改＝scope/wave 事實來源漂移，重跑 plan-check）；⑦ **藍軍 code-review 已跑且 red flag 全終局**——ship SHALL 過藍軍：`.flow/code-review/findings.json` 須存在（Step 1 的 review-code 落檔）且每條 red flag 都 fixed/waiver，否則 exit 2；真要跳過藍軍走 `flow-state decision code-review-waiver` 留一筆可稽核豁免（與 build 端 redteam --wave 對稱、不留「整段不跑就繞過」的洞）。任一未過 exit 2。自駕無人盯著時尤其要，防模型自報全中提早收工。
+**發 COMPLETE 前 SHALL 跑 `flow-state complete-check`**（`flow-state` 路徑依 host 見憲法「語言與環境」）——它確定性守**全鏈**：① 掃 `specs/tasks.md` 任一未完成 `[ ]` 即 exit 2；② `requirements.md` 缺檔/查無任何 `REQ-E2E-*`（被歸檔/收束成殼）即 exit 2；③ **現行 `requirements.md` hash == 凍結 index**（凍結後被偷改即 exit 2，還原或重跑 `spec-ready --freeze`）；④ **逐條對賬 `REQ-E2E-*` vs `.flow/verify/` pass/n-a 記錄**（n/a 醒目列出）；⑤ **逐條對賬 `REQ-PERF-*` vs `flow-state verify-perf` 達標記錄**（把「仍須人工確認 REQ-PERF」的死散文換成機讀謂詞——每條 REQ-PERF 要嘛有達標記錄、要嘛標 N/A＋perf-waiver decision）；⑥ **`plan-check.json` 的 manifest hash == 現行 manifest**（plan 後 manifest 被改＝scope/wave 事實來源漂移，重跑 plan-check）；⑦ **藍軍 code-review 已跑且 red flag 全終局**——ship SHALL 過藍軍：`.flow/code-review/findings.json` 須存在（Step 1 的 review-code 落檔）且每條 red flag 都 fixed/waiver，否則 exit 2；真要跳過藍軍走 `flow-state decision code-review-waiver` 留一筆可稽核豁免（與 build 端 redteam --wave 對稱、不留「整段不跑就繞過」的洞）。任一未過 exit 2。自駕無人盯著時尤其要，防模型自報全中提早收工。
 
 **REQ-PERF 達標記錄怎麼來**：`/flow-verify` 或本階段量到 p50/p95 後，`flow-state verify-perf <REQ-PERF-id> --value <實測數字> --evidence "<k6/autocannon/lighthouse 輸出 ref>"`——CLI 從凍結 index 解析 budget、**超標拒記**（含 5% 容差），達標才落 pass。
 
@@ -45,7 +45,7 @@ description: Flow Phase 5 — 出貨收束。跨 feature 整合 e2e + 完整效�
 
 ## Step 5.5：出貨收據（選配，on-demand 才做）
 
-`complete-check` 通過後可提一句「要不要一份出貨收據（可留存/分享的交付證明頁）？」，**使用者明說要才做**——不彈窗追問、不預設產出、不綁任何必跑路徑。做法：讀機讀記錄（`.flow/verify/`、verify-perf、`.flow/code-review/findings.json`、diff 統計）組單頁自足 HTML 落 `.flow/reports/ship-receipt.html`，先載 `artifact-design` skill 再用 Artifact 工具發布成 claude.ai 私有頁。**收據純 render 機讀對賬結果，不得重算/軟化判定、不得替代 complete-check**；Artifact 不可用或發布失敗 → 本地 HTML 照留、出貨照走。頁面規格與護欄見 `references/ship-receipt.md`。
+`complete-check` 通過後可提一句「要不要一份出貨收據（可留存/分享的交付證明頁）？」——**使用者明說要才做**，不彈窗追問、不預設產出、不綁任何必跑路徑。做法/頁面規格/護欄（純 render 機讀結果、不得重算或替代 complete-check）全在 `references/ship-receipt.md`。
 
 ## Step 6：全系統垃圾兜底 + 出貨準備
 

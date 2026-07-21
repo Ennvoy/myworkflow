@@ -55,7 +55,7 @@ bind/listen port 的產出物驗證前 SHALL 清 port，細節見 `references/ve
 
 ## journey 真實性閘門（web 宣稱綠前 SHALL 跑，確定性節點）
 
-Web 產出物宣稱綠**之前 SHALL 跑** `flow-state journey-check`（mac/linux `node ~/.claude/skills/flow-toolkit/flow-state.mjs journey-check`、Windows PS 對應路徑）——它確定性掃 Playwright 測試檔，**出現網路攔截/假後端（`page.route`/MSW/`nock`/`cy.intercept`/`mockResolvedValue`）或單一 test 內 >1 `goto` 即 exit 2**，並掃 `playwright.config`：**`retries` 非 0（flaky 靠重試洗綠；CI 真 flaky 才留、須 `flow-state decision retry-waiver` 留檔）或 `webServer` command 含 `dev`（禁 dev server 噪音）也 exit 2**。把鐵則二（禁 mock）＋鐵則三（禁 dev server）＋鐵則五（單一入口 goto）從散文釘成機器擋。純文字掃描、模型偽造不了 git 真實檔內容。深層 goto／零互動只提醒不擋（loose 防誤殺，仍須 Evaluator 人工確認非抄捷徑）。
+Web 產出物宣稱綠**之前 SHALL 跑** `flow-state journey-check`（`flow-state` 路徑依 host 見憲法「語言與環境」）——它確定性掃 Playwright 測試檔，**出現網路攔截/假後端（`page.route`/MSW/`nock`/`cy.intercept`/`mockResolvedValue`）或單一 test 內 >1 `goto` 即 exit 2**，並掃 `playwright.config`：**`retries` 非 0（flaky 靠重試洗綠；CI 真 flaky 才留、須 `flow-state decision retry-waiver` 留檔）或 `webServer` command 含 `dev`（禁 dev server 噪音）也 exit 2**。把鐵則二（禁 mock）＋鐵則三（禁 dev server）＋鐵則五（單一入口 goto）從散文釘成機器擋。純文字掃描、模型偽造不了 git 真實檔內容。深層 goto／零互動只提醒不擋（loose 防誤殺，仍須 Evaluator 人工確認非抄捷徑）。
 
 ## verify runner wrapper（非白名單 runner／要綁 task 對賬時用）
 
@@ -65,7 +65,7 @@ Web 產出物宣稱綠**之前 SHALL 跑** `flow-state journey-check`（mac/linu
 
 退出前對照原始 spec 跑一次驗證 checklist，**不准在 checklist 未全綠時宣稱 done**。綠 →
 - node 呼叫 `statelib.transition(root, id, 'building', 'verifying')` + `writeStateJson` 寫 `verify="ok:<證據ref>"`、`tdd="green"`、`verifyTaskId="<這個 task 的 canonical id>"`（落 `.flow/` ledger/journal + 給 hook 讀）。**不要在 verify 階段直接 transition 到 `delivered`**——`delivered` 是 `flow-state done`（markTaskDone）的**唯一正門**，由它在交付時翻 tasks.md `[x]`、寫 ledger，並**一定清掉綠燈 latch**（verify/tdd/verifyTaskId 歸零）。verify 搶先標 `delivered` 會讓 done 的歸零被跳過（`from===delivered`）、綠燈殘留 → 下一個 task 白嫖（連舊專案也防不住）。**`verifyTaskId` 必寫、用本 task canonical id**——done 閘門靠它確認綠燈屬於這個 task（嚴格比對；舊專案沒寫則退回原全域檢查、不誤擋）；
-- **每條真跑綠的 `REQ-E2E-*` journey SHALL 記一筆**：`flow-state verify-e2e <REQ-E2E-id> --status pass --evidence "<trace 路徑/測試名/API+DB 讀回摘要>"`。CLI 自動記 **HEAD sha＋現行 requirements.md hash**——ship 出口 `complete-check` 據此驗「這條 journey 驗的是凍結那版 spec」。無法自動化的標 `--status n/a --decision <id>`（**n/a 不再是自由逃生口，SHALL 附實存 decision**：互動＝使用者拍板、自駕＝自決審計）。這是 `complete-check`/`coverage` **逐條對賬 requirements.md 的機讀來源**——沒記＝該 journey 視為未驗，ship 會擋。
+- **每條真跑綠的 `REQ-E2E-*` journey SHALL 記一筆**：`flow-state verify-e2e <REQ-E2E-id> --status pass --evidence "<trace 路徑/測試名/API+DB 讀回摘要>"`。CLI 自動記 **HEAD sha＋現行 requirements.md hash**——ship 出口 `complete-check` 據此驗「這條 journey 驗的是凍結那版 spec」。無法自動化的標 `--status n/a --decision <id>`（**n/a 不再是自由逃生口，SHALL 附實存 decision**：互動＝使用者拍板、自駕＝自決審計）。這是 `complete-check`/`diagnose coverage` **逐條對賬 requirements.md 的機讀來源**——沒記＝該 journey 視為未驗，ship 會擋。
 - **REQ-E2E 的 pass 記錄 SHALL 來自 CLI runner 跑對應測試檔**（`npx playwright test <骨架>` 或 `flow-state run --task`）；MCP 互動點擊當探索/除錯用，不作為 verify-e2e 落檔依據——把兩條驗證路徑收斂成一條可對賬的。
 
 不綠 → 進修復迴圈。

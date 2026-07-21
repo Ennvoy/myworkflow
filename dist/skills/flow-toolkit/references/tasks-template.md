@@ -42,7 +42,7 @@
 
 ## 依賴分波（給多工用）
 
-每個 task 標兩個欄位，`/flow-build` 據此算「同一波可並行 = `blockedBy` 已 delivered ∧ `conflictZone` 互不重疊」：
+每個 task 標兩個欄位，`/flow-build` 的 `wave --compute` 據此算可並行波次（判準與拓樸細節見 `build-playbook.md` §一，單一事實來源）：
 - **`blockedBy`**：依賴哪些 task 先完成。
 - **`conflictZone`**：這個 task 會改哪些檔/模組。共用檔（schema/router/theme）的 conflictZone 會跟很多 feature 重疊 → 自然被排到前面序列做（避免 merge 地獄）。
 

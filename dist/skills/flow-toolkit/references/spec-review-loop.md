@@ -22,7 +22,7 @@
    - `deferred:<decisionId>` / `rejected:<decisionId>` — decision 檔實存（rejected 是**洩壓閥**：吹毛求疵的發現留審計線即可關閉，迴圈才有界；一筆 decision 可批次覆蓋多條低嚴重度）
 3. **中間輪**：只重跑「上一輪有 findings、或 requirements.md 改過（docHash 變了）」的 lens——省 token、閘門終態不縮水。
 4. **末輪**：全 lens 重跑，目標零新發現。
-5. **凍結**：`spec-ready --freeze` 機檢——L2/L3 各 **≥2 輪**、**末輪 findings 為空**（或滿 **3 輪封頂**且全終局）、**末輪 docHash == 現行文字**（審完偷改文即失效、重跑末輪）、review-check 全綠、（走原型路）ui-signoff 實存。
+5. **凍結**：`spec-ready --freeze` 機檢——L2/L3 各 **≥2 輪**、**末輪 findings 為空**（或滿 **3 輪封頂**且全終局）、**末輪 docHash == 現行文字**（審完偷改文即失效、重跑末輪）、diagnose review 全綠、（走原型路）ui-signoff 實存。
 
 ## lens 輸入鐵則（防死循環）
 

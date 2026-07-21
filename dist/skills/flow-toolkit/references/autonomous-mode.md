@@ -44,6 +44,10 @@
 
 > 純技術選型（UUID vs 短碼、一頁幾筆這種「怎麼做都對、有明確最佳實踐」的）連 decision 都不必記——直接做。只有「猜了使用者需求意圖」的 C 類才記。
 
+## 待決單（pending）：需要豁免但自駕不准自建時的緩衝（C-8）
+
+自駕下 AI **不得自建 waiver/signoff**——那等於冒使用者名義關掉一道出貨安全門（`decision` 指令在 `mode:auto` 對 waiver/signoff 類 id 直接 exit 2）。碰到「重試仍過不了、需要使用者拍板豁免」的關卡：`flow-state pending add <id> --why "<為何需要豁免>"` 記一張**待決單**、跳過該關卡繼續跑其他工作；收尾一批彈窗請使用者逐筆拍板（`pending list` 看單、拍板後 `pending resolve <id>`＋補正式 decision）。**`complete-check` 對 pending 非空 exit 2**——待決單沒清完不得自稱出貨完成，不會無聲蒸發。
+
 ## 護欄前提（自駕依賴）
 
 自駕啟動前 SHALL 跑 `flow-state guardrail-check`（驗 B1 在線）；缺則退回「每階段停」、**不假裝自駕**。

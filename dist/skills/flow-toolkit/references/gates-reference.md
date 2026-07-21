@@ -15,7 +15,7 @@
 
 ## Script 閘門（SHALL 跑，exit 2）
 
-- **`flow-state spec-ready`**（凍結前）——`### 開放問題` 段缺失/沒清零、缺 `REQ-`/`REQ-E2E-`/`REQ-PERF-`、placeholder（TODO/待定）、REQ-E2E 缺 journey 結構、PERF N/A 無 perf-waiver 豁免檔就 exit 2。**`--freeze`** 通過才寫 `spec-done`，另對賬：`project-type` 落檔（web 類須過走查台＋`ui-signoff` 定版記錄或 mockup-waiver；非 web 即豁免）＋ **lens 審查收斂**（redteam/consistency 各 ≥2 輪末輪零新發現、docHash==現行文字、findings 全終局——`spec-review`/`review-resolve`/`review-check` 的機讀 ledger，細節 `references/spec-review-loop.md`）。凍結瞬間落 `.flow/trace/req-index.json`（REQ 全集＋requirements hash＋HEAD）＝下游唯一分母。
+- **`flow-state spec-ready`**（凍結前）——`### 開放問題` 段缺失/沒清零、缺 `REQ-`/`REQ-E2E-`/`REQ-PERF-`、placeholder（TODO/待定）、REQ-E2E 缺 journey 結構、PERF N/A 無 perf-waiver 豁免檔就 exit 2。**`--freeze`** 通過才寫 `spec-done`，另對賬：`project-type` 落檔（web 類須過走查台＋`ui-signoff` 定版記錄或 mockup-waiver；非 web 即豁免）＋ **lens 審查收斂**（redteam/consistency 各 ≥2 輪末輪零新發現、docHash==現行文字、findings 全終局——`spec-review`/`review-resolve` 的機讀 ledger（診斷：`diagnose review`），細節 `references/spec-review-loop.md`）。凍結瞬間落 `.flow/trace/req-index.json`（REQ 全集＋requirements hash＋HEAD）＝下游唯一分母。
 - **`flow-state mockup-check`**（UI 定版前）——互動原型走查台缺任一 `REQ-E2E-*` 卡、本地連結 404、或頁面空殼（無 `app.js`/互動元素）exit 2。
 - **`flow-state plan-check`**（plan 出口）——REQ↔task 覆蓋（每條 REQ 被承接、無幻覺 id）＋tasks.md↔manifest 逐欄一致＋requirements hash 對賬，過了才落 `plan-check.json`＋`phase=plan-done`。
 - **`flow-state wave --compute`**（build 起手）——算波次拓樸（blockedBy 依賴序＋conflictZone 互斥拆波，成環/懸空 exit 2）＋逐字抽每 task 承接的 REQ 區塊落 `wave-plan.json`（含 manifest/reqHash）＝dispatch 唯一事實來源（worker 收逐字 spec、不自讀防漂移）；buildWavePlan 內建 reqHash↔req-index 自我斷言。

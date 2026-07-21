@@ -20,7 +20,7 @@
 ## 編排紀律
 
 ### 1. foundation 先序列、features 才並行
-共用檔（全域 router / 共享型別 / DB schema / auth foundation）**先做完 merge 進 trunk**，再 fan-out features。否則大家改同一個檔 = merge 地獄。靠 `conflictZone` 算重疊。
+判準與展開見 `build-playbook.md` §一（單一事實來源）；本檔只管把它排進編排順序——foundation merge 進 trunk 之前不 fan-out。
 
 ### 2. 釘契約（編譯期擋發散）
 跨 worker 的接縫用 design.md 釘好的**單一 type/schema**，各 worker import 同一份。API 回的形狀 ≠ UI 期望 → 編譯就紅，不會等到 runtime。

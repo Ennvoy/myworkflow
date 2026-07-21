@@ -44,7 +44,7 @@ description: Flow Phase 1 — 訪談定版。蘇格拉底式一次一題彈窗�
 
 ## Step 4：高風險獨立審查（命中才做，做了 SHALL 留紀錄）
 
-requirements 含 auth / 權限 / payment / 個資 / 合規 / audit 關鍵字 → SHALL 跑獨立對抗審查（裝了 Codex companion 就用它；沒裝就對該面加開一輪聚焦的 spec-redteam），並落 `flow-state decision security-review --choice "<審了哪些面>" --why "<結論一句話>"` 留可稽核紀錄——高風險審查不准只在散文裡「說有做」。使用者拍板明確跳過 → `flow-state decision security-review-waiver …`。不命中靜默跳過、不落檔。
+requirements 含 auth / 權限 / payment / 個資 / 合規 / audit 關鍵字 → SHALL 跑獨立對抗審查（裝了 Codex companion 就用它；沒裝就對該面加開一輪聚焦的 spec-redteam），並落 `flow-state decision security-review --choice "<審了哪些面>" --why "<結論一句話>"` 留可稽核紀錄——高風險審查不准只在散文裡「說有做」。使用者拍板明確跳過 → 一樣落 `flow-state decision security-review --choice "使用者拍板跳過" --why "<原因>"`（`spec-ready --freeze` 只認 security-review 這把鑰匙，審過與跳過都靠它留檔）。不命中靜默跳過、不落檔。
 
 ## Step 4.5：需求收斂閘門（鐵則，產互動原型前先過）
 
@@ -87,6 +87,6 @@ flow-state spec-ready --freeze
 - [ ] **grill-me 深挖閘門已彈窗問過**（深挖／直接凍結二選一）——漏問即不合格
 - [ ] `specs/requirements.md` 存在，含 REQ-XXX + REQ-E2E-* + REQ-PERF-*
 - [ ] **`### 開放問題` 已收斂為零、`flow-state spec-ready` 綠**（產互動原型前）——這是防自駕跑歪的源頭閘門
-- [ ] **lens 審查矩陣已跑到機讀收斂**：spec-redteam＋spec-consistency 各 ≥2 輪、findings 全終局、`flow-state review-check` 綠（`--freeze` 逐項對賬）
+- [ ] **lens 審查矩陣已跑到機讀收斂**：spec-redteam＋spec-consistency 各 ≥2 輪、findings 全終局、`flow-state diagnose review` 綠（`--freeze` 逐項對賬）
 - [ ] web 類：互動原型全旅程覆蓋＋`flow-state mockup-check` 綠 + 已開瀏覽器讓使用者照走查台點過 + 已彈窗定版＋`ui-signoff` decision 落檔
 - [ ] 凍結走 `flow-state spec-ready --freeze`（非裸寫 state.json）、使用者已拍板

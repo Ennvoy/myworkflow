@@ -10,12 +10,12 @@ description: Flow Phase 3 — 多工交付（混合基座）。取當前波次�
 
 ## Step 0：冷啟動讀現況
 
-跑 `flow-state resume`（mac/linux `node ~/.claude/skills/flow-toolkit/flow-state.mjs resume`、Windows PS 對應路徑）用 statelib **reconstruct** 純從磁碟重建「還剩什麼 + 未完成 dangling」，有 dangling 先冪等補完；補 `specs/tasks.md` 的 `[ ]`/`[x]`。**也帶出每個開發中 task 的 mid-task checkpoint——接續該相、別重跑整個 task**（語法見 build-playbook.md §四）。
+跑 `flow-state resume`（本檔 `flow-state ×` 一律＝`node <flow-toolkit>/flow-state.mjs ×`，路徑依 host 見憲法「語言與環境」）用 statelib **reconstruct** 純從磁碟重建「還剩什麼 + 未完成 dangling」，有 dangling 先冪等補完；補 `specs/tasks.md` 的 `[ ]`/`[x]`。**也帶出每個開發中 task 的 mid-task checkpoint——接續該相、別重跑整個 task**（語法見 build-playbook.md §四）。
 **進度怎麼看**：`flow-state status`；平行生成看 Workflow 的 `/workflows`。
 
 ## Step 1：算當前波次可並行集合
 
-**別在 thinking 裡心算波次**——SHALL 跑 `flow-state wave --compute`（mac/linux `node ~/.claude/skills/flow-toolkit/flow-state.mjs wave --compute`、Windows PS 對應路徑）：讀 manifest 的 `blockedBy`/`conflictZone` ＋ ledger delivered 算拓樸序，落 `.flow/trace/wave-plan.json`（含 manifest hash + reqHash）＝本波 dispatch 的**唯一事實來源**；**成環/懸空依賴 exit 2**。manifest 事後改動 → 重跑本指令。拓樸細節/foundation 先序列/契約釘法/波次寬度/就緒探針見 `build-playbook.md` §一。
+**別在 thinking 裡心算波次**——SHALL 跑 `flow-state wave --compute`：讀 manifest 的 `blockedBy`/`conflictZone` ＋ ledger delivered 算拓樸序，落 `.flow/trace/wave-plan.json`（含 manifest hash + reqHash）＝本波 dispatch 的**唯一事實來源**；**成環/懸空依賴 exit 2**。manifest 事後改動 → 重跑本指令。拓樸細節/foundation 先序列/契約釘法/波次寬度/就緒探針見 `build-playbook.md` §一。
 
 ## Step 1.5：執行策略閘門（偏離預設平行 SHALL 彈窗，別在散文裡自己降級）
 
@@ -35,7 +35,7 @@ fan-out 前 orchestrator 先 write-ahead：對本波每個 id 呼叫 `statelib.t
 ## Step 4：序列整合（逐 feature，主流程序列做）
 
 Workflow 回來後，orchestrator 依拓樸序**一個一個**收尾每個 feature：
-- **檔案安全閘門（整合前 SHALL 先跑）**：`flow-state scope --wave <本波 ids>`（mac/linux `node ~/.claude/skills/flow-toolkit/flow-state.mjs scope --wave F-1,F-2`、Windows PS 對應路徑）——worker 越界改共用檔/foundation → **exit 2 暫停**，查清再整合。展開見 `build-playbook.md` §五。
+- **檔案安全閘門（整合前 SHALL 先跑）**：`flow-state scope --wave <本波 ids>`——worker 越界改共用檔/foundation → **exit 2 暫停**，查清再整合。展開見 `build-playbook.md` §五。
 - **紅軍對賬閘門（與 scope 同點 SHALL 跑）**：`flow-state redteam --wave <本波 ids>`（路徑同 scope）——覆蓋率不足/high 未 covered/testFile 不存在/高危攻擊無痕 skipped → **exit 2 暫停**整合。展開見 `build-playbook.md` §五。
 - 掃 `driveBy`：**安全/資料正確性 red flag（SQLi、auth bypass、密碼明文、destructive query 缺 WHERE）一律暫停**告知使用者。
 - 有 `blockers` 的標 BLOCKED／needs-decision，跳過；**順手 `flow-state lesson <id> --approach "<試過什麼>" --why "<為何卡住>"`** 記失敗記憶。其餘一次一個進 Step 5。
@@ -49,7 +49,7 @@ Workflow 回來後，orchestrator 依拓樸序**一個一個**收尾每個 featu
 - **commit 前清驗證垃圾**（雙軌流程、白名單、`flow-commit-gate` 擋法）：見 `references/verification-playbook.md` §七。
 - 完成一項（順序鐵則：**先標、再 commit**，閘門會強制）：
   1. TaskUpdate completed（`flow-verify-gate` hook 會在 `verify` 空/`none` 時擋下）。
-  2. **跑 `flow-state done <id>`**（mac/linux `node ~/.claude/skills/flow-toolkit/flow-state.mjs done <id>`、Windows PS 對應路徑；`<id>` 用 canonical task id）。**`verify`/`tdd` 空/`none` → exit 2 拒標**；交付成功即歸零全域 verify/tdd。展開見 `build-playbook.md` §六。
+  2. **跑 `flow-state done <id>`**（`<id>` 用 canonical task id）。**`verify`/`tdd` 空/`none` → exit 2 拒標**；交付成功即歸零全域 verify/tdd。展開見 `build-playbook.md` §六。
   3. **per-task commit+push 走 `git-tools` skill**，**commit scope SHALL 帶 canonical task id**（例 `feat(F-1186-W0-5): ...`）：smart commit 後即 `git push`（失敗只警告、不中斷 build）。
   4. **成功後補 `flow-state done <id> --commit <sha>`**（冪等記 sha 進 ledger）。
 - **`flow-commit-gate` hook** 擋 commit scope 點名但還沒 `done` 的 task → exit 2，先跑 `flow-state done` 再 commit（**別手改 ledger/tasks.md 繞過**）；commit 成功前不領下個 task，失敗 → 整個 build 暫停告知。

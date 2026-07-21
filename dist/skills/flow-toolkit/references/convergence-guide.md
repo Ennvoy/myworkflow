@@ -7,7 +7,7 @@
 ## 一、working set 精簡（防腐化）
 
 - **working set 壓在視窗 ~40–50% 以下**保持精簡（利用率越高 attention 越稀釋，n² 效應）。
-- **`/flow-compact` 由 `flow-size-check` hook 觸發**（SessionStart + 送訊息時，節流、非阻擋）：
+- **`/flow-compact` 由 `flow-size-check` hook 觸發**（SessionStart + 寫檔後 PostToolUse，節流、非阻擋）：
   - **SDD 檔膨脹**：`specs/` 任一 `.md` >50KB（`statSync` 量檔，抓「文件越寫越長」）。50KB 是保守參考下限、非硬閾值。
 - **薄 root + on-demand**：always-on 只放憲法目錄，specs / reference 用到才載。
 - **subagent context firewall**：吵雜/大 context 工作丟獨立 subagent，只收回 1–2k 蒸餾結果。
@@ -36,15 +36,7 @@ prompt cache 命中價 = miss 的 1/10，而 cache 靠 **prefix 穩定**。所�
 
 ## 四、完成謂詞（收束的終點，防無限寫入）
 
-`/flow-ship` 檢查，全中才算「做完」：
-
-```
-所有 tasks.md F-*/P-* 為 [x]
-  ∧ 所有 REQ-E2E-* 驗證綠
-  ∧ 所有 REQ-PERF-* 達 budget（p50+p95）
-  ∧ 所有 X-* cross-cutting 清空
-→ 寫 state.json phase="shipped"、發 <promise>COMPLETE</promise>、停止迭代
-```
+概念一句話：**全 tasks `[x]` ∧ 全 `REQ-E2E-*` 綠 ∧ 全 `REQ-PERF-*` 達 budget ∧ `X-*` 清空 → 寫 `phase="shipped"`、發 `<promise>COMPLETE</promise>`、停止迭代**。機讀權威版＝`/flow-ship` 出口的 `flow-state complete-check`（7 項全鏈對賬，逐項見 `gates-reference.md`，單一事實來源）。
 
 任一未中 → 回對應階段補，**不准出通過報告**。滿足謂詞 → **收**，不再打磨（Ralph 完成訊號的精神：有明確終點，不是真無限）。
 

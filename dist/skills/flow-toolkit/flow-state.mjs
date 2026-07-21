@@ -639,13 +639,27 @@ switch (cmd) {
     if (cov.uncovered.length) problems.push('這些 REQ 沒有任何 task 承接（會無聲蒸發到出貨）：\n    · ' + cov.uncovered.join('\n    · '));
     if (cov.phantom.length) problems.push('tasks.md 引用了 index 沒有的 REQ id（幻覺/打錯）：\n    · ' + cov.phantom.join('\n    · '));
     problems.push(...diff);
+    // mockup 鏈路對賬（原型存在時）：定版快照未漂移＋design.md「UI 對焦結論」承接每頁＋每頁被某 task 的
+    // mockupPages 承接——把 flow-plan Step 2.5 的散文 SHALL 與「task↔原型頁」對應升級成機檢（原本 worker 全靠猜）。
+    const dp = path.join(root, 'specs', 'design.md');
+    if (existsSync(path.join(root, 'specs', 'ui-mockups'))) {
+      const mHashes = await S.mockupFileHashes(root);
+      const mhp = S.mockupHashProblem(await S.readMockupIndex(root), mHashes);
+      if (mhp) problems.push(mhp);
+      const pageFiles = Object.keys(mHashes).filter(f => /^pages\//i.test(f) && /\.html?$/i.test(f));
+      const mCov = S.mockupPageCoverage(S.parseTasksMd(tasksMd), pageFiles);
+      problems.push(
+        ...S.uiFocusAudit(existsSync(dp) ? readFileSync(dp, 'utf8') : '', pageFiles),
+        ...mCov.phantom,
+        ...mCov.uncovered.map(p => `原型頁 ${p} 沒有任何 task 用 mockupPages 承接——worker 不知道哪個 task 對哪一頁（畫面會漏做/做歪）：在 tasks.md 該 task 續行補「mockupPages: ${p}」並同步 manifest`),
+      );
+    }
     if (problems.length) {
-      console.error('✗ 計畫對賬未過（REQ↔task 覆蓋 / tasks.md↔manifest 同步）：');
+      console.error('✗ 計畫對賬未過（REQ↔task 覆蓋 / tasks.md↔manifest 同步 / mockup 鏈路）：');
       for (const p of problems) console.error('  - ' + p);
       process.exit(2);
     }
     // REQ↔design 對照矩陣：只印表給使用者 plan 定版彈窗掃一眼（design 語意矛盾機器驗不了，不假裝機檢）
-    const dp = path.join(root, 'specs', 'design.md');
     if (existsSync(dp)) {
       const dmd = readFileSync(dp, 'utf8').toUpperCase();
       console.log('\nREQ↔design 對照（人工掃：每條 REQ 在 design.md 有沒有交代）：');

@@ -781,6 +781,46 @@ test('mockupFileHashes：只收文字資產、遞迴子目錄、行尾正規化�
   });
 });
 
+// ── mockupPages 機讀欄位鏈（task↔原型頁承接，plan-check/wave 投餵的事實來源）──
+
+test('parseTasksMd/planManifestDiff：mockupPages 續行欄位解析＋不一致點名；舊格式（無欄位）不誤判', () => {
+  const md = '- [ ] F-1 登入（對應 REQ-E2E-001）\n      blockedBy: — | conflictZone: api/ | mockupPages: pages/login.html, pages/register.html\n';
+  assert.deepEqual(S.parseTasksMd(md)[0].mockupPages, ['pages/login.html', 'pages/register.html']);
+  assert.deepEqual(S.planManifestDiff(md, { tasks: [{ id: 'F-1', blockedBy: [], conflictZone: ['api/'], mockupPages: ['pages/Register.html', 'pages/login.html'] }] }), [], '大小寫/順序外觀差異不誤判');
+  assert.match(S.planManifestDiff(md, { tasks: [{ id: 'F-1', blockedBy: [], conflictZone: ['api/'] }] }).join('\n'), /mockupPages 不一致/);
+  const old = '- [ ] F-2 x（對應 REQ-001）\n      blockedBy: — | conflictZone: api/\n';
+  assert.deepEqual(S.planManifestDiff(old, { tasks: [{ id: 'F-2', blockedBy: [], conflictZone: ['api/'] }] }), [], '無 mockupPages 的舊格式不誤判');
+});
+
+test('mockupPageCoverage：phantom 宣告不存在的頁、uncovered 沒人承接的頁；同頁多 task 合法', () => {
+  const r = S.mockupPageCoverage(
+    [{ id: 'F-1', mockupPages: ['pages/login.html'] }, { id: 'F-2', mockupPages: ['pages/Login.html', 'pages/ghost.html'] }],
+    ['pages/login.html', 'pages/items.html']);
+  assert.equal(r.phantom.length, 1);
+  assert.match(r.phantom[0], /F-2.*ghost/);
+  assert.deepEqual(r.uncovered, ['pages/items.html']);
+  const ok = S.mockupPageCoverage(
+    [{ id: 'F-1', mockupPages: ['pages/login.html'] }, { id: 'F-2', mockupPages: ['pages/login.html'] }],
+    ['pages/login.html']);
+  assert.deepEqual([...ok.phantom, ...ok.uncovered], [], '同頁多 task 承接合法');
+});
+
+test('uiFocusAudit：缺節/漏頁點名；節在＋逐頁提及 → 空', () => {
+  const md = '# design\n## UI 對焦結論\n畫面清單：pages/login.html（登入）\n';
+  assert.deepEqual(S.uiFocusAudit(md, ['pages/login.html']), []);
+  const miss = S.uiFocusAudit('# design\n只有別的', ['pages/login.html']);
+  assert.equal(miss.length, 2);
+  assert.match(miss[0], /UI 對焦結論/);
+  assert.match(miss[1], /login\.html/);
+  assert.match(S.uiFocusAudit(md, ['pages/login.html', 'pages/items.html']).join('\n'), /items\.html/);
+});
+
+test('manifestScopeHash：mockupPages 進投影（plan 後改動＝漂移要重算波次）', () => {
+  const a = S.manifestScopeHash({ tasks: [{ id: 'F-1', conflictZone: ['api/'], mockupPages: ['pages/a.html'] }] });
+  assert.notEqual(a, S.manifestScopeHash({ tasks: [{ id: 'F-1', conflictZone: ['api/'], mockupPages: ['pages/b.html'] }] }));
+  assert.equal(a, S.manifestScopeHash({ tasks: [{ id: 'F-1', conflictZone: ['api/'], mockupPages: ['pages/A.html'] }], mode: 'auto' }), '正規化＋語意無關欄位不影響');
+});
+
 // ── spec 審查 lens ledger（第 1 波）：驗形／終局／收斂判準的純核心 ──
 
 test('validateSpecReviewFindings：合法（含空陣列）過；缺欄/壞 id/前綴不符 lens/重複/lens 不符逐項點名', () => {

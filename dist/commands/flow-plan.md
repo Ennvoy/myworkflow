@@ -26,7 +26,7 @@ requirements 含 LLM / 雲端 / 支付 / 行動 / 前端框架關鍵字 → **We
 
 ## Step 2.5：UI 對焦結論（**僅 web 類**）
 
-若 `specs/ui-mockups/` 存在，design.md SHALL 含一節「UI 對焦結論」：畫面清單、元件分解、互動流程、設計 token（color/font/spacing）、**選用的品牌設計系統基底 slug（若有，build 沿用其 `tokens.css`）**。**後續技術方案以此為錨點反推 API / DB schema**（UI 先行，不是 schema 先行）。互動原型是定版合約：**build 沿用原型的 markup/tokens/版面，把 `app.js` 假資料層換成真 API**（原型 CRUD 動過的資料形狀直接餵 schema 設計）；但原型檔不直接搬進 src/ 當完成——照走 TDD＋真實資料鏈路驗證。
+若 `specs/ui-mockups/` 存在，design.md SHALL 含一節「UI 對焦結論」：**畫面清單（逐頁列 `pages/*.html` 檔名——plan-check 機檢每頁都被提及）**、元件分解、**互動狀態機（hover/active/disabled/loading——原型已做出來的狀態，逐一承接、別只寫「互動流程」四個字）**、**異常態（空狀態/載入中/錯誤/權限不足——原型狀態切換器展示過的畫面，build 要照做）**、設計 token（color/font/spacing）、選用的品牌設計系統基底 slug（`flow-state design-base` 落檔的那個，build 沿用其 `tokens.css`）。**後續技術方案以此為錨點反推 API / DB schema**（UI 先行，不是 schema 先行）。互動原型是定版合約：**build 沿用原型的 markup/tokens/版面，把 `app.js` 假資料層換成真 API**（原型 CRUD 動過的資料形狀直接餵 schema 設計）；但原型檔不直接搬進 src/ 當完成——照走 TDD＋真實資料鏈路驗證。
 
 ## Step 3：`specs/design.md`（技術決策 + 接縫契約）
 
@@ -47,6 +47,8 @@ requirements 含 LLM / 雲端 / 支付 / 行動 / 前端框架關鍵字 → **We
 
 **依賴分波（給多工用）**：標每個 task 的 `blockedBy`（依賴哪些 task）與 `conflictZone`（會改哪些檔/模組）。`/flow-build` 據此算「同一波可並行 = 依賴已完成 ∧ conflictZone 互不重疊」。共用檔/foundation 的 conflictZone 會跟很多 feature 重疊 → 自然被排到前面序列做。
 
+**mockupPages（僅 web 類、有互動原型時，SHALL）**：每個涉 UI 的 F-task 加 `mockupPages:` 欄位，機讀宣告它承接哪些定版原型頁（相對 `specs/ui-mockups/`，如 `pages/login.html`）——`wave --compute` 把對應頁帶進 worker prompt（worker 對著定版畫面實作、不是憑 REQ id 想像），`plan-check` 機檢「宣告的頁實存＋每個原型頁被某 task 承接」。範本見 `references/tasks-template.md`。
+
 水平拆解類（cli/api/framework/desktop-gui）：Features 段語意改成「功能模組」（能獨立驗收的模組，不必 user-facing），其餘不變。
 
 ## Step 4.5：並行度自檢（拆 conflictZone + 消 blockedBy）
@@ -66,7 +68,7 @@ requirements 含 LLM / 雲端 / 支付 / 行動 / 前端框架關鍵字 → **We
 flow-state plan-check
 ```
 
-它機檢（全數確定性、模型偽造不了）——**C-15 誠實邊界：只驗「REQ id 有沒有被承接」的字面覆蓋，不驗 task 描述的實質品質/深度**（實質由 lens 審查、紅軍、TDD、藍軍那幾層人工智慧把關；別把 plan-check 綠當成「需求真的被完整實作」的保證）：① **REQ↔task 覆蓋**——凍結 index（`.flow/trace/req-index.json`）的每條 REQ id 都要在 tasks.md 出現（被某 task 承接），tasks.md 引用的 REQ id 都要實存於 index（防幻覺）；② **tasks.md↔manifest 逐欄一致**——task 集合／`blockedBy`／`conflictZone` 不一致就 exit 2（堵「manifest 比 tasks.md 寬＝scope/wave 閘門被靜默調鬆」）；③ requirements.md hash 對賬凍結分母（凍結後偷改在這裡就被抓）。通過才落 `.flow/trace/plan-check.json`（記 manifest hash，complete-check 對賬）＋寫 `phase="plan-done"`。它也順手印一張 **REQ↔design 對照表**給你在凍結彈窗掃一眼（design 語意矛盾機器驗不了、留人工）。
+它機檢（全數確定性、模型偽造不了）——**C-15 誠實邊界：只驗「REQ id 有沒有被承接」的字面覆蓋，不驗 task 描述的實質品質/深度**（實質由 lens 審查、紅軍、TDD、藍軍那幾層人工智慧把關；別把 plan-check 綠當成「需求真的被完整實作」的保證）：① **REQ↔task 覆蓋**——凍結 index（`.flow/trace/req-index.json`）的每條 REQ id 都要在 tasks.md 出現（被某 task 承接），tasks.md 引用的 REQ id 都要實存於 index（防幻覺）；② **tasks.md↔manifest 逐欄一致**——task 集合／`blockedBy`／`conflictZone`／`mockupPages` 不一致就 exit 2（堵「manifest 比 tasks.md 寬＝scope/wave 閘門被靜默調鬆」）；③ requirements.md hash 對賬凍結分母（凍結後偷改在這裡就被抓）；④ **mockup 鏈路（`specs/ui-mockups/` 存在時）**——原型與定版快照（`mockup-index.json`）hash 對賬（凍結後偷改原型即擋）＋design.md「UI 對焦結論」節存在且逐頁提及每個 `pages/*.html`＋每個原型頁被某 task 的 `mockupPages` 承接（宣告的頁要實存）。通過才落 `.flow/trace/plan-check.json`（記 manifest hash，complete-check 對賬）＋寫 `phase="plan-done"`。它也順手印一張 **REQ↔design 對照表**給你在凍結彈窗掃一眼（design 語意矛盾機器驗不了、留人工）。
 
 - **機讀版每個 task SHALL 帶 `blockedBy` + `conflictZone`**：`/flow-build` 據此算波次，且 `flow-state scope --wave` 會讀 `manifest.json` 的 `conflictZone` 擋 worker 越界。**tasks.md 與 manifest 對不上、或有 REQ 沒被任何 task 承接，plan-check 直接 exit 2**——把「計畫完整承接需求」從散文升級成硬閘門。
 - 別手改 state.json 裸寫 `phase=plan-done` 繞過——`flow-spec-gate` hook 會 exit 2 擋（與 spec-done 同構）。

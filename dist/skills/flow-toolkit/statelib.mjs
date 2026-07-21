@@ -671,24 +671,26 @@ export function reqHashProblem(index, currentReqMd) {
 }
 
 // tasks.md 解析（純函式）：抽 task id＋blockedBy＋conflictZone，供 plan-check 對賬 manifest。
-// 格式（tasks-template）：「- [ ] F-1 標題（對應 REQ-E2E-001）」下一行「blockedBy: A,B | conflictZone: x/, y/」。
+// 格式（tasks-template）：「- [ ] F-1 標題（對應 REQ-E2E-001）」下一行「blockedBy: A,B | conflictZone: x/, y/ | mockupPages: pages/a.html」。
 const splitDecl = s => s.split(/[,，]/).map(x => x.trim()).filter(x => x && x !== '—' && x !== '-' && x !== '–');
 export function parseTasksMd(md) {
   const lines = String(md || '').split(/\r?\n/);
   const tasks = [];
   let cur = null;
-  const scanDecl = (raw) => {                                      // 同行或續行的 blockedBy/conflictZone 都吃
+  const scanDecl = (raw) => {                                      // 同行或續行的 blockedBy/conflictZone/mockupPages 都吃
     if (!cur) return;
     const bb = raw.match(/blockedBy\s*[:：]\s*([^|]*)/i);
     if (bb) cur.blockedBy = splitDecl(bb[1]);
     const cz = raw.match(/conflictZone\s*[:：]\s*([^|]*)/i);        // 到 | 為止（與 blockedBy 對稱，欄位順序無關）
     if (cz) cur.conflictZone = splitDecl(cz[1]);
+    const mp = raw.match(/mockupPages\s*[:：]\s*([^|]*)/i);         // web 類 F-task 承接的原型頁（相對 specs/ui-mockups/）
+    if (mp) cur.mockupPages = splitDecl(mp[1]);
   };
   for (const raw of lines) {
     const m = raw.match(LINE_RE);
     if (m) {
       const id = lineId(m[4]);
-      if (id) { cur = { id, blockedBy: [], conflictZone: [] }; tasks.push(cur); scanDecl(raw); } else cur = null;   // 承接 inline 宣告
+      if (id) { cur = { id, blockedBy: [], conflictZone: [], mockupPages: [] }; tasks.push(cur); scanDecl(raw); } else cur = null;   // 承接 inline 宣告
       continue;
     }
     scanDecl(raw);
@@ -738,6 +740,7 @@ export function planManifestDiff(tasksMd, manifest) {
     if (!mt) continue;
     if (!sortedEq(t.blockedBy, mt.blockedBy || [])) problems.push(`「${t.id}」blockedBy 不一致：tasks.md=[${t.blockedBy}] vs manifest=[${mt.blockedBy || []}]`);
     if (!sortedEqZone(t.conflictZone, mt.conflictZone || [])) problems.push(`「${t.id}」conflictZone 不一致：tasks.md=[${t.conflictZone}] vs manifest=[${mt.conflictZone || []}]（scope 閘門讀 manifest，寫寬＝檔案安全被鬆綁）`);
+    if (!sortedEqZone(t.mockupPages || [], mt.mockupPages || [])) problems.push(`「${t.id}」mockupPages 不一致：tasks.md=[${t.mockupPages || []}] vs manifest=[${mt.mockupPages || []}]（wave 投餵讀 manifest，寫歪＝worker 對錯原型頁）`);
   }
   return problems;
 }
@@ -753,14 +756,16 @@ export async function readPlanCheck(root) { return readJSON(planCheckPath(root),
 //   讀到漂移版本（H10）。這裡把「波次拓樸」與「每 task 逐字 REQ 文字」都算成一個確定性檔，dispatch 只讀它。
 const wavePlanPath = root => path.join(traceDir(root), 'wave-plan.json');
 
-// manifest 的「波次/scope 語意」canonical hash——只投影 tasks 的 id/blockedBy/conflictZone（排序正規化），
+// manifest 的「波次/scope 語意」canonical hash——只投影 tasks 的 id/blockedBy/conflictZone/mockupPages（排序正規化），
 // 對 updatedAt/mode/projectType 等語意無關欄位穩定：否則 wave --compute/plan-check 後跑 mode/project-type
 // （writeManifest 會 bump updatedAt）就誤判「manifest 漂移」擋 scope。buildWavePlan/waveMembershipProblem/writePlanCheck/complete-check 四處共用同一投影。
+// mockupPages 進投影：它是 wave 投餵的事實來源之一（worker 對哪一頁），plan 後改動同樣要逼重算波次。
 export function manifestScopeHash(manifest) {
   const tasks = (((manifest && manifest.tasks) || []).map(t => ({
     id: t.id,
     blockedBy: [...(t.blockedBy || [])].sort(),
     conflictZone: [...(t.conflictZone || [])].map(normZone).sort(),
+    mockupPages: [...(t.mockupPages || [])].map(normZone).sort(),
   }))).sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   return sha256Text(JSON.stringify(tasks));
 }
@@ -1308,6 +1313,42 @@ export function mockupHashProblem(index, currentFileHashes) {
   const fmt = (label, arr) => arr.length ? `${label} ${arr.slice(0, 5).join('、')}${arr.length > 5 ? `…等 ${arr.length} 檔` : ''}` : '';
   const bits = [fmt('改動', changed), fmt('刪除', removed), fmt('新增', added)].filter(Boolean);
   return `specs/ui-mockups/ 已與定版快照不符（${bits.join('；')}）——mockup 是使用者拍板的 UI 錨點，凍結後不得靜默改動：要嘛還原檔案，要嘛照正路重定版（mockup-check → 使用者重新走查 → decision ui-signoff → spec-ready --freeze 重建快照）。`;
+}
+
+// ── mockup 頁面承接對賬（plan-check 用，純函式）──
+// 病根：F-task 只有 REQ id 間接對到走查卡，worker 得自己猜哪個 task 對哪一頁——對錯頁/漏頁無人抓。
+// F-task 以 mockupPages 續行欄位（相對 specs/ui-mockups/，pages/*.html）機讀宣告承接哪些原型頁。
+// phantom＝宣告的頁不存在（打錯字→worker 對錯頁）；uncovered＝原型頁沒任何 task 承接（畫面漏做）。
+export function mockupPageCoverage(parsedTasks, pageFiles) {
+  const norm = p => normPath(p).toLowerCase();
+  const pages = (pageFiles || []).map(norm);
+  const pageSet = new Set(pages);
+  const claimed = new Set();
+  const phantom = [];
+  for (const t of (parsedTasks || [])) for (const p of (t.mockupPages || [])) {
+    const n = norm(p);
+    if (!pageSet.has(n)) phantom.push(`「${t.id}」mockupPages 宣告的原型頁不存在：${p}（打錯字？只認 specs/ui-mockups/ 底下實存的 pages/*.html）`);
+    else claimed.add(n);
+  }
+  const uncovered = (pageFiles || []).filter(p => !claimed.has(norm(p)));
+  return { phantom, uncovered };
+}
+
+// ── design.md「UI 對焦結論」機檢（plan-check 用，純函式）──
+// flow-plan Step 2.5 的 SHALL 原本是純散文（模型自覺、閘門不驗）。這裡驗兩件確定性的：
+// ① 該節標題存在；② 每個原型頁檔名在 design.md 被提及（畫面清單真的承接了全部畫面）。
+// 內容品質（元件分解對不對、狀態機齊不齊）機器驗不了，仍留 plan 定版彈窗人工掃。
+export function uiFocusAudit(designMd, pageFiles) {
+  const md = String(designMd || '');
+  const problems = [];
+  if (!/^#{1,6}[^\n]*UI\s*對焦結論/im.test(md))
+    problems.push('design.md 查無「UI 對焦結論」一節——specs/ui-mockups/ 存在時 SHALL 有（畫面清單/元件分解/互動狀態機/異常態/設計 token/品牌基底），見 flow-plan Step 2.5');
+  const lower = md.toLowerCase();
+  for (const p of (pageFiles || [])) {
+    const base = normPath(p).toLowerCase().split('/').pop();
+    if (!lower.includes(base)) problems.push(`design.md 未提及原型頁 ${p}——「UI 對焦結論」的畫面清單漏了這一頁？（design 沒承接＝build 沒藍圖）`);
+  }
+  return problems;
 }
 
 // ── Playwright journey 真實性審計（純函式可測；導航版「禁 mock 假綠」的確定性節點）──

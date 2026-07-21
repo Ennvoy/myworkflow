@@ -23,11 +23,11 @@
 判準：「能向使用者 demo 一次」「對應一條完整 REQ 或 REQ-E2E-*」。
 
 - [ ] F-1 訪客註冊登入（對應 REQ-E2E-001）
-      blockedBy: P-1,P-2,P-3 | conflictZone: features/auth-ui, api/auth
+      blockedBy: P-1,P-2,P-3 | conflictZone: features/auth-ui, api/auth | mockupPages: pages/register.html, pages/login.html
 - [ ] F-2 建立/列出 item（對應 REQ-E2E-002）
-      blockedBy: P-1,P-3 | conflictZone: features/items, api/items
+      blockedBy: P-1,P-3 | conflictZone: features/items, api/items | mockupPages: pages/items.html, pages/item-new.html
 - [ ] F-3 item 搜尋/分頁（對應 REQ-E2E-003、REQ-PERF-002）
-      blockedBy: F-2 | conflictZone: features/items, api/items
+      blockedBy: F-2 | conflictZone: features/items, api/items | mockupPages: pages/items.html
 
 ## Cross-cutting（X-*，ship 前必清）
 判準：「跨 feature 才能做」「不屬任一 user story」。/flow-ship Step 4 強制檢查未清不放行。
@@ -42,9 +42,10 @@
 
 ## 依賴分波（給多工用）
 
-每個 task 標兩個欄位，`/flow-build` 的 `wave --compute` 據此算可並行波次（判準與拓樸細節見 `build-playbook.md` §一，單一事實來源）：
+每個 task 標欄位，`/flow-build` 的 `wave --compute` 據此算可並行波次（判準與拓樸細節見 `build-playbook.md` §一，單一事實來源）：
 - **`blockedBy`**：依賴哪些 task 先完成。
 - **`conflictZone`**：這個 task 會改哪些檔/模組。共用檔（schema/router/theme）的 conflictZone 會跟很多 feature 重疊 → 自然被排到前面序列做（避免 merge 地獄）。
+- **`mockupPages`**（僅 web 類、有互動原型時）：這個 task 承接哪些定版原型頁（相對 `specs/ui-mockups/` 的 `pages/*.html`）。`wave --compute` 把它帶進 worker prompt（worker 對著定版畫面做、不用猜）；`plan-check` 機檢：宣告的頁要實存、每個原型頁要被某 task 承接（漏承接＝畫面會漏做）。同一頁可被多個 task 承接（如共用列表頁）。
 
 **分波範例**：
 - Wave 0（序列）：P-1 → P-2、P-3（foundation 先做完 merge 進 trunk）

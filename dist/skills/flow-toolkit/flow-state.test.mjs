@@ -454,6 +454,53 @@ test('design-base：落檔 manifest+state.json；非法 slug → exit 1（補文
   });
 });
 
+// web 類含互動原型的凍結 fixture（mockup 鏈路 CLI 測試共同前置）：index＋pages/login.html＋app.js＋ui-signoff
+async function frozenWebRoot(root) {
+  await S.init(root, { project: 'p', tasks: [] });
+  await S.writeStateJson(root, { mode: 'manual' });
+  await writeReq(root, READY_REQ);
+  run(['project-type', 'web-app'], root);
+  await writeMockups(root, '<h2>REQ-E2E-001</h2><a href="pages/login.html">走</a>');
+  await mkdir(path.join(root, 'specs', 'ui-mockups', 'pages'), { recursive: true });
+  await writeFile(path.join(root, 'specs', 'ui-mockups', 'pages', 'login.html'), PAGE_OK, 'utf8');
+  await writeFile(path.join(root, 'specs', 'ui-mockups', 'app.js'), 'const db = {};', 'utf8');
+  await writeFile(path.join(root, 'specs', 'ui-mockups', 'tokens.css'), ':root { --color-primary: #333; --font-body: sans-serif; }', 'utf8');
+  await passLenses(root);
+  run(['decision', 'ui-signoff', '--choice', '方向 OK', '--why', 'x'], root);
+  const r = run(['spec-ready', '--freeze'], root);
+  assert.equal(r.code, 0, 'frozenWebRoot 凍結失敗：' + r.err);
+}
+
+test('plan-check：mockup 鏈路對賬——UI 對焦結論缺/頁未承接 → exit 2；補齊 → 過；凍結後偷改原型 → 擋', async () => {
+  await withRoot(async (root) => {
+    await frozenWebRoot(root);
+    // tasks 承接了 REQ 但無 mockupPages、design.md 無「UI 對焦結論」→ 擋
+    await writeFile(path.join(root, 'specs', 'tasks.md'), '- [ ] F-1 全部（對應 REQ-001 REQ-E2E-001 REQ-PERF-001）\n      blockedBy: — | conflictZone: api/\n', 'utf8');
+    await S.writeManifest(root, { tasks: [{ id: 'F-1', blockedBy: [], conflictZone: ['api/'] }] });
+    const r0 = run(['plan-check'], root);
+    assert.equal(r0.code, 2, 'mockup 鏈路缺 → 擋');
+    assert.match(r0.err, /UI 對焦結論/);
+    assert.match(r0.err, /pages\/login\.html/, '未承接的原型頁點名');
+    // 宣告幽靈頁 → 擋
+    await writeFile(path.join(root, 'specs', 'design.md'), '# design\n## UI 對焦結論\n畫面清單：pages/login.html\n', 'utf8');
+    await writeFile(path.join(root, 'specs', 'tasks.md'), '- [ ] F-1 全部（對應 REQ-001 REQ-E2E-001 REQ-PERF-001）\n      blockedBy: — | conflictZone: api/ | mockupPages: pages/ghost.html\n', 'utf8');
+    await S.writeManifest(root, { tasks: [{ id: 'F-1', blockedBy: [], conflictZone: ['api/'], mockupPages: ['pages/ghost.html'] }] });
+    const rG = run(['plan-check'], root);
+    assert.equal(rG.code, 2);
+    assert.match(rG.err, /ghost/);
+    // 補齊（design 提及每頁＋每頁被承接＋manifest 同步）→ 過
+    await writeFile(path.join(root, 'specs', 'tasks.md'), '- [ ] F-1 全部（對應 REQ-001 REQ-E2E-001 REQ-PERF-001）\n      blockedBy: — | conflictZone: api/ | mockupPages: pages/login.html\n', 'utf8');
+    await S.writeManifest(root, { tasks: [{ id: 'F-1', blockedBy: [], conflictZone: ['api/'], mockupPages: ['pages/login.html'] }] });
+    const r1 = run(['plan-check'], root);
+    assert.equal(r1.code, 0, r1.err);
+    // 凍結後偷改原型 → hash 對賬擋（孤兒檔病根：定版後被改沒人抓，已封）
+    await writeFile(path.join(root, 'specs', 'ui-mockups', 'pages', 'login.html'), PAGE_OK + '<p>偷改</p>', 'utf8');
+    const r2 = run(['plan-check'], root);
+    assert.equal(r2.code, 2, '偷改原型 → 擋');
+    assert.match(r2.err, /定版快照不符/);
+  });
+});
+
 // ── 第 2 波：全鏈路對賬 CLI 端到端 ──
 
 // 凍結一個乾淨 spec（含 lens 收斂＋projectType），回傳 root——W2 各 CLI 測試的共同前置

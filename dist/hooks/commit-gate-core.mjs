@@ -113,7 +113,7 @@ export async function taskDeliveredReason(cwd, msg) {
   const list = blocking.join(', ');
   return [
     `Flow commit gate：擋下 commit —— 這些 task 還沒標完成就要 commit（違反「先標、再 commit」）：${list}`,
-    `  先跑：node "${process.env.HOME || process.env.USERPROFILE || '~'}/.claude/skills/flow-toolkit/flow-state.mjs" done ${blocking[0]}`,
+    `  先跑：node "${process.env.USERPROFILE || process.env.HOME || '~'}/.claude/skills/flow-toolkit/flow-state.mjs" done ${blocking[0]}`,
     `  （done 會驗 .flow/state.json 的 verify/tdd——還沒真跑 /flow-verify 綠燈會被它擋；綠了它翻 tasks.md [x] + 寫 ledger delivered。）`,
     `  別手改 ledger/tasks.md 繞過本閘門（系統性違規）；真的非 task commit 才改 commit scope 不帶 task id。`,
   ].join('\n');

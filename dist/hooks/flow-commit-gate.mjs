@@ -41,7 +41,9 @@ export async function commitGateCheck(input) {
   const ti = input.tool_input ?? input.toolInput ?? {};
   const cmd = String(ti.command ?? '');
   // 只攔真正的 commit；放行非 commit / 唯讀 git（--amend 不豁免，見檔頭）。
-  if (!/\bgit\b[^\n]*\bcommit\b/.test(cmd)) return PASS;
+  // H1（體檢）：JS \b 對「commit-graph」的 t 後連字號一樣算邊界——加 (?!-) 排除 commit-graph/commit-tree
+  // 這類非提交子命令、(?<![=-]) 排除 --grep=commit／分支名 fix-commit 這類唯讀語境，免得誤攔。
+  if (!/\bgit\b[^\n]*(?<![=-])\bcommit\b(?!-)/.test(cmd)) return PASS;
 
   const cwd = input.cwd ?? process.cwd();
   if (!existsSync(join(cwd, '.flow'))) return PASS; // 非 flow 專案

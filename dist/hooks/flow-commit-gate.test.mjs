@@ -192,6 +192,18 @@ test('#1：git -c "core.hooksPath=/dev/null" commit → exit 2', async () => {
   });
 });
 
+test('H1：含 commit 字樣的非提交/唯讀指令 → 放行；真 commit 照擋（誤攔回歸）', async () => {
+  await withFlowRepo(async (root) => {
+    await writeFile(path.join(root, '.env'), 'API_KEY=sk-real-secret\n', 'utf8');
+    execFileSync('git', ['-C', root, 'add', '.env']);
+    assert.equal(runHook(bash('git commit-graph write --reachable', root)).code, 0, 'commit-graph 非提交子命令');
+    assert.equal(runHook(bash('git commit-tree HEAD^{tree}', root)).code, 0, 'commit-tree 非提交子命令');
+    assert.equal(runHook(bash('git log --grep=commit', root)).code, 0, '--grep=commit 唯讀');
+    assert.equal(runHook(bash('git checkout fix-commit', root)).code, 0, '分支名含 commit 不誤攔');
+    assert.equal(runHook(bash('git commit -m "x"', root)).code, 2, '對照組：真 commit 仍被 staged .env 擋');
+  });
+});
+
 test('#2：git commit -n（--no-verify 短式）→ exit 2', async () => {
   await withFlowRepo(async (root) => {
     assert.equal(runHook(bash('git commit -n -m "wip"', root)).code, 2);

@@ -16,7 +16,9 @@ function stripBom(s) {
 let raw = '';
 process.stdin.setEncoding('utf8');
 process.stdin.on('data', (c) => (raw += c));
-process.stdin.on('end', () => {
+process.stdin.on('end', () => { main().catch(() => process.exit(0)); });
+
+async function main() {
   let input;
   try {
     input = JSON.parse(stripBom(raw).trim() || '{}');
@@ -40,8 +42,12 @@ process.stdin.on('end', () => {
   const verify = String(state.verify ?? '').trim();
   const tdd = String(state.tdd ?? '').trim();
   const isNone = (v) => v === '' || /^none$/i.test(v);
-  // verify SHALL be "ok:<ref>"（冒號後可空白）——與 markTaskDone 的 isValidVerify 同判準（消除「TaskUpdate 放行但 done 擋」的分歧）。
-  const verifyOk = /^ok:\s*\S/i.test(verify);
+  // A9：verify 判準單一事實來源＝statelib.isValidVerify（markTaskDone 同一把尺）——消除「hooks 與 CLI
+  // 各養一份正則、靠註解口頭同步」的漂移點。statelib 缺檔（部分安裝）→ 退回同義字面，僅為 fail-open 不 brick。
+  let isValidVerify;
+  try { ({ isValidVerify } = await import(new URL('../skills/flow-toolkit/statelib.mjs', import.meta.url).href)); }
+  catch { isValidVerify = (v) => /^ok:\s*\S/i.test(String(v ?? '').trim()); }
+  const verifyOk = isValidVerify(verify);
   // tdd acceptable when it carries a real value: green / refactored / red:<ref> / n/a / skipped:<reason>
   const tddOk = !isNone(tdd);
 
@@ -63,4 +69,4 @@ process.stdin.on('end', () => {
   }
 
   process.exit(0);
-});
+}

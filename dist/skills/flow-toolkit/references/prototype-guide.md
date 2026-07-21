@@ -50,4 +50,4 @@ specs/ui-mockups/
 
 - 互動原型成本約靜態 mockup 2–3 倍——**值**：UI 方向是最貴的返工來源，且 build 沿用原型 markup/tokens 會省回來。頁數多時可 fan-out 平行產頁（共用 `tokens.css`/`app.js` 先序列釘死，各頁互不重疊）。
 - 原型內**禁**過度工程：不抽共用元件系統、不寫 router、不做真 auth——夠讓使用者走完 journey、感受成品即可（Simplicity First）。
-- 原型定版後就是錨點：`/flow-plan` 的「UI 對焦結論」引用它反推 API/DB；build 改了版面＝需求級變更，回頭走正式變更。
+- 原型定版後就是錨點，**且這條錨鏈全程有閘門**（不再是散文期望）：`spec-ready --freeze` 把整個 `specs/ui-mockups/` 逐檔 hash 凍成 `mockup-index.json`（偷改必抓）；`/flow-plan` 的「UI 對焦結論」與 task 的 `mockupPages` 承接每一頁（plan-check 機檢）；`wave --compute` 把 `tokens.css` 逐字＋各 task 原型頁投餵 build worker；`ui-fidelity` 在 verify/ship 驗 tokens 真的被沿用（complete-check 對賬）。build 改了版面＝需求級變更，worker 標 BLOCKED 回頭走正式變更。

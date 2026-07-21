@@ -53,9 +53,31 @@ test('dispatch：全放行（manual、唯讀命令）→ exit 0；壞輸入 → 
   assert.equal(spawnSync(process.execPath, [HOOK], { input: '{bad', encoding: 'utf8' }).status, 0);
 });
 
-test('dispatchWiringProblems：dispatch 真的引用三道 → 空；漏一道 → 回該道', () => {
+test('dispatchWiringProblems：dispatch 引用三道閘門＋提示器 → 空；漏引用 → 回該檔', () => {
   const src = readFileSync(HOOK, 'utf8');
-  assert.deepEqual(S.dispatchWiringProblems(src), [], 'flow-dispatch.mjs 引用了三道合併閘門');
+  assert.deepEqual(S.dispatchWiringProblems(src), [], 'flow-dispatch.mjs 引用了三道合併閘門＋design 提示器');
   assert.deepEqual(S.dispatchWiringProblems("import { autoGateCheck } from './flow-auto-gate.mjs'"),
-    ['flow-commit-gate.mjs', 'flow-spec-gate.mjs'], '漏引用即回報');
+    ['flow-commit-gate.mjs', 'flow-spec-gate.mjs', 'flow-design-base-hint.mjs'], '漏引用即回報');
+});
+
+test('C-3②：dispatch → design 基底提示：新建前端檔注入 additionalContext、同檔僅一次、阻擋優先', async () => {
+  await withFlow(async (root) => {
+    // seen 檔寫進 tmp 家目錄，不汙染真 ~/.claude
+    const env = { ...process.env, USERPROFILE: root, HOME: root };
+    const hint = (fp) => spawnSync(process.execPath, [HOOK],
+      { input: JSON.stringify(write(root, fp, '<div/>')), encoding: 'utf8', env });
+    const r1 = hint(path.join(root, 'src', 'App.tsx'));
+    assert.equal(r1.status, 0, '非阻擋');
+    assert.match(r1.stdout, /設計系統基底/, '首見前端檔注入提示');
+    assert.match(r1.stdout, /"permissionDecision":"allow"/, '照舊 allow 不擋');
+    const r2 = hint(path.join(root, 'src', 'App.tsx'));
+    assert.doesNotMatch(String(r2.stdout || ''), /設計系統基底/, '同檔第二次不重複');
+    const r3 = hint(path.join(root, 'src', 'util.mjs'));
+    assert.equal(String(r3.stdout || ''), '', '非前端檔不注入');
+    // 阻擋優先：spec-gate 命中時 exit 2、不帶提示 stdout
+    const rb = spawnSync(process.execPath, [HOOK],
+      { input: JSON.stringify(write(root, path.join(root, '.flow', 'state.json'), '{"phase":"spec-done"}')), encoding: 'utf8', env });
+    assert.equal(rb.status, 2);
+    assert.equal(String(rb.stdout || ''), '', '被擋時不注入提示');
+  }, 'manual');
 });

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-// Flow SDD 檔案膨脹偵測 hook（SessionStart + UserPromptSubmit）。唯讀、確定性、非阻擋。
+// Flow SDD 檔案膨脹偵測 hook（SessionStart + PostToolUse Write|Edit；A6 移除 UserPromptSubmit 掛點，
+// 事件分支保留＝舊接線殘留時行為不變）。唯讀、確定性、非阻擋。
 // 判據：SDD 檔膨脹——statSync 量 specs/*.md，任一 >50KB（抓「文件越寫越長」），命中就注入
 //       「該 /flow-compact」提醒（hook 喚不動模型、由模型語意收束）。
 // No-op 非 Flow 專案。任何錯一律 exit 0 放行（絕不擋使用者）。**絕不 exit 2**（過早 compact 丟脈絡比晚收束更糟）。

@@ -62,7 +62,7 @@ specs 一 concern 一檔、凍結後每迴圈重讀；**計畫是可丟棄／可
 
 - **Hook 自動擋**：`flow-verify-gate`（verify 空擋完成）、`flow-commit-gate`（secrets／驗證垃圾／未 done 點名／繞 pre-commit）、`flow-spec-gate`（裸寫 phase/ledger）、`flow-auto-gate`（自駕三硬擋＋policy.json 預核准）、`flow-stop-gate`（自駕全 [x] 未過 complete-check 不准收工）、`flow-precompact`（壓縮前自動 checkpoint）。
 - **Script 閘門（SHALL 跑，exit 2）**：`spec-ready --freeze`（開放問題清零＋lens 收斂＋落凍結分母 req-index）、`mockup-check`、`plan-check`（REQ↔task 覆蓋）、`wave --compute`（波次拓樸＋逐字投餵）、`scope --wave`（檔案越界；git 失敗 fail-closed）、`redteam --wave`（攻擊面真的變成測試）、`journey-check`（禁 mock 假綠；通過落 trace）、`verify-e2e`/`verify-perf`（pass 證據須實存檔）、`complete-check`（完成謂詞全鏈對賬，含 web 須 journey-check@HEAD）、`done`（自帶閘門＋交付歸零＋journal 歸檔）、`mode auto`（guardrail 未過拒寫）。
-- **非阻擋偵測**：`stall-monitor`（doom-loop 斷路器）、`size-check`（SessionStart／UserPromptSubmit／PostToolUse 寫 specs 時——自駕不打字也不失明）、`session-start`（reconstruct 現況注入＋hook 接線對賬＋dist↔安裝區雙向同步對賬＋`CLAUDE_CODE_SUBAGENT_MODEL` 偵測＋git pre-commit 兜底冪等安裝）。
+- **非阻擋偵測**：`stall-monitor`（doom-loop 斷路器）、`size-check`（SessionStart／PostToolUse 寫 specs 時——自駕不打字也不失明）、`session-start`（reconstruct 現況注入＋hook 接線對賬＋dist↔安裝區雙向同步對賬＋`CLAUDE_CODE_SUBAGENT_MODEL` 偵測＋git pre-commit 兜底冪等安裝）。
 - **崩潰容錯**：`.flow/` JSON 原子寫（temp+rename）、mid-task checkpoint（PreCompact 自動補）、done 交付歸零 `verifyTaskId`、journal 歸檔不刪（`.flow/archive/`）。
 
 git commit+push（`git-tools` skill）、`.flow/` 狀態寫入、verify runner 都是確定性節點，不靠模型判斷。完成一個 task SHALL 跑 `flow-state done <id>`，別手改檔繞過任一閘門。

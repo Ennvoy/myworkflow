@@ -12,21 +12,12 @@
         ]
       },
       {
-        "_comment": "C-3① 安檢門四合一：commit-gate/auto-gate/spec-gate 合併成 flow-dispatch 一次 node 冷啟跑完（省每工具呼叫 spawn 3 支的冷啟稅）。各道邏輯仍在原檔、可單跑；dispatch 接線完整性由 session-start 對賬。",
+        "_comment": "C-3①② 安檢門四合一＋提示器併車：commit-gate/auto-gate/spec-gate 三道閘門與 design-base-hint 提示器合併成 flow-dispatch 一次 node 冷啟跑完（省每工具呼叫多 spawn 的冷啟稅）。各道邏輯仍在原檔、可單跑；dispatch 接線完整性由 session-start 對賬。",
         "matcher": "Write|Edit|Bash|PowerShell",
         "hooks": [
           {
             "type": "command",
             "command": "node \"{{CLAUDE_HOME}}/hooks/flow-dispatch.mjs\""
-          }
-        ]
-      },
-      {
-        "matcher": "Write",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"{{CLAUDE_HOME}}/hooks/flow-design-base-hint.mjs\""
           }
         ]
       }
@@ -81,16 +72,7 @@
         ]
       },
       {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"{{CLAUDE_HOME}}/hooks/flow-size-check.mjs\""
-          }
-        ]
-      }
-    ],
-    "UserPromptSubmit": [
-      {
+        "_comment": "A6：size-check 只掛 SessionStart（開場）＋PostToolUse Write|Edit（寫檔後）——UserPromptSubmit 掛點移除：每句話一次 node 冷啟、邊際偵測價值近零（膨脹必經寫檔，PostToolUse 已覆蓋）。",
         "hooks": [
           {
             "type": "command",

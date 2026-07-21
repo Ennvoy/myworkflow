@@ -1455,9 +1455,9 @@ export function briefStatus(view) {
 // ── 安裝完整性自檢（W0-2/W0-5，SessionStart 消費）─────────────────────────────
 // hook 接線對賬：hooks 目錄實存的 flow-*.mjs（排除 .test 與非註冊型）都應出現在 settings.json 文字裡。
 // 「檔案在、沒接線」＝閘門形同虛設（flow-auto-gate 漏接線的實證教訓）。純函式，動作交呼叫端。
-// C-3①：commit/auto/spec 三道閘門經 flow-dispatch 合併呼叫、**不直接註冊** settings.json（省 spawn），故從直接接線檢查豁免；
-// 改由 dispatchWiringProblems 驗「flow-dispatch.mjs 真的引用三道」——防「合併後漏掉一道＝靜默失效」（同 W0-1 auto-gate 漏接線教訓）。
-const WIRING_EXEMPT = new Set(['flow-precommit.mjs', 'flow-commit-gate.mjs', 'flow-auto-gate.mjs', 'flow-spec-gate.mjs']);
+// C-3①②：commit/auto/spec 三道閘門與 design-base-hint 提示器經 flow-dispatch 合併呼叫、**不直接註冊** settings.json（省 spawn），
+// 故從直接接線檢查豁免；改由 dispatchWiringProblems 驗「flow-dispatch.mjs 真的引用它們」——防「合併後漏掉＝靜默失效」（同 W0-1 教訓）。
+const WIRING_EXEMPT = new Set(['flow-precommit.mjs', 'flow-commit-gate.mjs', 'flow-auto-gate.mjs', 'flow-spec-gate.mjs', 'flow-design-base-hint.mjs']);
 export function hookWiringProblems(hookFiles, settingsText) {
   const txt = String(settingsText || '');
   return (hookFiles || [])
@@ -1465,10 +1465,12 @@ export function hookWiringProblems(hookFiles, settingsText) {
     .filter((f) => !txt.includes(f));
 }
 export const DISPATCHED_GATES = ['flow-commit-gate.mjs', 'flow-auto-gate.mjs', 'flow-spec-gate.mjs'];
-// 回 flow-dispatch.mjs 沒引用的閘門檔名（空＝三道都在）。純函式；dispatchSrc = flow-dispatch.mjs 全文。
+// C-3②：非阻擋提示器也併進 dispatch——漏引用只是靜默少提醒（非閘門失守），但一樣要對賬出來。
+export const DISPATCHED_HINTS = ['flow-design-base-hint.mjs'];
+// 回 flow-dispatch.mjs 沒引用的檔名（空＝閘門與提示器都在）。純函式；dispatchSrc = flow-dispatch.mjs 全文。
 export function dispatchWiringProblems(dispatchSrc) {
   const src = String(dispatchSrc || '');
-  return DISPATCHED_GATES.filter((g) => !src.includes(g));
+  return [...DISPATCHED_GATES, ...DISPATCHED_HINTS].filter((g) => !src.includes(g));
 }
 
 // 雙向同步對賬（來源 dist ↔ 安裝區）：內容 hash 不一致或安裝區缺檔都回報，differing 附 mtime 方向提示

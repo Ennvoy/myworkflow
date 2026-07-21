@@ -31,7 +31,7 @@
 ## 非阻擋偵測節點（注入 additionalContext，不 exit 2）
 
 - **flow-stall-monitor**（PostToolUse: Bash/PowerShell）——讀 runner 真實 exit code 記 journal，同失敗連 ≥N 輪注入 STALL 升級＝自駕 doom-loop 斷路器（硬天花板在 auto-gate）。
-- **flow-size-check**（SessionStart＋UserPromptSubmit＋**PostToolUse: Write|Edit**）——specs/*.md >50KB 提醒 `/flow-compact`；PostToolUse 掛載讓自駕連續多輪不打字也不失明（只在寫 specs .md 時才量，其餘秒回）。
+- **flow-size-check**（SessionStart＋**PostToolUse: Write|Edit**）——specs/*.md >50KB 提醒 `/flow-compact`；PostToolUse 掛載讓自駕連續多輪不打字也不失明（只在寫 specs .md 時才量，其餘秒回；A6 移除 UserPromptSubmit 掛點——膨脹必經寫檔，每句話一次冷啟的邊際價值近零）。
 - **flow-session-start**（SessionStart）——reconstruct 注入完整現況（計數/mode/checkpoint/dangling/對帳/下一步）＋**安裝自檢三件**：hook 接線對賬（hooks 目錄實存的 flow-*.mjs 沒被 settings.json 註冊＝醒目警告）、dist↔安裝區**雙向內容對賬**（hash 不一致附方向提示：安裝區較新→回寫 dist / dist 較新→重裝）、`CLAUDE_CODE_SUBAGENT_MODEL` 環境變數偵測（它優先權最高、會靜默蓋掉整套模型路由）＋git 原生 pre-commit 兜底冪等安裝。
 
 ## 崩潰容錯

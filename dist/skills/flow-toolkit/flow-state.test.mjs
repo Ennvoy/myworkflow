@@ -551,6 +551,11 @@ test('complete-check（web 類有原型）：缺 ui-fidelity 記錄 → exit 2�
     assert.equal(run(['ui-fidelity'], root).code, 0);
     const r1 = run(['complete-check'], root);
     assert.equal(r1.code, 0, '全謂詞齊 → 放行：' + r1.err);
+    // UF-3：ui-fidelity 綠之後、complete-check 之前偷改原型（未 commit、HEAD 不動）→ 出口當下重算 hash 抓到
+    await writeFile(path.join(root, 'specs', 'ui-mockups', 'pages', 'login.html'), PAGE_OK + '<p>ship 前偷改</p>', 'utf8');
+    const r2 = run(['complete-check'], root);
+    assert.equal(r2.code, 2, '未 commit 的原型竄改 → 出口即時對賬擋（與 ③ 對 requirements 同構）');
+    assert.match(r2.err, /定版快照不符/);
   });
 });
 
@@ -559,13 +564,13 @@ test('wave --compute：原型存在 → 對賬定版快照（漂移 exit 2）；
     await frozenWebRoot(root);
     run(['design-base', 'shadcn'], root);
     await writeFile(path.join(root, 'specs', 'tasks.md'), '- [ ] F-1 全部（對應 REQ-001 REQ-E2E-001 REQ-PERF-001）\n      blockedBy: — | conflictZone: api/ | mockupPages: pages/login.html\n', 'utf8');
-    const m = await S.readManifest(root);
-    await S.writeManifest(root, { ...m, tasks: [{ id: 'F-1', blockedBy: [], conflictZone: ['api/'], mockupPages: ['pages/login.html'] }] });
+    // 模擬 flow-plan 同步 tasks 時整檔重寫 manifest、漏保 designBase 欄位（UF-7）——wave 應從雙寫的 state.json fallback 救回
+    await S.writeManifest(root, { tasks: [{ id: 'F-1', blockedBy: [], conflictZone: ['api/'], mockupPages: ['pages/login.html'] }] });
     const r = run(['wave', '--compute'], root);
     assert.equal(r.code, 0, r.err);
     assert.match(r.out, /UI 投餵已附/);
     const wp = await S.readWavePlan(root);
-    assert.equal(wp.ui.designBase, 'shadcn');
+    assert.equal(wp.ui.designBase, 'shadcn', 'manifest 漏欄位時從 state.json fallback（UF-7）');
     assert.match(wp.ui.tokensCss, /--color-primary/, '定版 tokens.css 逐字進 wave-plan');
     assert.deepEqual(wp.waves[0][0].mockupPages, ['pages/login.html'], 'per-task 原型頁帶到 dispatch');
     // 偷改原型 → wave fail-closed（別把漂移 UI 餵給 worker，與 reqHash 同級）
@@ -573,6 +578,86 @@ test('wave --compute：原型存在 → 對賬定版快照（漂移 exit 2）；
     const r2 = run(['wave', '--compute'], root);
     assert.equal(r2.code, 2, '原型漂移 → 擋波次');
     assert.match(r2.err, /定版快照不符/);
+    // 還原後宣告幽靈頁 → 投餵前 fail-fast（UF-6：別讓 worker 讀不到頁自行腦補、整波 token 白燒）
+    await writeFile(path.join(root, 'specs', 'ui-mockups', 'pages', 'login.html'), PAGE_OK, 'utf8');
+    await S.writeManifest(root, { tasks: [{ id: 'F-1', blockedBy: [], conflictZone: ['api/'], mockupPages: ['pages/loginn.html'] }] });
+    const r3 = run(['wave', '--compute'], root);
+    assert.equal(r3.code, 2, '幻覺頁 → 擋');
+    assert.match(r3.err, /幻覺頁/);
+  });
+});
+
+test('plan-check/ui-fidelity：凍結後刪 mockup-index → exit 2（UF-1）；舊專案無分母 → 降級提醒不擋（BC-2）', async () => {
+  await withRoot(async (root) => {
+    await frozenWebRoot(root);
+    await writeFile(path.join(root, 'specs', 'design.md'), '# design\n## UI 對焦結論\n畫面清單：pages/login.html\n', 'utf8');
+    await writeFile(path.join(root, 'specs', 'tasks.md'), '- [ ] F-1 全部（對應 REQ-001 REQ-E2E-001 REQ-PERF-001）\n      blockedBy: — | conflictZone: api/ | mockupPages: pages/login.html\n', 'utf8');
+    await S.writeManifest(root, { tasks: [{ id: 'F-1', blockedBy: [], conflictZone: ['api/'], mockupPages: ['pages/login.html'] }] });
+    assert.equal(run(['plan-check'], root).code, 0, '基線綠');
+    await rm(path.join(root, '.flow', 'trace', 'mockup-index.json'), { force: true });
+    const r = run(['plan-check'], root);
+    assert.equal(r.code, 2, '刪分母 → 擋（journal mockup.frozen 還在＝曾凍結）');
+    assert.match(r.err, /定版分母被刪/);
+    assert.equal(run(['ui-fidelity'], root).code, 2, 'ui-fidelity 同擋');
+  });
+  await withRoot(async (root) => {
+    // 舊專案模擬：凍結時無原型（api 類）→ 目錄是「本版之前」的產物、無 mockup-index 也無 mockup.frozen 事件
+    await S.init(root, { project: 'p', tasks: [] });
+    await S.writeStateJson(root, { mode: 'manual' });
+    await writeReq(root, READY_REQ);
+    run(['project-type', 'api'], root);
+    await passLenses(root);
+    assert.equal(run(['spec-ready', '--freeze'], root).code, 0);
+    await writeMockups(root, '<h2>REQ-E2E-001</h2><a href="pages/login.html">走</a>');
+    await mkdir(path.join(root, 'specs', 'ui-mockups', 'pages'), { recursive: true });
+    await writeFile(path.join(root, 'specs', 'ui-mockups', 'pages', 'login.html'), PAGE_OK, 'utf8');
+    await writeFile(path.join(root, 'specs', 'ui-mockups', 'app.js'), 'const db = {};', 'utf8');
+    await writeFile(path.join(root, 'specs', 'tasks.md'), '- [ ] F-1 全部（對應 REQ-001 REQ-E2E-001 REQ-PERF-001）\n      blockedBy: — | conflictZone: api/\n', 'utf8');
+    await S.writeManifest(root, { tasks: [{ id: 'F-1', blockedBy: [], conflictZone: ['api/'] }] });
+    const r = run(['plan-check'], root);
+    assert.equal(r.code, 0, '舊專案（無定版分母）mockup 鏈路降級為提醒不擋：' + r.err);
+    assert.match(r.err, /降級/);
+  });
+});
+
+test('ui-fidelity/complete-check：凍結後刪整個 specs/ui-mockups → 擋；mockup-waiver 拍板才放（UF-2/DOC-1）', async () => {
+  await withRoot(async (root) => {
+    await frozenWebRoot(root);
+    await rm(path.join(root, 'specs', 'ui-mockups'), { recursive: true, force: true });
+    const r = run(['ui-fidelity'], root);
+    assert.equal(r.code, 2, '刪目錄 → 擋（曾凍結）');
+    assert.match(r.err, /目錄消失/);
+    // complete-check 出口同擋（web 類＋曾凍結，目錄不在也觸發）
+    await writeFile(path.join(root, 'specs', 'tasks.md'), '- [x] **F-1**\n', 'utf8');
+    run(['verify-e2e', 'REQ-E2E-001', '--status', 'pass', '--evidence', await evid(root)], root);
+    run(['verify-perf', 'REQ-PERF-001', '--value', '2.0', '--evidence', await evid(root, 'lh.json')], root);
+    run(['decision', 'code-review-waiver', '--choice', 'x', '--why', 'x'], root);
+    run(['decision', 'plan-check-waiver', '--choice', 'x', '--why', 'x'], root);
+    await writeSpec(root, 'tests/e2e/ok.spec.ts',
+      "import {test, expect} from '@playwright/test'\ntest('x', async ({page}) => { await page.goto('/login'); await page.getByRole('button',{name:/登入/}).click(); await expect(page).toHaveURL(/home/) })");
+    assert.equal(run(['journey-check'], root).code, 0);
+    const cc = run(['complete-check'], root);
+    assert.equal(cc.code, 2, '目錄消失 → complete-check 擋');
+    assert.match(cc.err, /目錄消失/);
+    run(['decision', 'mockup-waiver', '--choice', '放棄原型錨點', '--why', '使用者拍板'], root);
+    assert.equal(run(['complete-check'], root).code, 0, 'mockup-waiver 拍板後合法關閉 UI 鏈');
+  });
+});
+
+test('ui-fidelity：舊原型缺 tokens.css → 無 waiver 擋（附遷移指引）；有 waiver 走豁免模式落 waived 記錄（BC-3）', async () => {
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [] });
+    const dir = path.join(root, 'specs', 'ui-mockups');
+    await mkdir(dir, { recursive: true });
+    await writeFile(path.join(dir, 'index.html'), '<h2>REQ-E2E-001</h2>', 'utf8');
+    const r0 = run(['ui-fidelity'], root);
+    assert.equal(r0.code, 2, '缺 tokens.css 無 waiver → 擋');
+    assert.match(r0.err, /遷移/, '錯誤訊息附舊專案遷移路徑');
+    run(['decision', 'ui-fidelity-waiver', '--choice', '舊原型無 tokens', '--why', 'x'], root);
+    const r1 = run(['ui-fidelity'], root);
+    assert.equal(r1.code, 0, r1.err);
+    const uf = await S.readUiFidelity(root);
+    assert.ok(uf && uf.waived === true, 'waived 記錄落檔（complete-check 對賬得到）');
   });
 });
 
@@ -879,6 +964,8 @@ async function writeMockups(root, indexHtml, pages = {}) {
   const dir = path.join(root, 'specs', 'ui-mockups');
   await mkdir(dir, { recursive: true });
   if (indexHtml !== null) await writeFile(path.join(dir, 'index.html'), indexHtml, 'utf8');
+  // W2：mockup-check 現機檢 tokens.css 實存＋有 CSS 變數（fail-early，別拖到 ship 的 ui-fidelity 才炸）
+  await writeFile(path.join(dir, 'tokens.css'), ':root { --color-primary: #333; --font-body: sans-serif; }', 'utf8');
   for (const [name, html] of Object.entries(pages)) await writeFile(path.join(dir, name), html, 'utf8');
 }
 

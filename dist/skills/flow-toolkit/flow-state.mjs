@@ -191,6 +191,11 @@ function mockupProblems(r, dirRel) {
         problems.push(`${h}：引用的 script 不存在：${src}（掛了 script 但檔案缺＝假資料層失效、CRUD 無後果）`);
     }
   }
+  // W2：tokens.css 機檢前移到定版前（原本 fail-late 到 ship 的 ui-fidelity 才炸，且事後補檔＝快照漂移逼重定版）——
+  // prototype-guide §二佈局本來就要求它；凍結前擋成本最低。
+  const tok = path.join(dir, 'tokens.css');
+  if (!existsSync(tok)) problems.push('查無 tokens.css（設計 token 檔）——prototype-guide §二要求；ui-fidelity 閘門靠它對賬「實作沿用定版 token」，現在補成本最低（拖到 ship 才發現＝快照已凍、補檔要重定版）');
+  else if (!S.extractCssVars(readFileSync(tok, 'utf8')).length) problems.push('tokens.css 解析不到任何 CSS 變數（--x: 形）——token 空殼：設計 token 以 :root CSS 變數定義（品牌基底 verbatim 或 ui-ux-pro-max 產出）');
   return { problems, audit };
 }
 
@@ -432,20 +437,37 @@ switch (cmd) {
     // delivered 集合：reconstruct 合併 manifest→state→ledger 的權威狀態（判 blockedBy 是否已滿足）
     const view = await S.reconstruct(root);
     const delivered = Object.values(view.tasks).filter((t) => t.state === 'delivered').map((t) => t.id);
-    // UI 投餵（原型存在時）：先對賬定版快照未漂移（漂移＝worker 會拿到非定版 UI，與 reqHash 同級 fail-closed），
-    // 再把 tokens.css 逐字＋designBase 塞進 wave-plan.ui；per-task mockupPages 由 buildWavePlan 從 manifest 帶。
+    // UI 投餵（原型存在時）：先對賬定版分母實存（曾凍結而 index/目錄被刪＝擋）＋快照未漂移
+    // （漂移＝worker 會拿到非定版 UI，與 reqHash 同級 fail-closed），再驗 manifest 宣告的 mockupPages 無幻覺頁
+    // （UF-6：打錯字的頁一路投餵進 worker prompt、整波 15x token 白燒才被抓），最後把 tokens.css 逐字＋designBase
+    // 塞進 wave-plan.ui；per-task mockupPages 由 buildWavePlan 從 manifest 帶。
     let uiCtx = null;
-    if (existsSync(path.join(root, 'specs', 'ui-mockups'))) {
-      const mHashes = await S.mockupFileHashes(root);
-      const mhp = S.mockupHashProblem(await S.readMockupIndex(root), mHashes);
-      if (mhp) { console.error('✗ ' + mhp); process.exit(2); }
-      const tokPath = path.join(root, 'specs', 'ui-mockups', 'tokens.css');
-      uiCtx = {
-        designBase: manifest.designBase || '',
-        tokensCss: existsSync(tokPath) ? readFileSync(tokPath, 'utf8') : '',
-        mockupDir: 'specs/ui-mockups',
-        mockupAggHash: S.mockupAggHash(mHashes),
-      };
+    {
+      const mDirExists = existsSync(path.join(root, 'specs', 'ui-mockups'));
+      const mIdx = await S.readMockupIndex(root);
+      const mFrozen = !!mIdx || (await S.readJournal(root)).some(e => e && e.ev === 'mockup.frozen');
+      const mcp = S.mockupChainProblem({ dirExists: mDirExists, index: mIdx, frozen: mFrozen, waived: existsSync(path.join(root, '.flow', 'decisions', 'mockup-waiver.json')) });
+      if (mcp) { console.error('✗ ' + mcp); process.exit(2); }
+      if (mDirExists) {
+        const mHashes = await S.mockupFileHashes(root);
+        const mhp = S.mockupHashProblem(mIdx, mHashes);
+        if (mhp) { console.error('✗ ' + mhp); process.exit(2); }
+        const pageFiles = Object.keys(mHashes).filter(f => /^pages\//i.test(f) && /\.html?$/i.test(f));
+        const ph = S.mockupPageCoverage(manifest.tasks || [], pageFiles).phantom;
+        if (ph.length) {
+          console.error('✗ manifest 宣告的 mockupPages 有幻覺頁（投餵前 fail-fast，別讓 worker 讀不到頁自行腦補）：');
+          for (const p of ph) console.error('  - ' + p);
+          process.exit(2);
+        }
+        const tokPath = path.join(root, 'specs', 'ui-mockups', 'tokens.css');
+        // designBase fallback 到 state.json（UF-7）：flow-plan 同步 tasks 重寫 manifest 時漏保欄位，雙寫的另一份救回來
+        uiCtx = {
+          designBase: manifest.designBase || (await S.readStateJson(root)).designBase || '',
+          tokensCss: existsSync(tokPath) ? readFileSync(tokPath, 'utf8') : '',
+          mockupDir: 'specs/ui-mockups',
+          mockupAggHash: S.mockupAggHash(mHashes),
+        };
+      }
     }
     const plan = S.buildWavePlan(manifest, delivered, tasksMd, reqMd, idx, uiCtx);
     if (plan.problems && plan.problems.length) {
@@ -655,20 +677,37 @@ switch (cmd) {
     if (cov.uncovered.length) problems.push('這些 REQ 沒有任何 task 承接（會無聲蒸發到出貨）：\n    · ' + cov.uncovered.join('\n    · '));
     if (cov.phantom.length) problems.push('tasks.md 引用了 index 沒有的 REQ id（幻覺/打錯）：\n    · ' + cov.phantom.join('\n    · '));
     problems.push(...diff);
-    // mockup 鏈路對賬（原型存在時）：定版快照未漂移＋design.md「UI 對焦結論」承接每頁＋每頁被某 task 的
-    // mockupPages 承接——把 flow-plan Step 2.5 的散文 SHALL 與「task↔原型頁」對應升級成機檢（原本 worker 全靠猜）。
+    // mockup 鏈路對賬：定版分母實存（曾凍結而 index/目錄被刪＝擋，mockupChainProblem 單一事實來源）＋
+    // 定版快照未漂移＋design.md「UI 對焦結論」承接每頁＋每頁被某 task 的 mockupPages 承接——
+    // 把 flow-plan Step 2.5 的散文 SHALL 與「task↔原型頁」對應升級成機檢（原本 worker 全靠猜）。
+    // 舊專案相容（BC-2）：目錄在但從未凍結過 mockup-index（本版之前凍結的）→ 檢查結果降級為提醒不擋，
+    // 重跑 spec-ready --freeze 落分母後轉硬檢。
     const dp = path.join(root, 'specs', 'design.md');
-    if (existsSync(path.join(root, 'specs', 'ui-mockups'))) {
-      const mHashes = await S.mockupFileHashes(root);
-      const mhp = S.mockupHashProblem(await S.readMockupIndex(root), mHashes);
-      if (mhp) problems.push(mhp);
-      const pageFiles = Object.keys(mHashes).filter(f => /^pages\//i.test(f) && /\.html?$/i.test(f));
-      const mCov = S.mockupPageCoverage(S.parseTasksMd(tasksMd), pageFiles);
-      problems.push(
-        ...S.uiFocusAudit(existsSync(dp) ? readFileSync(dp, 'utf8') : '', pageFiles),
-        ...mCov.phantom,
-        ...mCov.uncovered.map(p => `原型頁 ${p} 沒有任何 task 用 mockupPages 承接——worker 不知道哪個 task 對哪一頁（畫面會漏做/做歪）：在 tasks.md 該 task 續行補「mockupPages: ${p}」並同步 manifest`),
-      );
+    {
+      const mDirExists = existsSync(path.join(root, 'specs', 'ui-mockups'));
+      const mIdx = await S.readMockupIndex(root);
+      const mFrozen = !!mIdx || (await S.readJournal(root)).some(e => e && e.ev === 'mockup.frozen');
+      const mWaived = existsSync(path.join(root, '.flow', 'decisions', 'mockup-waiver.json'));
+      const mcp = S.mockupChainProblem({ dirExists: mDirExists, index: mIdx, frozen: mFrozen, waived: mWaived });
+      if (mcp) problems.push(mcp);
+      else if (mDirExists) {
+        const mHashes = await S.mockupFileHashes(root);
+        const pageFiles = Object.keys(mHashes).filter(f => /^pages\//i.test(f) && /\.html?$/i.test(f));
+        const mCov = S.mockupPageCoverage(S.parseTasksMd(tasksMd), pageFiles);
+        const uiProblems = [
+          ...S.uiFocusAudit(existsSync(dp) ? readFileSync(dp, 'utf8') : '', pageFiles),
+          ...mCov.phantom,
+          ...mCov.uncovered.map(p => `原型頁 ${p} 沒有任何 task 用 mockupPages 承接——worker 不知道哪個 task 對哪一頁（畫面會漏做/做歪）：在 tasks.md 該 task 續行補「mockupPages: ${p}」並同步 manifest`),
+        ];
+        if (mIdx) {
+          const mhp = S.mockupHashProblem(mIdx, mHashes);
+          if (mhp) problems.push(mhp);
+          problems.push(...uiProblems);
+        } else if (uiProblems.length) {
+          console.error('⚠ 舊專案相容（查無 mockup-index 定版分母）：mockup 鏈路檢查降級為提醒——重跑 flow-state spec-ready --freeze 落分母後轉硬檢：');
+          for (const p of uiProblems) console.error('  · ' + p);
+        }
+      }
     }
     if (problems.length) {
       console.error('✗ 計畫對賬未過（REQ↔task 覆蓋 / tasks.md↔manifest 同步 / mockup 鏈路）：');
@@ -860,8 +899,9 @@ switch (cmd) {
     const pc = await S.readPlanCheck(root);
     const planWaived = existsSync(path.join(root, '.flow', 'decisions', 'plan-check-waiver.json'));
     if (!pc && !planWaived) fails.push('查無 .flow/trace/plan-check.json（計畫出口對賬從未跑/被刪）——跑 flow-state plan-check；舊專案相容：flow-state decision plan-check-waiver …。');
-    if (pc && pc.manifestHash && pc.manifestHash !== S.manifestScopeHash(await S.readManifest(root)))
-      fails.push('manifest 的 blockedBy/conflictZone 在 plan-check 後被改過（scope/wave 事實來源漂移）——重跑 flow-state plan-check。');
+    // BC-2：hash 漂移分支與「plan-check.json 不存在」分支對稱認 plan-check-waiver（原本 waiver 只覆蓋缺檔、漂移無逃生口）。
+    if (pc && pc.manifestHash && !planWaived && pc.manifestHash !== S.manifestScopeHash(await S.readManifest(root)))
+      fails.push('manifest 的 blockedBy/conflictZone/mockupPages 在 plan-check 後被改過（scope/wave 事實來源漂移）——重跑 flow-state plan-check。');
     // C：藍軍 code-review forcing function——ship 出貨 SHALL 過藍軍（缺 code-review 且無豁免即擋；逃生口＝code-review-waiver）。
     const codeReview = await S.readCodeReview(root);
     const codeWaived = existsSync(path.join(root, '.flow', 'decisions', 'code-review-waiver.json'));
@@ -893,14 +933,26 @@ switch (cmd) {
         }
       }
     }
-    // mockup 鏈路完成謂詞（與 journey-check 同構的新鮮度對賬）：web 類且原型存在 → SHALL 有「當前 HEAD」的
-    // ui-fidelity 通過記錄（mockup 快照未漂移＋定版 tokens 被實作沿用的機讀證據）。原本畫面全走樣照樣放行的洞，封死。
-    if (S.WEB_PROJECT_TYPES.includes(cm.projectType) && existsSync(path.join(root, 'specs', 'ui-mockups'))) {
-      const uf = await S.readUiFidelity(root);
-      if (!uf) fails.push('web 專案有互動原型但未過 UI 忠實度閘門——flow-state ui-fidelity（mockup 快照未漂移＋定版 tokens 被實作沿用；實作端合法不用 CSS 變數走 ui-fidelity-waiver 降級，仍須跑）。');
-      else {
-        const headNow = gitHead(root);
-        if (uf.head && headNow && uf.head !== headNow) fails.push('ui-fidelity 記錄不是當前 HEAD（驗的是舊 code）——重跑 flow-state ui-fidelity（秒級）。');
+    // mockup 鏈路完成謂詞（與 journey-check 同構的新鮮度對賬＋與 ③ 對 requirements 同構的當下重算）：
+    // 觸發＝web 類且（原型目錄在 ∨ 曾凍結）——「凍結後刪目錄/刪 index＝整條 UI 鏈靜默關閉」在 ship 出口同樣擋（UF-2/DOC-1）；
+    // 通過材料＝「當前 HEAD」的 ui-fidelity 記錄＋complete-check 當下即時重算 mockup hash（未 commit 的原型竄改也抓，UF-3/W3）。
+    {
+      const ccDir = existsSync(path.join(root, 'specs', 'ui-mockups'));
+      const ccIdx = await S.readMockupIndex(root);
+      const ccFrozen = !!ccIdx || (await S.readJournal(root)).some(e => e && e.ev === 'mockup.frozen');
+      if (S.WEB_PROJECT_TYPES.includes(cm.projectType) && (ccDir || ccFrozen)) {
+        const mcp = S.mockupChainProblem({ dirExists: ccDir, index: ccIdx, frozen: ccFrozen, waived: existsSync(path.join(root, '.flow', 'decisions', 'mockup-waiver.json')) });
+        if (mcp) fails.push(mcp);
+        else if (ccDir) {
+          const mhpCC = S.mockupHashProblem(ccIdx, await S.mockupFileHashes(root));
+          if (mhpCC) fails.push(mhpCC);
+          const uf = await S.readUiFidelity(root);
+          if (!uf) fails.push('web 專案有互動原型但未過 UI 忠實度閘門——flow-state ui-fidelity（mockup 快照未漂移＋定版 tokens 被實作沿用；實作端合法不用 CSS 變數走 ui-fidelity-waiver 降級，仍須跑）。');
+          else {
+            const headNow = gitHead(root);
+            if (uf.head && headNow && uf.head !== headNow) fails.push('ui-fidelity 記錄不是當前 HEAD（驗的是舊 code）——重跑 flow-state ui-fidelity（秒級）。');
+          }
+        }
       }
     }
     // C-23：一次列印所有未達項（不逐類擋）。
@@ -1166,21 +1218,42 @@ switch (cmd) {
     // UI 忠實度閘門（web 類，verify/ship 宣稱綠前 SHALL 跑；complete-check 對賬本記錄@HEAD）：
     // ① mockup 定版快照未漂移（hash 對賬）② 定版 tokens.css 的 CSS 變數真的被實作引用（零引用＝UI 基準被整組丟棄）。
     // 誠實邊界：擋得住「偷改原型/另創色票」，擋不住「用了 token 但版面亂排」——後者由 Evaluator/藍軍對照原型頁人工判。
-    // 逃生口：ui-fidelity-waiver decision（實作端合法不用 CSS 變數時）只降級 token 零引用為警告；快照漂移不可豁免（還原即可）。
+    // 逃生口：ui-fidelity-waiver decision（實作端合法不用 CSS 變數/舊原型缺 tokens.css）把三種 token 缺口
+    // （缺檔/零變數/零引用）降級為警告、照樣落 waived 記錄；快照漂移不可豁免（還原或重定版即可）。
     // 用法：flow-state ui-fidelity [--src <實作根目錄，預設整個 repo>]
     const mockDir = path.join(root, 'specs', 'ui-mockups');
-    if (!existsSync(mockDir)) {
-      console.log('ⓘ 查無 specs/ui-mockups/（非 web 類或已 mockup-waiver）——ui-fidelity 不適用，未落記錄。');
+    const mDirExists = existsSync(mockDir);
+    const mIdx = await S.readMockupIndex(root);
+    const mFrozen = !!mIdx || (await S.readJournal(root)).some(e => e && e.ev === 'mockup.frozen');
+    const mcp = S.mockupChainProblem({ dirExists: mDirExists, index: mIdx, frozen: mFrozen, waived: existsSync(path.join(root, '.flow', 'decisions', 'mockup-waiver.json')) });
+    if (mcp) { console.error('✗ ' + mcp); process.exit(2); }
+    if (!mDirExists) {
+      console.log('ⓘ 查無 specs/ui-mockups/（非 web 類、從未定版原型、或已 mockup-waiver）——ui-fidelity 不適用，未落記錄。');
       break;
     }
     const mHashes = await S.mockupFileHashes(root);
-    const mhp = S.mockupHashProblem(await S.readMockupIndex(root), mHashes);
+    const mhp = S.mockupHashProblem(mIdx, mHashes);
     if (mhp) { console.error('✗ ' + mhp); process.exit(2); }
+    // waiver 前置（BC-3）：tokens.css 缺檔/空殼對「凍結於本版前的舊原型」原是無 waiver 可走的硬擋死路。
+    const ufWaived = existsSync(path.join(root, '.flow', 'decisions', 'ui-fidelity-waiver.json'));
+    const aggHash = S.mockupAggHash(mHashes);
+    const passWaived = async (why) => {
+      console.log(`⚠ ${why}——ui-fidelity-waiver 生效，降級為警告；版面忠實度全靠 Evaluator/藍軍人工對照原型頁，別讓豁免變常態。`);
+      await S.writeUiFidelity(root, { head: gitHead(root), tokensTotal: 0, tokensUsed: 0, mockupAggHash: aggHash, waived: true });
+      console.log('✓ UI 忠實度機檢（豁免模式）：mockup 定版快照未漂移。已落 .flow/trace/ui-fidelity.json（綁 HEAD，complete-check 對賬）。');
+    };
     const tokPath = path.join(mockDir, 'tokens.css');
-    if (!existsSync(tokPath)) { console.error('✗ 查無 specs/ui-mockups/tokens.css——原型缺設計 token 檔（prototype-guide §二佈局），無從對賬 token 沿用。'); process.exit(2); }
-    const tokenVars = S.extractCssVars(readFileSync(tokPath, 'utf8'));
-    if (!tokenVars.length) { console.error('✗ tokens.css 解析不到任何 CSS 變數（--x: 形）——定版 token 空殼，回 spec 補齊再凍結。'); process.exit(2); }
-    // 掃實作原始碼收集 var 引用（specs/ 是規格不是實作；.flow/、dot 目錄、重目錄跳過）
+    const tokenVars = existsSync(tokPath) ? S.extractCssVars(readFileSync(tokPath, 'utf8')) : [];
+    if (!tokenVars.length) {
+      const lack = existsSync(tokPath) ? 'tokens.css 解析不到任何 CSS 變數（--x: 形）' : '查無 specs/ui-mockups/tokens.css（設計 token 檔）';
+      if (ufWaived) { await passWaived(lack); break; }
+      console.error(`✗ ${lack}——無從對賬 token 沿用（prototype-guide §二要求；新原型會被 mockup-check 提早擋）。`);
+      console.error('  舊專案遷移二選一：① 把原型實際用色/字體抽成 tokens.css 的 :root 變數（動 specs/ui-mockups/＝快照漂移，須重跑 spec-ready --freeze 重建快照）；');
+      console.error('  ② 使用者拍板 flow-state decision ui-fidelity-waiver --choice … --why …（token 對賬豁免、只留人工對照）後重跑本命令。');
+      process.exit(2);
+    }
+    // 掃實作原始碼收集 token 引用（specs/ 是規格不是實作；.flow/、dot 目錄、重目錄跳過）。
+    // 詞界比對（statelib.tokenReferenced）：--gray-1 不誤中 --gray-10——裸 includes 會把另創撞前綴色階判成已沿用。
     const srcBase = flag('--src') ? path.resolve(root, flag('--src')) : root;
     const used = new Set();
     (function walkSrc(base, depth = 0) {
@@ -1193,24 +1266,23 @@ switch (cmd) {
         if (e.isDirectory()) {
           if (SKIP_WALK.has(e.name) || e.name.startsWith('.') || e.name === 'specs') continue;
           walkSrc(p, depth + 1);
-        } else if (/\.(css|scss|less|[jt]sx?|mjs|cjs|vue|svelte|html?)$/i.test(e.name)) {
+        } else if (/\.(css|scss|sass|less|[jt]sx?|m[jt]s|c[jt]s|vue|svelte|astro|html?)$/i.test(e.name)) {
           let c = '';
           try { c = readFileSync(p, 'utf8'); } catch { continue; }
-          for (const v of tokenVars) if (!used.has(v) && c.includes(v)) used.add(v);
+          for (const v of tokenVars) if (!used.has(v) && S.tokenReferenced(c, v)) used.add(v);
         }
       }
     })(srcBase);
     const audit = S.tokenUsageAudit(tokenVars, [...used]);
-    const ufWaived = existsSync(path.join(root, '.flow', 'decisions', 'ui-fidelity-waiver.json'));
-    if (!audit.hit.length && !ufWaived) {
+    if (!audit.hit.length) {
+      if (ufWaived) { await passWaived(`定版 tokens.css 的 ${audit.total} 個變數在實作零引用`); break; }
       console.error(`✗ 定版 tokens.css 的 ${audit.total} 個 CSS 變數在實作中零引用——UI 基準被整組丟棄（worker 另創色票/字體？）。`);
       console.error('  修正：實作沿用原型同一組 token 變數（tokens.css 併入實作樣式、元件用 var(--…) 引用）；');
       console.error('  實作端真的不走 CSS 變數（如全 inline style 的特殊棧）→ 使用者拍板 flow-state decision ui-fidelity-waiver --choice … --why …。');
       process.exit(2);
     }
-    if (!audit.hit.length && ufWaived) console.log(`⚠ token 零引用但 ui-fidelity-waiver 生效——版面忠實度全靠 Evaluator/藍軍人工對照原型頁，別讓豁免變常態。`);
-    else if (audit.miss.length) console.log(`⚠ ${audit.miss.length}/${audit.total} 個 token 未見引用（提醒不擋——備用 token 合法，過半未用請人工確認沒偏離原型）：${audit.miss.slice(0, 8).join('、')}${audit.miss.length > 8 ? '…' : ''}`);
-    await S.writeUiFidelity(root, { head: gitHead(root), tokensTotal: audit.total, tokensUsed: audit.hit.length, mockupAggHash: S.mockupAggHash(mHashes), waived: ufWaived });
+    if (audit.miss.length) console.log(`⚠ ${audit.miss.length}/${audit.total} 個 token 未見引用（提醒不擋——備用 token 合法，過半未用請人工確認沒偏離原型）：${audit.miss.slice(0, 8).join('、')}${audit.miss.length > 8 ? '…' : ''}`);
+    await S.writeUiFidelity(root, { head: gitHead(root), tokensTotal: audit.total, tokensUsed: audit.hit.length, mockupAggHash: aggHash, waived: ufWaived });
     console.log(`✓ UI 忠實度機檢通過：mockup 定版快照未漂移、tokens ${audit.hit.length}/${audit.total} 被實作引用。已落 .flow/trace/ui-fidelity.json（綁 HEAD，complete-check 對賬）。`);
     console.log('  版面像不像原型仍由 Evaluator（flow-verify UI 忠實度維度）/藍軍（flow-ship）對照原型頁人工判——本閘門只守確定性底線。');
     break;

@@ -760,12 +760,14 @@ const wavePlanPath = root => path.join(traceDir(root), 'wave-plan.json');
 // 對 updatedAt/mode/projectType 等語意無關欄位穩定：否則 wave --compute/plan-check 後跑 mode/project-type
 // （writeManifest 會 bump updatedAt）就誤判「manifest 漂移」擋 scope。buildWavePlan/waveMembershipProblem/writePlanCheck/complete-check 四處共用同一投影。
 // mockupPages 進投影：它是 wave 投餵的事實來源之一（worker 對哪一頁），plan 後改動同樣要逼重算波次。
+// 空/缺欄位不進投影（條件式 spread）——無 mockupPages 的 manifest 與舊版投影逐 byte 相同，
+// 升級不會讓既有 wave-plan/plan-check.json 假性判「manifest 漂移」（BC-1：誤導訊息教人「plan 後改過」其實沒改）。
 export function manifestScopeHash(manifest) {
   const tasks = (((manifest && manifest.tasks) || []).map(t => ({
     id: t.id,
     blockedBy: [...(t.blockedBy || [])].sort(),
     conflictZone: [...(t.conflictZone || [])].map(normZone).sort(),
-    mockupPages: [...(t.mockupPages || [])].map(normZone).sort(),
+    ...(t.mockupPages && t.mockupPages.length ? { mockupPages: [...t.mockupPages].map(normZone).sort() } : {}),
   }))).sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   return sha256Text(JSON.stringify(tasks));
 }
@@ -1320,6 +1322,27 @@ export function mockupHashProblem(index, currentFileHashes) {
   const bits = [fmt('改動', changed), fmt('刪除', removed), fmt('新增', added)].filter(Boolean);
   return `specs/ui-mockups/ 已與定版快照不符（${bits.join('；')}）——mockup 是使用者拍板的 UI 錨點，凍結後不得靜默改動：要嘛還原檔案，要嘛照正路重定版（mockup-check → 使用者重新走查 → decision ui-signoff → spec-ready --freeze 重建快照）。`;
 }
+// 純函式：mockup 鏈路前置判定（plan-check / wave --compute / ui-fidelity / complete-check 四個消費端共用單一事實來源）。
+// 封兩條「靜默解除凍結」的路（與 req-index「凍結分母必須實存，缺=exit 2」對稱）：
+//   ① 刪 mockup-index.json：目錄在、曾凍結（frozen＝index 實存 ∨ journal 有 ev:mockup.frozen）但 index 缺 → 擋；
+//   ② 刪整個 specs/ui-mockups/：曾凍結、無 mockup-waiver → 擋（freeze 端「不建目錄＝靜默豁免已封死」的下游對稱）。
+// 從未凍結（舊專案）回 null＝向後相容不擋。誠實邊界：journal＋index 同時被清即失憶——與 req-index 同級，
+// 靠 flow-spec-gate 擋裸刪 .flow/trace/＋git 審計線兜底。
+export function mockupChainProblem({ dirExists, index, frozen, waived }) {
+  if (dirExists && index) return null;                       // 正常路：後續走 mockupHashProblem 對賬內容
+  if (dirExists) {
+    if (frozen) return 'specs/ui-mockups/ 存在但查無 .flow/trace/mockup-index.json（定版分母被刪）——比照 req-index：凍結分母必須實存，否則漂移偵測整段失效；重跑 flow-state spec-ready --freeze 重建快照。';
+    return null;                                             // 從未凍結（舊專案/凍結前）→ 不擋
+  }
+  if (frozen && !waived) return '互動原型已定版凍結（mockup-index/journal 有記錄）但 specs/ui-mockups/ 目錄消失——「刪目錄＝靜默關閉整條 UI 鏈」已封死：還原目錄（git checkout -- specs/ui-mockups），或使用者拍板 flow-state decision mockup-waiver 留檔。';
+  return null;
+}
+// token 引用比對（詞界版）：--gray-1 不誤中 --gray-10、--font 不誤中 --font-size——
+// 裸 includes 會把「另創撞前綴的色階」誤判成「已沿用」，正是本閘門要擋的路（與 reqTaskCoverage 防 REQ-1 誤配 REQ-10 同根因）。
+// 負向前瞻字元集與 extractCssVars 的變數名字元集一致。
+export function tokenReferenced(content, varName) {
+  return new RegExp(String(varName).replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?![A-Za-z0-9_-])').test(String(content || ''));
+}
 
 // ── mockup 頁面承接對賬（plan-check 用，純函式）──
 // 病根：F-task 只有 REQ id 間接對到走查卡，worker 得自己猜哪個 task 對哪一頁——對錯頁/漏頁無人抓。
@@ -1367,9 +1390,17 @@ export function uiFocusAudit(designMd, pageFiles) {
   if (!/^#{1,6}[^\n]*UI\s*對焦結論/im.test(md))
     problems.push('design.md 查無「UI 對焦結論」一節——specs/ui-mockups/ 存在時 SHALL 有（畫面清單/元件分解/互動狀態機/異常態/設計 token/品牌基底），見 flow-plan Step 2.5');
   const lower = md.toLowerCase();
+  // basename 比對加左詞界（負向後顧）——「admin-login.html」不得替「login.html」洗過提及檢查；
+  // 同名頁多層並存（pages/items.html vs pages/admin/items.html）時 basename 無法區分 → 逐頁強制完整路徑提及。
+  const baseCount = {};
+  for (const p of (pageFiles || [])) { const b = normPath(p).toLowerCase().split('/').pop(); baseCount[b] = (baseCount[b] || 0) + 1; }
   for (const p of (pageFiles || [])) {
-    const base = normPath(p).toLowerCase().split('/').pop();
-    if (!lower.includes(base)) problems.push(`design.md 未提及原型頁 ${p}——「UI 對焦結論」的畫面清單漏了這一頁？（design 沒承接＝build 沒藍圖）`);
+    const full = normPath(p).toLowerCase();
+    const base = full.split('/').pop();
+    const dup = baseCount[base] > 1;
+    const baseRe = new RegExp('(?<![a-z0-9_-])' + base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+    const mentioned = dup ? lower.includes(full) : (lower.includes(full) || baseRe.test(lower));
+    if (!mentioned) problems.push(`design.md 未提及原型頁 ${p}${dup ? '（有同名頁，須以完整路徑提及）' : ''}——「UI 對焦結論」的畫面清單漏了這一頁？（design 沒承接＝build 沒藍圖）`);
   }
   return problems;
 }

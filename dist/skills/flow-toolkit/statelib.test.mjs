@@ -781,6 +781,30 @@ test('mockupFileHashes：只收文字資產、遞迴子目錄、行尾正規化�
   });
 });
 
+test('mockupChainProblem：凍結後刪 index/刪目錄 → 擋；未凍結舊專案/已豁免 → 放（UF-1/UF-2 分母保護）', () => {
+  const idx = { files: {}, aggHash: 'h' };
+  assert.equal(S.mockupChainProblem({ dirExists: true, index: idx, frozen: true, waived: false }), null);
+  assert.match(S.mockupChainProblem({ dirExists: true, index: null, frozen: true, waived: false }), /定版分母被刪/);
+  assert.equal(S.mockupChainProblem({ dirExists: true, index: null, frozen: false, waived: false }), null, '未凍結舊專案不擋');
+  assert.match(S.mockupChainProblem({ dirExists: false, index: null, frozen: true, waived: false }), /目錄消失/);
+  assert.equal(S.mockupChainProblem({ dirExists: false, index: null, frozen: true, waived: true }), null, 'mockup-waiver 放行');
+  assert.equal(S.mockupChainProblem({ dirExists: false, index: null, frozen: false, waived: false }), null, '從未凍結且無目錄＝非 web，不表態');
+});
+
+test('tokenReferenced：詞界比對——--gray-1 不誤中 --gray-10、--font 不誤中 --font-size（UF-4 另創撞前綴色階假陽性）', () => {
+  assert.equal(S.tokenReferenced('color: var(--gray-10)', '--gray-1'), false);
+  assert.equal(S.tokenReferenced('color: var(--gray-1)', '--gray-1'), true);
+  assert.equal(S.tokenReferenced('font-size: var(--font-size)', '--font'), false);
+  assert.equal(S.tokenReferenced('font: var(--font);', '--font'), true);
+});
+
+test('manifestScopeHash：無/空 mockupPages 投影相同（BC-1 升級不讓舊專案假性判 manifest 漂移）', () => {
+  assert.equal(
+    S.manifestScopeHash({ tasks: [{ id: 'F-1', blockedBy: [], conflictZone: ['api/'] }] }),
+    S.manifestScopeHash({ tasks: [{ id: 'F-1', blockedBy: [], conflictZone: ['api/'], mockupPages: [] }] }),
+    '空陣列不進投影＝與無欄位同 hash');
+});
+
 // ── mockupPages 機讀欄位鏈（task↔原型頁承接，plan-check/wave 投餵的事實來源）──
 
 test('parseTasksMd/planManifestDiff：mockupPages 續行欄位解析＋不一致點名；舊格式（無欄位）不誤判', () => {
@@ -813,6 +837,16 @@ test('uiFocusAudit：缺節/漏頁點名；節在＋逐頁提及 → 空', () =>
   assert.match(miss[0], /UI 對焦結論/);
   assert.match(miss[1], /login\.html/);
   assert.match(S.uiFocusAudit(md, ['pages/login.html', 'pages/items.html']).join('\n'), /items\.html/);
+});
+
+test('uiFocusAudit：admin-login.html 不得替 login.html 洗過（左詞界）；同名頁須完整路徑提及（UF-5）', () => {
+  const md = '## UI 對焦結論\n畫面清單：admin-login.html\n';
+  assert.match(S.uiFocusAudit(md, ['pages/login.html']).join('\n'), /login\.html/, '後綴撞名不算提及');
+  const dup = S.uiFocusAudit('## UI 對焦結論\nitems.html\n', ['pages/items.html', 'pages/admin/items.html']);
+  assert.equal(dup.length, 2, '同名頁 basename 不夠、逐頁強制完整路徑');
+  assert.match(dup.join('\n'), /同名頁/);
+  assert.deepEqual(S.uiFocusAudit('## UI 對焦結論\npages/items.html 與 pages/admin/items.html\n',
+    ['pages/items.html', 'pages/admin/items.html']), [], '完整路徑逐頁提及 → 過');
 });
 
 test('extractCssVars/tokenUsageAudit：抽 :root 定義變數（var() 引用不算定義）、引用對賬', () => {

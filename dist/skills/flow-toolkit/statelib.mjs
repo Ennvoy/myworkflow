@@ -181,7 +181,7 @@ export function isRunnerCommand(cmd) {
 
 // C-13：flow-state 閘門子命令連紅偵測（複審/計畫/完成謂詞等）。**只給 stall-monitor 軟 STALL 用**（提醒換路），
 // 刻意不併進 isRunnerCommand——否則 auto-gate 硬天花板會把「檢查完成的那條命令」也硬擋掉，反而 deadlock。
-const GATE_RE = /\bflow-state(?:\.mjs)?\s+(complete-check|plan-check|spec-ready|redteam|scope|journey-check|review-check|code-check|coverage|verify-e2e|verify-perf)\b/i;
+const GATE_RE = /\bflow-state(?:\.mjs)?\s+(complete-check|plan-check|spec-ready|redteam|scope|journey-check|diagnose|verify-e2e|verify-perf)\b/i;
 export function isGateThrash(cmd) { return GATE_RE.test(String(cmd || '')); }
 
 // 把 runner 命令正規化成穩定的「失敗分桶 key」：去 flag、小寫、壓空白。
@@ -546,7 +546,7 @@ export function specResolutionProblem(findingId, asStr, requirementsMd, decision
   return `不合法的終局「${s}」——須為 resolved:REQ-xxx / open / deferred:<decisionId> / rejected:<decisionId>`;
 }
 
-// review-check 核心（純函式）：每條 finding 都要有終局且指標當下仍有效——發現不能無痕蒸發。
+// diagnose review（原 review-check）核心（純函式）：每條 finding 都要有終局且指標當下仍有效——發現不能無痕蒸發。
 // currentHash（選填）：給了就對 resolved 加「文件有進展」錨點（finding 所屬輪的 docHash ≠ 現行）。
 // frozenAt（選填）：最後一次 spec.frozen 時戳。落檔於該時點之前的輪＝上個週期的歷史 findings——
 // 當時 freeze 已對現行文件全終局對賬過（凍結事件即證據），其 resolved 指向的 REQ 會隨迭代歸檔而

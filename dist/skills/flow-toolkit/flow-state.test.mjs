@@ -365,20 +365,20 @@ test('spec-review：跨 lens id 撞號 → exit 1 拒收（W1 防一筆終局蒸
   });
 });
 
-test('review-resolve/review-check：finding 終局附機器指標，未終局/指標失效 exit 2（W1 發現不能無痕蒸發）', async () => {
+test('review-resolve/diagnose review：finding 終局附機器指標，未終局/指標失效 exit 2（W1 發現不能無痕蒸發）', async () => {
   await withRoot(async (root) => {
     await S.init(root, { project: 'p', tasks: [] });
     await writeReq(root, READY_REQ);
     const fp = path.join(root, 'f.json');
     await writeFile(fp, JSON.stringify({ findings: [{ id: 'SR-CS-001', severity: 'medium', claim: 'REQ-001 與 story 對不上' }] }), 'utf8');
     run(['spec-review', 'consistency', '--file', fp], root);
-    assert.equal(run(['review-check'], root).code, 2, '未終局擋');
+    assert.equal(run(['diagnose', 'review'], root).code, 2, '未終局擋');
     assert.equal(run(['review-resolve', 'SR-CS-999', '--as', 'open'], root).code, 1, '不存在的 finding 拒收');
     assert.equal(run(['review-resolve', 'SR-CS-001', '--as', 'resolved:REQ-999'], root).code, 2, '指向不存在的 REQ 擋');
     assert.equal(run(['review-resolve', 'SR-CS-001', '--as', 'rejected:D-1'], root).code, 2, 'decision 檔不存在擋');
     run(['decision', 'D-1', '--choice', '不採納', '--why', '超出本迭代範圍'], root);
     assert.equal(run(['review-resolve', 'SR-CS-001', '--as', 'rejected:D-1'], root).code, 0, '洩壓閥：留審計線即可關閉');
-    assert.equal(run(['review-check'], root).code, 0, '全終局放行');
+    assert.equal(run(['diagnose', 'review'], root).code, 0, '全終局放行');
   });
 });
 
@@ -411,7 +411,7 @@ test('spec-ready --freeze：末輪有 findings → 未收斂擋；終局＋補�
     run(['spec-review', 'redteam', '--file', fp], root);
     await passLenses(root);   // redteam 補到 r3？——passLenses 各跑 2 輪：redteam 變 r2,r3（r3 空）、consistency r1,r2
     const mid = run(['spec-ready', '--freeze'], root);
-    assert.equal(mid.code, 2, 'SR-RT-001 未終局，review-check 擋');
+    assert.equal(mid.code, 2, 'SR-RT-001 未終局，diagnose review 擋');
     assert.match(mid.err, /SR-RT-001/);
     run(['decision', 'D-skip', '--choice', '不採納', '--why', '單人工具無併發面'], root);
     assert.equal(run(['review-resolve', 'SR-RT-001', '--as', 'rejected:D-skip'], root).code, 0);
@@ -863,11 +863,11 @@ test('coverage：spec 有 REQ-E2E 但無記錄 → exit 2 列 missing；補齊 p
   await withRoot(async (root) => {
     await S.init(root, { project: 'p', tasks: [] });
     await writeReq(root, READY_REQ);   // 含 REQ-E2E-001
-    const miss = run(['coverage'], root);
+    const miss = run(['diagnose', 'coverage'], root);
     assert.equal(miss.code, 2);
     assert.match(miss.err, /REQ-E2E-001/);
     run(['verify-e2e', 'REQ-E2E-001', '--status', 'pass', '--evidence', await evid(root)], root);
-    const ok = run(['coverage'], root);
+    const ok = run(['diagnose', 'coverage'], root);
     assert.equal(ok.code, 0, ok.err);
   });
 });
@@ -875,7 +875,7 @@ test('coverage：spec 有 REQ-E2E 但無記錄 → exit 2 列 missing；補齊 p
 test('coverage：查無 requirements.md → exit 2', async () => {
   await withRoot(async (root) => {
     await S.init(root, { project: 'p', tasks: [] });
-    assert.equal(run(['coverage'], root).code, 2);
+    assert.equal(run(['diagnose', 'coverage'], root).code, 2);
   });
 });
 

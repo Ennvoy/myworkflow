@@ -1029,7 +1029,7 @@ test('lensConvergenceAudit：未跑/1 輪/末輪有 findings 擋；2 輪末輪�
   const stale = [mk('redteam', 1, 0), mk('redteam', 2, 0, 'hash-old'), mk('consistency', 1, 0), mk('consistency', 2, 0)];
   assert.match(S.lensConvergenceAudit(stale, H).join('\n'), /docHash 不符/);
   const capped = [mk('redteam', 1, 3), mk('redteam', 2, 2), mk('redteam', 3, 1), mk('consistency', 1, 0), mk('consistency', 2, 0)];
-  assert.deepEqual(S.lensConvergenceAudit(capped, H), [], '滿 3 輪封頂（剩餘 findings 由 review-check 逼終局）');
+  assert.deepEqual(S.lensConvergenceAudit(capped, H), [], '滿 3 輪封頂（剩餘 findings 由 diagnose review 逼終局）');
 });
 
 test('isHighRiskAttackText：真攻擊面命中（含自然語言句型）、工程語境不誤中（W0-6 三組制）', () => {

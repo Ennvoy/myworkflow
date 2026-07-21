@@ -707,15 +707,53 @@ switch (cmd) {
     console.log(`✓ ${idU} → ${asStr}（complete-check 會對賬）。`);
     break;
   }
-  case 'code-check': {
-    // code-review red flag 終局化對賬（可單獨跑；complete-check 內含同一檢查）。
-    const review = await S.readCodeReview(root);
-    if (!review) { console.log('⚠ 查無 .flow/code-review/findings.json——藍軍 code-review 還沒落檔（/flow-ship Step 1 SHALL 跑 review-code）。'); break; }
-    const problems = S.codeReviewAudit(review, await S.readCodeResolutions(root), (did) => existsSync(path.join(root, '.flow', 'decisions', did + '.json')));
-    if (problems.length) { console.error('✗ code-review red flag 未全終局（red flag 不能無聲蒸發）：'); for (const p of problems) console.error('  - ' + p); process.exit(2); }
-    const red = (review.findings || []).filter(f => String(f.severity).toLowerCase() === 'red').length;
-    console.log(`✓ ${red} 條 red flag 全數終局（fixed/waiver）。`);
-    break;
+  case 'diagnose': {
+    // A3 三合一診斷入口（原 code-check / coverage / review-check 三個 subcommand——功能分別是
+    // complete-check 與 spec-ready --freeze 的子集，單獨跑僅為互動除錯；收斂成一個動詞砍 CLI 表面積）。
+    const section = argv[1];
+    if (section === 'code') {
+      // code-review red flag 終局化對賬（complete-check 內含同一檢查）。
+      const review = await S.readCodeReview(root);
+      if (!review) { console.log('⚠ 查無 .flow/code-review/findings.json——藍軍 code-review 還沒落檔（/flow-ship Step 1 SHALL 跑 review-code）。'); break; }
+      const problems = S.codeReviewAudit(review, await S.readCodeResolutions(root), (did) => existsSync(path.join(root, '.flow', 'decisions', did + '.json')));
+      if (problems.length) { console.error('✗ code-review red flag 未全終局（red flag 不能無聲蒸發）：'); for (const p of problems) console.error('  - ' + p); process.exit(2); }
+      const red = (review.findings || []).filter(f => String(f.severity).toLowerCase() === 'red').length;
+      console.log(`✓ ${red} 條 red flag 全數終局（fixed/waiver）。`);
+      break;
+    }
+    if (section === 'coverage') {
+      // REQ-E2E 覆蓋對賬（complete-check 內含同一檢查）。
+      const cov = await coverageReport(root);
+      if (cov.skipped) { console.error('✗ 查無 specs/requirements.md——無從對賬 REQ-E2E 覆蓋。'); process.exit(2); }
+      if (cov.audit.total === 0) { console.error('✗ specs/requirements.md 實存但查無任何 REQ-E2E-*——0 條＝無從驗收（spec 被收束成殼？）。'); process.exit(2); }
+      printCoverage(cov.audit);
+      if (!cov.audit.ok) {
+        console.error('✗ REQ-E2E 覆蓋未達：缺驗證記錄或有 fail。用 flow-state verify-e2e <id> --status pass --evidence "<ref>" 記真綠。');
+        process.exit(2);
+      }
+      console.log(`✓ 所有 ${cov.audit.total} 條 REQ-E2E-* 都有 pass/n-a 驗證記錄。`);
+      break;
+    }
+    if (section === 'review') {
+      // spec-review findings 終局化對賬（spec-ready --freeze 內含同一檢查＋lens 收斂判準）。
+      const ledgers = await S.listSpecReviewLedgers(root);
+      if (!ledgers.length) { console.log('⚠ 查無任何 .flow/spec-review/ ledger——lens 審查還沒跑（freeze 會要求 redteam/consistency 各 ≥2 輪）。'); break; }
+      const rp4 = path.join(root, 'specs', 'requirements.md');
+      const reqMd = existsSync(rp4) ? readFileSync(rp4, 'utf8') : '';
+      const problems = S.reviewCheckAudit(ledgers, await S.readSpecResolutions(root), reqMd,
+        (did) => existsSync(path.join(root, '.flow', 'decisions', did + '.json')), S.sha256Text(reqMd),
+        S.lastFrozenAt(await S.readJournal(root)));
+      if (problems.length) {
+        console.error('✗ findings 終局化對賬未過（發現不能無痕蒸發）：');
+        for (const p of problems) console.error('  - ' + p);
+        process.exit(2);
+      }
+      const total = ledgers.reduce((n, r) => n + (r.findings || []).length, 0);
+      console.log(`✓ ${total} 條 findings 全數終局且指標有效（resolved/open/deferred/rejected）。`);
+      break;
+    }
+    console.error('usage: flow-state diagnose <code|coverage|review>');
+    process.exit(1);
   }
   case 'complete-check': {
     // 完成謂詞硬閘門（ship 出口）：① tasks.md 全 [x]（無未完成 [ ]）② 所有 REQ-E2E-* 都有 pass/n-a 驗證記錄。
@@ -823,20 +861,6 @@ switch (cmd) {
     // SessionStart 的 briefStatus 據此靜默、不再每 session 喊「task 全交付、待驗證/出貨」。
     await S.writeManifest(root, { ...(await S.readManifest(root)), phase: 'shipped' });
     console.log(`✓ 所有 ${cov.audit.total} 條 REQ-E2E-* 驗綠${perfIds.length ? `＋${perfIds.length} 條 REQ-PERF 達標` : ''}＋${codeReview ? 'code-review red flag 全終局' : 'code-review 已豁免'}。完成謂詞達成（phase=shipped）。`);
-    break;
-  }
-  case 'coverage': {
-    // REQ-E2E 覆蓋對賬（可單獨跑、診斷用；complete-check 內含同一檢查）。
-    // 用法：flow-state coverage —— 比對 requirements.md 的 REQ-E2E-* vs .flow/verify/*.json 記錄。
-    const cov = await coverageReport(root);
-    if (cov.skipped) { console.error('✗ 查無 specs/requirements.md——無從對賬 REQ-E2E 覆蓋。'); process.exit(2); }
-    if (cov.audit.total === 0) { console.error('✗ specs/requirements.md 實存但查無任何 REQ-E2E-*——0 條＝無從驗收（spec 被收束成殼？）。'); process.exit(2); }
-    printCoverage(cov.audit);
-    if (!cov.audit.ok) {
-      console.error('✗ REQ-E2E 覆蓋未達：缺驗證記錄或有 fail。用 flow-state verify-e2e <id> --status pass --evidence "<ref>" 記真綠。');
-      process.exit(2);
-    }
-    console.log(`✓ 所有 ${cov.audit.total} 條 REQ-E2E-* 都有 pass/n-a 驗證記錄。`);
     break;
   }
   case 'verify-e2e': {
@@ -1141,29 +1165,11 @@ switch (cmd) {
       { findingDocHash: fLedger && fLedger.docHash, currentHash: curHash });
     if (prob) { console.error('✗ ' + prob); process.exit(2); }
     await S.writeSpecResolution(root, idU, { as: asStr });
-    console.log(`✓ ${idU} → ${asStr}（指標已驗；freeze 前 review-check 會再驗一次）。`);
-    break;
-  }
-  case 'review-check': {
-    // findings 終局化對賬（可單獨跑、診斷用；spec-ready --freeze 內含同一檢查＋lens 收斂判準）。
-    const ledgers = await S.listSpecReviewLedgers(root);
-    if (!ledgers.length) { console.log('⚠ 查無任何 .flow/spec-review/ ledger——lens 審查還沒跑（freeze 會要求 redteam/consistency 各 ≥2 輪）。'); break; }
-    const rp4 = path.join(root, 'specs', 'requirements.md');
-    const reqMd = existsSync(rp4) ? readFileSync(rp4, 'utf8') : '';
-    const problems = S.reviewCheckAudit(ledgers, await S.readSpecResolutions(root), reqMd,
-      (did) => existsSync(path.join(root, '.flow', 'decisions', did + '.json')), S.sha256Text(reqMd),
-      S.lastFrozenAt(await S.readJournal(root)));
-    if (problems.length) {
-      console.error('✗ findings 終局化對賬未過（發現不能無痕蒸發）：');
-      for (const p of problems) console.error('  - ' + p);
-      process.exit(2);
-    }
-    const total = ledgers.reduce((n, r) => n + (r.findings || []).length, 0);
-    console.log(`✓ ${total} 條 findings 全數終局且指標有效（resolved/open/deferred/rejected）。`);
+    console.log(`✓ ${idU} → ${asStr}（指標已驗；freeze 前 diagnose review 會再驗一次）。`);
     break;
   }
   default:
-    console.log(`flow-state <resume|status|done|checkpoint|mode|project-type|scope|wave|redteam|journey-check|run|verify-ok|verify-e2e|verify-perf|plan-check|review-code|code-resolve|code-check|coverage|lesson|decision|pending|journal-archive|guardrail-check|complete-check|spec-ready|spec-review|review-resolve|review-check|mockup-check> [--root <path>]
+    console.log(`flow-state <resume|status|done|checkpoint|mode|project-type|scope|wave|redteam|journey-check|run|verify-ok|verify-e2e|verify-perf|plan-check|review-code|code-resolve|diagnose|lesson|decision|pending|journal-archive|guardrail-check|complete-check|spec-ready|spec-review|review-resolve|mockup-check> [--root <path>]
   resume | status        冷啟動：reconstruct 印現況 + 下一步 + mid-task 進度 + 對帳 + 已知死路（換 session/電腦/中斷後接手；平行波看 /workflows）
   done <id> [--commit]   標一個 task 完成：翻 tasks.md [x] + ledger→delivered（自帶 verify 閘門；先標、再 commit）
   checkpoint <id> --phase <red|green|refactor|integrated> [--note]   記 mid-task 進度（開發中當機 → resume 帶出「上次做到第幾步」，只補沒做完的）
@@ -1180,8 +1186,7 @@ switch (cmd) {
   plan-check             計畫出口對賬：REQ↔task 覆蓋＋tasks.md↔manifest 逐欄一致 → 落 plan-check.json＋phase="plan-done"，否則 exit 2（/flow-plan 出口跑）
   review-code --file <findings.json>   藍軍 code-review 落機讀檔（/flow-ship Step 1；red flag 進完成謂詞）
   code-resolve <CR-id> --as <fixed:<evidence>|waiver:<decisionId>>   把一條 red flag 走終局（沒處理完 complete-check 擋 ship）
-  code-check             code-review red flag 終局化對賬：任一 red flag 未終局 → exit 2（complete-check 內含同一檢查）
-  coverage               REQ-E2E 覆蓋對賬：requirements.md 的 REQ-E2E-* vs .flow/verify 記錄，缺/未過 exit 2
+  diagnose <code|coverage|review>   三合一診斷（原 code-check/coverage/review-check）：red flag 終局／REQ-E2E 覆蓋／findings 終局對賬，未過 exit 2（complete-check、freeze 內含同一檢查）
   lesson <id> --approach "<a>" --why "<w>"   記一條失敗記憶（防再生撞同一面牆；標 BLOCKED/stall 升級時記）
   decision <id> --choice "<c>" --why "<w>" [--by user|auto]   記決策留審計（waiver 類 id 預設 by:user＝使用者拍板；其餘預設 by:auto＝自駕自決；自駕下禁自建 waiver/signoff → 改記 pending）
   pending <add|list|resolve>   待決單（自駕碰重試仍過不了的關卡→記一張繼續跑，收尾一批彈窗請使用者拍板；complete-check 對 pending 非空 exit 2）
@@ -1190,7 +1195,6 @@ switch (cmd) {
   spec-ready [--freeze]  需求收斂閘門：### 開放問題 段缺失/沒清零、缺 REQ-E2E·PERF、placeholder、REQ-E2E 缺 journey 結構、PERF N/A 無豁免檔 → exit 2（含糊詞僅警告；--freeze 另對賬 projectType＋走查台/mockup-waiver＋lens 收斂/findings 終局＋ui-signoff）
   spec-review <lens> --file <findings.json> [--exec "<cmd>"]   收一輪 lens 審查落 ledger（redteam|consistency|codex；docHash 由 CLI 自算、round 自動遞增）
   review-resolve <SR-id> --as <resolved:REQ-xxx|open|deferred:<id>|rejected:<id>>   把一條 finding 走到終局（附機器可驗指標，發現不能無痕蒸發）
-  review-check           findings 終局化對賬：任一 finding 未終局/指標失效 → exit 2（freeze 內含同一檢查）
   mockup-check [--dir]   互動原型走查閘門：specs/ui-mockups/index.html 缺 REQ-E2E 走查卡、本地連結 404、或連到的頁面是空殼（無 app.js/互動元素）→ exit 2（產完原型、開瀏覽器請使用者定版前跑）
 決策/討論一律回 Claude（彈窗）；狀態都在專案的 .flow/。`);
 }

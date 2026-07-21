@@ -28,6 +28,7 @@ description: Flow Phase 3 — 多工交付（混合基座）。取當前波次�
 ## Step 3：fan-out 平行生成 worker（Workflow 腳本，同 repo）
 
 用 `references/recipes/parallel-build.js` spawn worker，**每 feature 一個**，同一工作目錄平行生成。prompt 帶逐字 REQ（`wave-plan.json` 的 `reqText`，別叫 worker 自讀 requirements.md）+ 契約 + conflictZone、紅軍攻擊面轉失敗安全測試、TDD 三相（每過一相落 checkpoint）、真實資料鏈路鐵則（禁 mock、真依賴未 ready 標 BLOCKED）、涉 UI 先取 `ui-ux-pro-max` 建議、檔案/工具邊界、要求結構化回傳。**完整 prompt 模板＋worker 禁令清單**見 `build-playbook.md` §二、§三。
+- **UI 投餵（web 類，定版原型＝版面單一事實來源）**：dispatch 時把 `wave-plan.json` 的 `ui`（定版 `tokens.css` 逐字＋`designBase`）原樣傳給 recipe 的 `args.ui`，per-task `mockupPages` 已在 wave-plan 各 task 上——worker prompt 會硬性要求「先讀承接的原型頁、沿用其版面/tokens、改版面＝需求級變更標 BLOCKED」。**別省這個欄位**：漏傳＝worker 退回通用元件建議、成品偏離定版 mockup（正是這條鏈路過去的斷點）。
 - **成本路由（Reasoning Sandwich）**：平行苦工 worker 走較便宜 model（recipe 的 `args.workerModel`，預設 Sonnet、可覆寫、不 hardcode 行為）——省 token＝同預算能 fan-out 更寬的波；紅軍／Evaluator 高價值對抗審查，**維持高階不降級**。
 
 fan-out 前 orchestrator 先 write-ahead：對本波每個 id 呼叫 `statelib.transition(root, id, 'pending', 'building')`，讓 `flow-state status` 反映生成中；並落 `flow-state checkpoint --phase dispatched/worker-returned/integrated` 三個確定性節點守中斷重啟接續（語法見 `build-playbook.md` §四）。

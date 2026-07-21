@@ -432,7 +432,22 @@ switch (cmd) {
     // delivered 集合：reconstruct 合併 manifest→state→ledger 的權威狀態（判 blockedBy 是否已滿足）
     const view = await S.reconstruct(root);
     const delivered = Object.values(view.tasks).filter((t) => t.state === 'delivered').map((t) => t.id);
-    const plan = S.buildWavePlan(manifest, delivered, tasksMd, reqMd, idx);
+    // UI 投餵（原型存在時）：先對賬定版快照未漂移（漂移＝worker 會拿到非定版 UI，與 reqHash 同級 fail-closed），
+    // 再把 tokens.css 逐字＋designBase 塞進 wave-plan.ui；per-task mockupPages 由 buildWavePlan 從 manifest 帶。
+    let uiCtx = null;
+    if (existsSync(path.join(root, 'specs', 'ui-mockups'))) {
+      const mHashes = await S.mockupFileHashes(root);
+      const mhp = S.mockupHashProblem(await S.readMockupIndex(root), mHashes);
+      if (mhp) { console.error('✗ ' + mhp); process.exit(2); }
+      const tokPath = path.join(root, 'specs', 'ui-mockups', 'tokens.css');
+      uiCtx = {
+        designBase: manifest.designBase || '',
+        tokensCss: existsSync(tokPath) ? readFileSync(tokPath, 'utf8') : '',
+        mockupDir: 'specs/ui-mockups',
+        mockupAggHash: S.mockupAggHash(mHashes),
+      };
+    }
+    const plan = S.buildWavePlan(manifest, delivered, tasksMd, reqMd, idx, uiCtx);
     if (plan.problems && plan.problems.length) {
       console.error('✗ 波次計算未過：');
       for (const p of plan.problems) console.error('  - ' + p);
@@ -443,6 +458,7 @@ switch (cmd) {
     console.log(`✓ 波次已算：${plan.waves.length} 波、${nTask} 個未交付 task（已排除 delivered）。落 .flow/trace/wave-plan.json。`);
     for (let i = 0; i < plan.waves.length; i++) console.log(`  Wave ${i}: ${plan.waves[i].map((t) => t.id).join(', ')}`);
     if (plan.warnings && plan.warnings.length) { console.log('\n⚠ 並行度提醒（conflictZone 重疊自動拆波）：'); for (const w of plan.warnings) console.log('  · ' + w); }
+    if (uiCtx) console.log(`\n  UI 投餵已附：wave-plan.ui（designBase=${uiCtx.designBase || '(未落檔)'}、tokens.css ${uiCtx.tokensCss ? '逐字 ' + uiCtx.tokensCss.length + ' 字' : '缺檔'}）＋per-task mockupPages——dispatch 把 wave-plan.ui 傳給 recipe 的 args.ui。`);
     console.log('\n  dispatch 時：worker prompt 直接用 wave-plan 該 task 的逐字 reqText（不叫 worker 自讀 requirements.md，堵版本漂移）；');
     console.log('  整合前 flow-state scope --wave 會對賬「本波成員＝wave-plan 某波、manifest 未漂移」。manifest 若合法改動 → 重跑本指令。');
     break;

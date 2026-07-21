@@ -501,6 +501,28 @@ test('plan-check：mockup 鏈路對賬——UI 對焦結論缺/頁未承接 → 
   });
 });
 
+test('wave --compute：原型存在 → 對賬定版快照（漂移 exit 2）；過了把 tokens 逐字＋designBase＋mockupPages 落 wave-plan（UI 投餵）', async () => {
+  await withRoot(async (root) => {
+    await frozenWebRoot(root);
+    run(['design-base', 'shadcn'], root);
+    await writeFile(path.join(root, 'specs', 'tasks.md'), '- [ ] F-1 全部（對應 REQ-001 REQ-E2E-001 REQ-PERF-001）\n      blockedBy: — | conflictZone: api/ | mockupPages: pages/login.html\n', 'utf8');
+    const m = await S.readManifest(root);
+    await S.writeManifest(root, { ...m, tasks: [{ id: 'F-1', blockedBy: [], conflictZone: ['api/'], mockupPages: ['pages/login.html'] }] });
+    const r = run(['wave', '--compute'], root);
+    assert.equal(r.code, 0, r.err);
+    assert.match(r.out, /UI 投餵已附/);
+    const wp = await S.readWavePlan(root);
+    assert.equal(wp.ui.designBase, 'shadcn');
+    assert.match(wp.ui.tokensCss, /--color-primary/, '定版 tokens.css 逐字進 wave-plan');
+    assert.deepEqual(wp.waves[0][0].mockupPages, ['pages/login.html'], 'per-task 原型頁帶到 dispatch');
+    // 偷改原型 → wave fail-closed（別把漂移 UI 餵給 worker，與 reqHash 同級）
+    await writeFile(path.join(root, 'specs', 'ui-mockups', 'pages', 'login.html'), PAGE_OK + '<p>改</p>', 'utf8');
+    const r2 = run(['wave', '--compute'], root);
+    assert.equal(r2.code, 2, '原型漂移 → 擋波次');
+    assert.match(r2.err, /定版快照不符/);
+  });
+});
+
 // ── 第 2 波：全鏈路對賬 CLI 端到端 ──
 
 // 凍結一個乾淨 spec（含 lens 收斂＋projectType），回傳 root——W2 各 CLI 測試的共同前置

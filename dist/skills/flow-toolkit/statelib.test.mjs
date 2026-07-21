@@ -815,6 +815,18 @@ test('uiFocusAudit：缺節/漏頁點名；節在＋逐頁提及 → 空', () =>
   assert.match(S.uiFocusAudit(md, ['pages/login.html', 'pages/items.html']).join('\n'), /items\.html/);
 });
 
+test('buildWavePlan：uiCtx 附進 wave-plan.ui、per-task mockupPages 自 manifest 帶出（UI 逐字投餵）', () => {
+  const manifest = { tasks: [{ id: 'F-1', blockedBy: [], conflictZone: ['api/'], mockupPages: ['pages/login.html'] }] };
+  const tasksMd = '- [ ] F-1 登入（對應 REQ-E2E-001）\n      blockedBy: — | conflictZone: api/ | mockupPages: pages/login.html\n';
+  const reqMd = 'REQ-E2E-001：登入 → 首頁 → 斷言。';
+  const plan = S.buildWavePlan(manifest, [], tasksMd, reqMd, null, { designBase: 'shadcn', tokensCss: ':root{--c:red}', mockupDir: 'specs/ui-mockups', mockupAggHash: 'h' });
+  assert.deepEqual(plan.problems, []);
+  assert.equal(plan.ui.designBase, 'shadcn');
+  assert.equal(plan.ui.tokensCss, ':root{--c:red}', 'tokens 逐字');
+  assert.deepEqual(plan.waves[0][0].mockupPages, ['pages/login.html']);
+  assert.ok(!('ui' in S.buildWavePlan(manifest, [], tasksMd, reqMd, null)), '無 uiCtx（非 web）不附 ui 欄位');
+});
+
 test('manifestScopeHash：mockupPages 進投影（plan 後改動＝漂移要重算波次）', () => {
   const a = S.manifestScopeHash({ tasks: [{ id: 'F-1', conflictZone: ['api/'], mockupPages: ['pages/a.html'] }] });
   assert.notEqual(a, S.manifestScopeHash({ tasks: [{ id: 'F-1', conflictZone: ['api/'], mockupPages: ['pages/b.html'] }] }));

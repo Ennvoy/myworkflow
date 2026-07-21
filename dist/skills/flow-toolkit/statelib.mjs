@@ -837,13 +837,17 @@ export function extractReqBlock(reqMd, id) {
   return null;
 }
 
-// 純函式：組裝 wave-plan（波次拓樸 + 每 task 逐字 REQ 文字）。任一拓樸無解或承接 REQ 抽不到區塊 → problems 非空。
+// 純函式：組裝 wave-plan（波次拓樸 + 每 task 逐字 REQ 文字 + UI 投餵）。任一拓樸無解或承接 REQ 抽不到區塊 → problems 非空。
 // reqText 逐字來自凍結 requirements.md（呼叫端 CLI 先過 reqHashProblem 確保是凍結版）＝同 task＋同凍結 spec →
 // worker 收到的規格文字逐 byte 相同（堵 H10：worker 各自 re-read 讀到漂移版本）。glob 前綴（REQ-PERF-*）不抽區塊、跳過。
-export function buildWavePlan(manifest, deliveredSet, tasksMd, reqMd, reqIndex) {
+// uiCtx（選填，呼叫端在原型存在且過 mockupHashProblem 後給）：{ designBase, tokensCss, mockupDir, mockupAggHash }——
+// 逐字投餵機制延伸到 UI：tokens.css 原文＋per-task mockupPages（自 manifest）一路帶到 dispatch，
+// 堵「REQ 文字防漂移做滿、定版 mockup 卻整段不在投餵清單」的斷鏈（worker 憑通用建議另起爐灶）。
+export function buildWavePlan(manifest, deliveredSet, tasksMd, reqMd, reqIndex, uiCtx = null) {
   const { waves, warnings, problems } = computeWaves(manifest, deliveredSet);
   if (problems.length) return { problems, warnings };
   const reqMap = taskReqIds(tasksMd);
+  const byId = Object.fromEntries((((manifest && manifest.tasks) || [])).map(t => [t.id, t]));
   const missing = [];
   const detailWaves = waves.map(w => w.map(id => {
     const reqIds = (reqMap[id] || []).filter(r => !r.endsWith('-'));   // 排除 glob 前綴（非具體 id）
@@ -853,7 +857,8 @@ export function buildWavePlan(manifest, deliveredSet, tasksMd, reqMd, reqIndex) 
       if (blk == null) { missing.push(`${id} 承接 ${rid}，但凍結 requirements.md 抽不到該 REQ 區塊（id 打錯或已被刪）——修 tasks.md 或重新凍結`); continue; }
       blocks.push(blk);
     }
-    return { id, reqIds, reqText: blocks.join('\n\n') };
+    const mp = (byId[id] && byId[id].mockupPages) || [];
+    return { id, reqIds, reqText: blocks.join('\n\n'), ...(mp.length ? { mockupPages: mp } : {}) };
   }));
   if (missing.length) return { problems: missing, warnings };
   // W3-3②：函式自身防禦——reqIndex 存在但與傳入 reqMd 不一致＝呼叫端漏跑 reqHashProblem。
@@ -864,6 +869,7 @@ export function buildWavePlan(manifest, deliveredSet, tasksMd, reqMd, reqIndex) 
     manifestHash: manifestScopeHash(manifest),
     reqHash: sha256Text(reqMd || ''),
     reqIndexHash: (reqIndex && reqIndex.reqHash) || '',
+    ...(uiCtx ? { ui: { designBase: uiCtx.designBase || '', tokensCss: uiCtx.tokensCss || '', mockupDir: uiCtx.mockupDir || 'specs/ui-mockups', mockupAggHash: uiCtx.mockupAggHash || '' } } : {}),
     waves: detailWaves, warnings, problems: [],
   };
 }

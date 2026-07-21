@@ -20,7 +20,7 @@
 - **紅軍攻擊面 → 先寫失敗安全測試、再用防禦碼轉綠**
 - **TDD 三相**（見 `verification-playbook.md` §TDD）：Red 寫自己的測試檔、單跑出真 assertion failure → Green 最小實作 → Refactor。**每過一相落 checkpoint**（語法見§三）——輕量一行、append-only，開發中當機/被關終端，重啟靠它接續沒做完的相、不重跑整個 task、不覆蓋已寫的檔
 - **真實資料鏈路鐵則**：涉 API/資料 SHALL 打真後端真 DB、**禁 mock 假綠**、測試資料 seed 進真 DB；真依賴未 ready（上游 5xx/未實作）→ 標 **BLOCKED**，不准 mock fallback
-- **涉 UI 的 feature**：orchestrator 先呼叫 `ui-ux-pro-max` 取 component 級建議（structure / ARIA·keyboard·focus / hover·active·disabled / responsive / animation + shadcn 範例），沿用 spec 階段定的 palette/font/style 當 query context，附進 worker prompt；寫 Green 相時 accessibility 清單逐項實作
+- **涉 UI 的 feature——定版原型優先（單一事實來源）**：worker prompt 由 recipe 自動帶「該 task 的 `mockupPages` 原型頁路徑＋定版 `tokens.css` 逐字＋`designBase`」（來自 `wave-plan.json` 的 per-task `mockupPages` 與 `ui`，orchestrator dispatch 時把 `wave-plan.ui` 傳 `args.ui`）——worker SHALL 先讀承接的原型頁、沿用其版面/元件層級/狀態與同一組 token 變數，**改版面＝需求級變更 → 標 BLOCKED 回報**；`ui-ux-pro-max` component 建議只作輔助（a11y/元件級互動），orchestrator 呼叫時沿用 spec 階段定的 palette/font/style 當 query context；寫 Green 相時 accessibility 清單逐項實作
 - 要求**結構化回傳** `{feature, files, selfCheck{unitGreen,realData}, attackCoverage, blockers, driveBy}`
 
 ## 三、worker 禁令清單（同 repo 平行的檔案安全靠這個）

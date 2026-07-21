@@ -16,9 +16,12 @@ export const meta = {
   ],
 }
 
-// args.wave: [{ id, title, req, reqText?, conflictZone, ui? }]；args.contractPath / args.reqPath
+// args.wave: [{ id, title, req, reqText?, mockupPages?, conflictZone, ui? }]；args.contractPath / args.reqPath / args.ui?
 //   reqText（W3-2）＝orchestrator dispatch 前跑 `flow-state wave --compute`、從 wave-plan.json 取的「逐字 REQ 區塊」——
 //   直接內嵌 worker prompt，取代叫 worker 自讀 requirements.md（堵版本漂移：同 task＋同凍結 spec → 逐 byte 相同規格）。
+//   mockupPages＋args.ui（wave-plan.ui 原樣傳入：{ designBase, tokensCss, mockupDir }）＝UI 逐字投餵——
+//   定版原型是版面/互動的單一事實來源：worker SHALL 先讀自己承接的原型頁、沿用 tokens.css 同一組變數，
+//   堵「UI 基準被偷換成通用元件建議」的斷鏈（mockup 定版後成品走樣的病根）。
 // 成本路由＝兩根正交軸（Reasoning Sandwich）：
 //   ① model 軸——平行苦工 worker 走較便宜 model（預設 'sonnet'，args.workerModel 可覆寫），省 token＝同預算 fan-out 更寬的波。
 //   ② effort 軸（同 model 內的 reasoning_effort）——機械性 generate 用中檔（worker），高價值對抗審查（紅軍）維持高檔不降級。
@@ -27,6 +30,7 @@ export const meta = {
 //   會靜默把對抗審查降級，與憲法「對抗審查不降級」矛盾）；args.redTeamEffort 仍可覆寫（但不該降級）。
 const wave = (args && args.wave) || []
 if (!wave.length) { log('parallel-build: 空波次，無事可做'); return [] }
+const UI = (args && args.ui) || null            // wave-plan.ui：{ designBase, tokensCss, mockupDir }（無原型＝null）
 const WORKER_MODEL  = (args && args.workerModel)  || 'sonnet'
 const WORKER_EFFORT = (args && args.workerEffort)  || 'medium'   // 平行苦工 generate：中檔
 const RED_EFFORT    = args && args.redTeamEffort                 // 紅軍：預設不覆寫、吃 frontmatter xhigh
@@ -114,7 +118,15 @@ const results = await pipeline(
     `**硬出口**：撞 hard block（上游 5xx / 未實作 / rate-limited / 型別契約缺）→ 立即在 blockers 回報並**停止本 worker**，禁反覆重試或自行降級 mock（悶燒會吃掉整波 ~15x token）。\n` +
     `**你只負責生成，不做整合**：可單跑你自己的單元測試檔（TDD）；但**不要**跑整包 build / tsc / 起 dev server / git add / git commit\n` +
     `  （那些會跟其他 worker 搶 .next/tsbuildinfo/port 與 .git/index.lock）——整包 build、驗證、commit 由主流程序列做。\n` +
-    (f.ui ? `涉 UI：依附帶的 ui-ux-pro-max component 建議，accessibility（ARIA/keyboard/focus）清單逐項實作。\n` : '') +
+    (f.mockupPages && f.mockupPages.length
+      ? `**UI 定版錨點（使用者拍板的互動原型＝版面/互動的單一事實來源，優先於任何通用元件建議）**：\n` +
+        `  SHALL 先完整讀你承接的原型頁再動工：${f.mockupPages.map((p) => `${(UI && UI.mockupDir) || 'specs/ui-mockups'}/${p}`).join('、')}\n` +
+        `  沿用原型頁的版面結構/元件層級/互動流程/狀態（hover/disabled/loading/空/錯誤態照原型做），把假資料層（app.js）換成真 API；原型檔本身不搬進 src/ 當完成。\n` +
+        `  覺得版面該改＝需求級變更 → 記進 blockers 停下回報，禁自行重設計。\n` +
+        (UI && UI.designBase && UI.designBase !== 'none' ? `  品牌基底：${UI.designBase}（spec 定版選定，styling 沿用其設計語言）。\n` : '') +
+        (UI && UI.tokensCss ? `  設計 token（定版 tokens.css 逐字如下——實作 SHALL 沿用同一組 CSS 變數、禁另創色票/字體/間距；ui-fidelity 閘門會驗 token 真的被引用）：\n${UI.tokensCss}\n` : '')
+      : '') +
+    (f.ui ? `涉 UI：ui-ux-pro-max component 建議為輔（a11y/元件級互動）${f.mockupPages && f.mockupPages.length ? '，版面/視覺以上述定版原型為準' : ''}，accessibility（ARIA/keyboard/focus）清單逐項實作。\n` : '') +
     `安全 red flag（SQLi/auth bypass/密碼明文/缺 WHERE 的 destructive query）→ 在 driveBy 標出。\n` +
     `回傳結構化結果：你改了哪些檔（files）、自檢（單元綠/真實資料）、attackCoverage、blockers、driveBy。`,
     { label: `gen:${f.id}`, phase: 'Generate', schema: GEN_SCHEMA, model: WORKER_MODEL, effort: WORKER_EFFORT }

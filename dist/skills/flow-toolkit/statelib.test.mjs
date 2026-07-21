@@ -1052,6 +1052,22 @@ test('isHighRiskAttackText：真攻擊面命中（含自然語言句型）、工
   ]) assert.equal(S.isHighRiskAttackText(s), false, s);
 });
 
+test('isHighRiskAttackText：範圍排除句不誤觸發、禁止句照常觸發（(d) 否定語境剝除）', () => {
+  // 「宣告不做」＝排除語意 → 剝掉後不觸發（原本 strong 詞單獨即中，這是 C 類誤報主源）
+  for (const s of [
+    '本功能不涉及金流',
+    '本版不包含個資蒐集',
+    'MVP 不含金流與付費功能',
+    '此階段不需要金流串接',
+  ]) assert.equal(S.isHighRiskAttackText(s), false, s);
+  // 剝除止於標點；禁止句（不得/禁止）是真安全需求、絕不剝
+  for (const s of [
+    '不涉及金流，但會蒐集個資',
+    '系統不得允許未登入者繞過權限存取後台',
+    '禁止竄改他人資料',
+  ]) assert.equal(S.isHighRiskAttackText(s), true, s);
+});
+
 // ── Playwright journey 真實性審計（auditJourneyTest）：導航版「禁 mock 假綠」 ──
 
 test('auditJourneyTest：非 journey 檔（無 playwright/goto）→ isJourney=false、零問題', () => {

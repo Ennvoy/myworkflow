@@ -441,13 +441,17 @@ export const WEB_PROJECT_TYPES = ['web-saas', 'web-app', 'mobile'];
 //   (a) 強訊號詞單獨即觸發（幾乎必為安全面）；
 //   (b) 低訊號 domain 名詞（auth/login/token/session/payment…）須與攻擊動詞（bypass/偽造/竊取/未登入…）同文共現；
 //   (c) 「注入」須與 SQL/script/命令/惡意 等語境共現（排除依賴注入）。
+//   (d) 範圍排除句先剝除——「本功能不涉及金流」是在宣告不做，不是安全面，剝掉「排除詞＋其後同短句片段」再判定。
+//     刻意只收「排除語意」的否定詞：不得/不可/禁止 是「禁止句」＝真安全需求（如「不得允許未登入者存取」），絕不剝。
+//     片段止於標點——「不涉及金流，但會蒐集個資」只剝前半、個資照常觸發。
 // 英文詞帶 word boundary（author/repayment 不誤中）；方向仍 fail-safe：誤中代價＝多留一筆可稽核豁免。
 const RISK_STRONG_RE = /\b(injection|sqli|xss|csrf|idor|ssrf|rce|privilege|credential)s?\b|越權|提權|個資|金流|竄改|盜用|冒用/i;
 const RISK_DOMAIN_RE = /\b(auth|login|token|session|payment|admin|account|password)s?\b|權限|登入|後台|帳號|密碼|他人|付費/i;
 const RISK_VERB_RE = /\b(bypass|forge[dr]?|steal|stolen|replay|hijack|escalat\w*|spoof\w*|tamper\w*|unauthori[sz]ed|takeover|impersonat\w*|leak\w*|brute)\b|繞過|偽造|竊取|盜|劫持|外洩|冒用|未授權|未登入|明文/i;
 const RISK_INJECT_CTX_RE = /SQL|script|命令|指令|惡意|payload|XSS/i;
+const RISK_EXCLUDE_RE = /(不涉及|不包含|不含|不支援|無需|不需要)[^。；．，,;.\n]{0,24}/g;
 export function isHighRiskAttackText(text) {
-  const s = String(text || '');
+  const s = String(text || '').replace(RISK_EXCLUDE_RE, ' ');
   if (RISK_STRONG_RE.test(s)) return true;
   if (RISK_DOMAIN_RE.test(s) && RISK_VERB_RE.test(s)) return true;
   if (/注入/.test(s) && RISK_INJECT_CTX_RE.test(s)) return true;

@@ -229,6 +229,22 @@ test('decision：歧義尾段 id → exit 1 並列候選（不靜默 fallback）
   });
 });
 
+test('decision：waiver/signoff 拼錯 id → exit 1 列合法形（H2-F4 堵「記成功但永不生效」）', async () => {
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [] });
+    for (const bad of ['perf-waver', 'mockup_waiver', 'perf-waiver-extra', 'ui-signof']) {
+      const r = run(['decision', bad, '--choice', 'x', '--why', 'y'], root);
+      assert.equal(r.code, 1, `${bad} 應被擋`);
+      assert.match(r.err, /合法形/, bad);
+    }
+    // 合法形照常放行（redteam 動態形＋固定字面各抽一）
+    assert.equal(run(['decision', 'perf-waiver', '--choice', 'N/A', '--why', 'y'], root).code, 0);
+    assert.equal(run(['decision', 'redteam-waiver-F-1-A2', '--choice', 'skip', '--why', 'y'], root).code, 0);
+    // 自由形自決 id（不含 waiver/signoff 字樣）不受限
+    assert.equal(run(['decision', 'C-lib-choice', '--choice', 'pick-a', '--why', 'y'], root).code, 0);
+  });
+});
+
 const READY_REQ = [
   '# 需求', 'REQ-001：當 X 時，系統應 Y。',
   'REQ-E2E-001：登入 → 首頁 → 操作 → 斷言。',

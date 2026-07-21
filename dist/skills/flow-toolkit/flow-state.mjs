@@ -491,6 +491,23 @@ switch (cmd) {
     const choice = flag('--choice') || '';
     if (!choice) { console.error('需給 --choice（你自決了什麼）'); process.exit(1); }
     const rid = await resolveIdOrExit(id);
+    // H2-F4（體檢）：豁免/定版檔靠字面 id 精確比對才生效——打錯字會「看起來記成功」但永遠不被閘門認得＝無聲失守。
+    // 觸發二選一：id 含 waiver/signoff 字樣、或與已知豁免 id 編輯距離 ≤2（抓 perf-waver 這類掉字母型）。
+    // 自由形自決 id（兩者皆否，如 D-1/e2e-na-1）不受限。redteam-waiver-<taskId>-<attackId> 動態形只驗前綴結構。
+    const KNOWN_WAIVERS = ['mockup-waiver', 'perf-waiver', 'plan-check-waiver', 'code-review-waiver', 'journey-waiver', 'retry-waiver', 'ui-signoff'];
+    const lev = (a, b) => {
+      const d = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]);
+      for (let j = 1; j <= b.length; j++) d[0][j] = j;
+      for (let i = 1; i <= a.length; i++) for (let j = 1; j <= b.length; j++)
+        d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+      return d[a.length][b.length];
+    };
+    const isKnownWaiver = KNOWN_WAIVERS.includes(rid) || /^redteam-waiver-.+-.+$/.test(rid);
+    if (!isKnownWaiver && (/waiver|signoff/i.test(rid) || KNOWN_WAIVERS.some(k => lev(rid.toLowerCase(), k) <= 2))) {
+      console.error(`✗ 未知的豁免/定版 id「${rid}」——豁免檔靠字面 id 精確比對，拼錯會記成功但永遠不生效。合法形：`);
+      console.error('  ' + KNOWN_WAIVERS.join(' | ') + ' | redteam-waiver-<taskId>-<attackId>');
+      process.exit(1);
+    }
     // 審計語意：waiver/signoff 類（perf-waiver/mockup-waiver/redteam-waiver-*/ui-signoff）規格上是
     // 「使用者彈窗拍板後留檔」，預設記 by:'user'；其餘（自駕 C 類自決）預設 by:'auto'。--by 可明示覆寫。
     const by = flag('--by') || (/waiver|signoff/i.test(rid) ? 'user' : 'auto');

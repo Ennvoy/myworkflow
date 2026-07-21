@@ -41,7 +41,9 @@ const targetsState = s => /(^|[\s'"/])\.flow\/state\.json\b/.test(String(s || ''
 const targetsLedger = s => /(^|[\s'"/])\.flow\/(spec-review|trace|verify|code-review)(\/|\b)/.test(String(s || '').replace(/\\/g, '/'));
 // Bash/PowerShell 命令是否對檔案有「寫入/建立/刪除」意圖（唯讀 cat/ls/jq/git add/diff/commit 不算——
 // 裸寫防的是竄改檔案內容，讀與 staging 動不了內容；CLI 正門走 fs 內部寫、命令字串不含重導進該目錄）。
-const hasWriteIntent = s => /(^|[^0-9])>>?|\btee\b|\bSet-Content\b|\bOut-File\b|\bAdd-Content\b|\bNew-Item\b|\b(cp|mv|rm|rmdir|touch)\b|\b(Copy-Item|Move-Item|Remove-Item)\b|\bdel\b|\bsed\s+-i/i.test(String(s || ''));
+// fd 編號重導向（1>/2>）也是寫檔語法、一樣算寫入意圖（堵 `echo fake 1> .flow/verify/x.json` 偽造證據）；
+// 只豁免動不了檔案的兩型：fd 合併（2>&1）與丟棄（/dev/null、NUL、$null——`cat x 2>/dev/null` 仍屬唯讀）。
+const hasWriteIntent = s => /(^|[^0-9])>>?|\d>>?(?!&)(?!\s*(?:\/dev\/null|\$null|nul\b))|\btee\b|\bSet-Content\b|\bOut-File\b|\bAdd-Content\b|\bNew-Item\b|\b(cp|mv|rm|rmdir|touch)\b|\b(Copy-Item|Move-Item|Remove-Item)\b|\bdel\b|\bsed\s+-i/i.test(String(s || ''));
 
 // C-3①：純判定（不碰 stdin/exit）——回 { block, message }。dispatch 與 main 共用。
 export function specGateCheck(input) {

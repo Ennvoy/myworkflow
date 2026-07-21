@@ -98,6 +98,18 @@ test('spec-review ledger 閘門：Write/Edit 裸寫擋、Bash 寫入/刪除擋�
   });
 });
 
+test('fd 編號重導向（1>/2>）寫 ledger → 擋；fd 合併/丟棄 → 唯讀放行（H1 繞洞回歸）', async () => {
+  await withFlow(async (root) => {
+    assert.equal(run(bash(root, `echo '{"status":"pass"}' 1> .flow/verify/REQ-E2E-001.json`)), 2, '1> 重導寫 verify 擋');
+    assert.equal(run(bash(root, `some-tool 2> .flow/spec-review/x.md`)), 2, '2> 重導寫 spec-review 擋');
+    assert.equal(run(bash(root, `node x.mjs 2>> .flow/trace/err.log`)), 2, '2>> append 擋');
+    assert.equal(run(bash(root, 'cat .flow/verify/REQ-E2E-001.json 2>/dev/null')), 0, '2>/dev/null 丟棄仍屬唯讀');
+    assert.equal(run(bash(root, 'cat .flow/spec-review/r.json 2>&1')), 0, '2>&1 fd 合併仍屬唯讀');
+    assert.equal(run(bash(root, 'Get-Content .flow/trace/req-index.json 2> $null')), 0, 'PS 2> $null 唯讀放行');
+    assert.equal(run(bash(root, 'type .flow\\verify\\x.json 2>NUL')), 0, 'Windows 2>NUL 唯讀放行');
+  });
+});
+
 test('非 Flow / 壞 JSON / 非相關工具 → fail-open exit 0', async () => {
   const tmp = await mkdtemp(path.join(os.tmpdir(), 'noflow-'));
   assert.equal(run(write(tmp, path.join(tmp, '.flow', 'state.json'), SPEC_DONE)), 0, '無 .flow → 放行');

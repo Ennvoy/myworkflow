@@ -1261,6 +1261,55 @@ export function mockupPageProblems(html) {
   return problems;
 }
 
+// ── 互動原型定版凍結（mockup-index）：與 req-index 同構的漂移偵測 ──
+// 病根：mockup 定版後只剩一句話 ui-signoff 決策，內容零凍結——偷改/刪頁重做/成品偏離全都無人抓。
+// 修法：--freeze 通過瞬間把 specs/ui-mockups/ 的文字資產逐檔 hash 落 .flow/trace/mockup-index.json；
+// 下游消費閘門（plan-check / wave --compute / ui-fidelity）重算對賬，漂移在下一道就被抓。
+// 只 hash 文字資產（html/js/css/json/svg/md，sha256Text 已做行尾/BOM 正規化——git autocrlf 不算漂移）；
+// 二進位（截圖等）不進 hash：原型規格本體是 markup/token/腳本，圖檔非定版契約。
+const mockupIndexPath = root => path.join(traceDir(root), 'mockup-index.json');
+const MOCKUP_TEXT_RE = /\.(html?|m?js|css|json|svg|md)$/i;
+export async function mockupFileHashes(root, dirRel = path.join('specs', 'ui-mockups')) {
+  const base = path.join(root, dirRel);
+  const out = {};
+  async function walk(rel) {
+    let ents;
+    try { ents = await readdir(path.join(base, rel), { withFileTypes: true }); } catch { return; }
+    for (const e of ents) {
+      const r = rel ? `${rel}/${e.name}` : e.name;
+      if (e.isDirectory()) await walk(r);
+      else if (MOCKUP_TEXT_RE.test(e.name)) out[r] = sha256Text(await readFile(path.join(base, r), 'utf8'));
+    }
+  }
+  await walk('');
+  return out;
+}
+// 純函式：檔名→hash map 的 canonical 聚合 hash（排序後序列化）——與檔案列舉順序無關。
+export function mockupAggHash(fileHashes) {
+  const entries = Object.keys(fileHashes || {}).sort().map(k => [k, fileHashes[k]]);
+  return sha256Text(JSON.stringify(entries));
+}
+export async function writeMockupIndex(root, fileHashes, head) {
+  await writeJSON(mockupIndexPath(root), { files: fileHashes, aggHash: mockupAggHash(fileHashes), head: head || '', at: nowISO() });
+}
+export async function readMockupIndex(root) { return readJSON(mockupIndexPath(root), null); }
+// 純函式：現行 mockup 檔 hash vs 定版快照。回 null＝相符或無 index（舊專案向後相容）；否則錯誤訊息列出漂移檔。
+export function mockupHashProblem(index, currentFileHashes) {
+  if (!index) return null;
+  if (!index.aggHash || !index.files) return 'mockup-index.json 實存但損毀（缺 aggHash/files）——定版漂移偵測已失效，重跑 flow-state spec-ready --freeze 重建快照。';
+  const cur = currentFileHashes || {};
+  if (index.aggHash === mockupAggHash(cur)) return null;
+  const changed = [], removed = [], added = [];
+  for (const [rel, h] of Object.entries(index.files)) {
+    if (!(rel in cur)) removed.push(rel);
+    else if (cur[rel] !== h) changed.push(rel);
+  }
+  for (const rel of Object.keys(cur)) if (!(rel in index.files)) added.push(rel);
+  const fmt = (label, arr) => arr.length ? `${label} ${arr.slice(0, 5).join('、')}${arr.length > 5 ? `…等 ${arr.length} 檔` : ''}` : '';
+  const bits = [fmt('改動', changed), fmt('刪除', removed), fmt('新增', added)].filter(Boolean);
+  return `specs/ui-mockups/ 已與定版快照不符（${bits.join('；')}）——mockup 是使用者拍板的 UI 錨點，凍結後不得靜默改動：要嘛還原檔案，要嘛照正路重定版（mockup-check → 使用者重新走查 → decision ui-signoff → spec-ready --freeze 重建快照）。`;
+}
+
 // ── Playwright journey 真實性審計（純函式可測；導航版「禁 mock 假綠」的確定性節點）──
 // 守 playwright-real-data-template 第四鐵則（禁 mock/網路攔截）＋第五鐵則（單一入口 goto、其後真實點擊）。
 // 故意「笨但確定」——純文字掃描而非語義判斷：便宜、模型偽造不了 git 真實檔內容、不誤把單元測試的合法 mock 當違規

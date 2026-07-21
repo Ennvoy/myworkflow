@@ -329,6 +329,20 @@ switch (cmd) {
       : '非 web：凍結時不強制互動原型（enum 記錄本身即豁免）。'}`);
     break;
   }
+  case 'design-base': {
+    // 品牌基底 slug 正門：/flow-spec Step 5.5 定版時落檔（原本只有「寫進 state.json」的文件承諾、程式碼從未實作）。
+    // 寫 manifest（git-tracked，換機 clone 不丟）＋state.json（相容既有讀取）——與 project-type 同構。
+    // build 投餵引用：wave --compute 把它塞進 wave-plan.ui.designBase，worker 的 ui-ux-pro-max query context 沿用。
+    // 用法：flow-state design-base <slug|none>（slug＝references/design-systems/ 的目錄名；不用基底寫 none）
+    const slug = (argv[1] || '').toLowerCase();
+    if (!slug || !/^[a-z0-9][a-z0-9-]*$/.test(slug)) { console.error('usage: flow-state design-base <slug|none>（如 shadcn / linear-app / stripe；不用基底寫 none）'); process.exit(1); }
+    const manifest = await S.readManifest(root);
+    await S.writeManifest(root, { ...manifest, designBase: slug });
+    const st = await S.readStateJson(root);
+    await S.writeStateJson(root, { ...st, designBase: slug });
+    console.log(`✓ designBase=${slug} 已落檔（manifest+state.json）。${slug === 'none' ? '不用品牌基底——build 以原型 tokens.css 為準。' : 'build 投餵（wave --compute）會把它帶給 worker，沿用該基底 tokens。'}`);
+    break;
+  }
   case 'checkpoint': {
     // mid-task 檢查點（修「開發中當機就重跑整個 task」）：worker 跑到某 TDD 相/整合階段記一筆。
     // 冷啟動 reconstruct 取每 task 最新一筆 → flow-state resume/SessionStart 顯示「上次做到第幾步」，接續只補沒做完的。
@@ -1076,6 +1090,14 @@ switch (cmd) {
       const head = gitHead(root);
       await S.writeReqIndex(root, reqText, head);
       await S.appendJournal(root, { ev: 'spec.frozen', reqHash: S.sha256Text(reqText), head });
+      // mockup 定版凍結（與 req-index 同構）：原型存在即把文字資產逐檔 hash 落 mockup-index.json——
+      // 下游 plan-check / wave --compute / ui-fidelity 對賬，凍結後偷改原型在下一道消費閘門就被抓。
+      if (existsSync(path.join(root, mockDirRel))) {
+        const mHashes = await S.mockupFileHashes(root);
+        await S.writeMockupIndex(root, mHashes, head);
+        await S.appendJournal(root, { ev: 'mockup.frozen', aggHash: S.mockupAggHash(mHashes), files: Object.keys(mHashes).length, head });
+        console.log(`✓ 互動原型已凍結：${Object.keys(mHashes).length} 個文字資產 hash 落 .flow/trace/mockup-index.json（下游閘門對賬，偷改必抓）。`);
+      }
       console.log('✓ 需求已收斂（### 開放問題 清零＋REQ-/REQ-E2E-/REQ-PERF- 齊）且已凍結：phase="spec-done"。');
       console.log('  凍結分母已落 .flow/trace/req-index.json；下游閘門對賬用。下一步：web 類先確認互動原型已彈窗定版，再進 /flow-plan（自駕會自動接續）。');
     } else {
@@ -1169,12 +1191,13 @@ switch (cmd) {
     break;
   }
   default:
-    console.log(`flow-state <resume|status|done|checkpoint|mode|project-type|scope|wave|redteam|journey-check|run|verify-ok|verify-e2e|verify-perf|plan-check|review-code|code-resolve|diagnose|lesson|decision|pending|journal-archive|guardrail-check|complete-check|spec-ready|spec-review|review-resolve|mockup-check> [--root <path>]
+    console.log(`flow-state <resume|status|done|checkpoint|mode|project-type|design-base|scope|wave|redteam|journey-check|run|verify-ok|verify-e2e|verify-perf|plan-check|review-code|code-resolve|diagnose|lesson|decision|pending|journal-archive|guardrail-check|complete-check|spec-ready|spec-review|review-resolve|mockup-check> [--root <path>]
   resume | status        冷啟動：reconstruct 印現況 + 下一步 + mid-task 進度 + 對帳 + 已知死路（換 session/電腦/中斷後接手；平行波看 /workflows）
   done <id> [--commit]   標一個 task 完成：翻 tasks.md [x] + ledger→delivered（自帶 verify 閘門；先標、再 commit）
   checkpoint <id> --phase <red|green|refactor|integrated> [--note]   記 mid-task 進度（開發中當機 → resume 帶出「上次做到第幾步」，只補沒做完的）
   mode <auto|manual>     設推進模式並寫進 git-tracked manifest（換機 clone 後自駕不掉回 manual）
   project-type <type>    落檔專案類型（Step 1 彈窗拍板後跑；--freeze 對賬：web 類 SHALL 有互動原型或 mockup-waiver 豁免檔）
+  design-base <slug|none>   落檔品牌基底 slug（ui-signoff 定版時跑；寫 manifest+state.json，wave --compute 帶給 build worker 沿用）
   scope --wave <ids>     同 repo 平行檔案安全閘門：git 真實變動 vs 各 feature conflictZone，越界 exit 2（整合前跑；另對賬 wave-plan 成員/manifest 未漂移）
   wave --compute         算波次拓樸（blockedBy 依賴序＋conflictZone 互斥自動拆波）＋逐字抽每 task 承接的 REQ 區塊 → .flow/trace/wave-plan.json（dispatch 事實來源；/flow-build 起手跑）
   redteam --wave <ids>   紅軍對賬閘門：.flow/redteam/<id>.json 攻擊 <3、high 未全 covered、testFile 不實存、或高危關鍵字攻擊無痕 skipped（無 waiver decision）→ exit 2

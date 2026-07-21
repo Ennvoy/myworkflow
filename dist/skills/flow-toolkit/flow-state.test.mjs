@@ -433,6 +433,24 @@ test('spec-ready --freeze：走原型路須有 ui-signoff 定版記錄，缺檔 
     const d = run(['decision', 'ui-signoff', '--choice', '方向 OK', '--why', '使用者照走查台點完拍板'], root);
     assert.match(d.out, /使用者拍板/, 'signoff 類預設 by:user');
     assert.equal(run(['spec-ready', '--freeze'], root).code, 0, r.err);
+    // 定版凍結：--freeze 通過即落 mockup-index.json（逐檔 hash＝下游漂移偵測分母）
+    const mi = await S.readMockupIndex(root);
+    assert.ok(mi && mi.aggHash, 'mockup-index 落檔');
+    assert.ok('login.html' in mi.files && 'app.js' in mi.files, '文字資產逐檔 hash');
+    assert.equal(S.mockupHashProblem(mi, await S.mockupFileHashes(root)), null, '凍結當下相符');
+  });
+});
+
+test('design-base：落檔 manifest+state.json；非法 slug → exit 1（補文件空話的實作）', async () => {
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [] });
+    assert.equal(run(['design-base', 'Bad Slug!'], root).code, 1, '非法 slug 拒');
+    assert.equal(run(['design-base'], root).code, 1, '缺參數拒');
+    const r = run(['design-base', 'Linear-App'], root);
+    assert.equal(r.code, 0, r.err);
+    assert.equal((await S.readManifest(root)).designBase, 'linear-app', '寫 manifest（git-tracked）且正規化小寫');
+    assert.equal((await S.readStateJson(root)).designBase, 'linear-app', '鏡射 state.json');
+    assert.equal(run(['design-base', 'none'], root).code, 0, 'none＝不用基底也合法');
   });
 });
 

@@ -744,6 +744,43 @@ test('mockupPageProblems：有 app.js＋互動元素 → 空；空殼頁 → 兩
   assert.deepEqual(S.mockupPageProblems('<script src="app.js"></script><form><input></form>'), [], 'form/input 也算互動');
 });
 
+// ── 互動原型定版凍結（mockup-index）：與 req-index 同構的漂移偵測 ──
+
+test('mockupAggHash：與檔案順序無關、內容變即變', () => {
+  const a = S.mockupAggHash({ 'index.html': 'h1', 'pages/login.html': 'h2' });
+  const b = S.mockupAggHash({ 'pages/login.html': 'h2', 'index.html': 'h1' });
+  assert.equal(a, b, '順序無關');
+  assert.notEqual(a, S.mockupAggHash({ 'index.html': 'h1x', 'pages/login.html': 'h2' }));
+});
+
+test('mockupHashProblem：無 index 向後相容放行；相符 null；改動/刪除/新增逐類點名；index 損毀明講', () => {
+  const files = { 'index.html': 'h1', 'pages/login.html': 'h2' };
+  const idx = { files, aggHash: S.mockupAggHash(files) };
+  assert.equal(S.mockupHashProblem(null, files), null, '舊專案無 index 不擋');
+  assert.equal(S.mockupHashProblem(idx, { ...files }), null, '相符放行');
+  assert.match(S.mockupHashProblem(idx, { 'index.html': 'h1改', 'pages/login.html': 'h2' }), /改動 index\.html/);
+  assert.match(S.mockupHashProblem(idx, { 'index.html': 'h1' }), /刪除 pages\/login\.html/);
+  assert.match(S.mockupHashProblem(idx, { ...files, 'pages/new.html': 'h3' }), /新增 pages\/new\.html/);
+  assert.match(S.mockupHashProblem({ files }, files), /損毀/, '缺 aggHash＝索引損毀要明講');
+});
+
+test('mockupFileHashes：只收文字資產、遞迴子目錄、行尾正規化（autocrlf 不算漂移）', async () => {
+  await withRoot(async (root) => {
+    const dir = path.join(root, 'specs', 'ui-mockups');
+    await mkdir(path.join(dir, 'pages'), { recursive: true });
+    await writeFile(path.join(dir, 'index.html'), '<h1>走查台</h1>\n', 'utf8');
+    await writeFile(path.join(dir, 'tokens.css'), ':root { --c: red }\n', 'utf8');
+    await writeFile(path.join(dir, 'pages', 'login.html'), '<button>登入</button>\n', 'utf8');
+    await writeFile(path.join(dir, 'shot.png'), Buffer.from([0x89, 0x50]));
+    const h = await S.mockupFileHashes(root);
+    assert.deepEqual(Object.keys(h).sort(), ['index.html', 'pages/login.html', 'tokens.css'], '二進位不進 hash');
+    // CRLF 翻行尾 → hash 不變（sha256Text 正規化）
+    await writeFile(path.join(dir, 'index.html'), '<h1>走查台</h1>\r\n', 'utf8');
+    const h2 = await S.mockupFileHashes(root);
+    assert.equal(S.mockupAggHash(h), S.mockupAggHash(h2), 'CRLF 不算漂移');
+  });
+});
+
 // ── spec 審查 lens ledger（第 1 波）：驗形／終局／收斂判準的純核心 ──
 
 test('validateSpecReviewFindings：合法（含空陣列）過；缺欄/壞 id/前綴不符 lens/重複/lens 不符逐項點名', () => {

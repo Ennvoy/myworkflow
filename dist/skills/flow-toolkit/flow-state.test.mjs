@@ -549,6 +549,8 @@ test('complete-check（web 類有原型）：缺 ui-fidelity 記錄 → exit 2�
     await mkdir(path.join(root, 'src'), { recursive: true });
     await writeFile(path.join(root, 'src', 'app.css'), '.btn { color: var(--color-primary) }', 'utf8');
     assert.equal(run(['ui-fidelity'], root).code, 0);
+    await writeUiCompareCapture(root);
+    assert.equal(run(['ui-compare', 'pages/login.html', '--status', 'pass'], root).code, 0);
     const r1 = run(['complete-check'], root);
     assert.equal(r1.code, 0, '全謂詞齊 → 放行：' + r1.err);
     // UF-3：ui-fidelity 綠之後、complete-check 之前偷改原型（未 commit、HEAD 不動）→ 出口當下重算 hash 抓到
@@ -584,6 +586,63 @@ test('wave --compute：原型存在 → 對賬定版快照（漂移 exit 2）；
     const r3 = run(['wave', '--compute'], root);
     assert.equal(r3.code, 2, '幻覺頁 → 擋');
     assert.match(r3.err, /幻覺頁/);
+  });
+});
+
+// ── 首件檢驗（wave --compute）：算下一波前先對賬「已交付 task 承接的原型頁都過了視覺比對」，
+// 堵平行波把系統性走樣複製到全站——缺就不放行下一波。
+async function seedDeliveredUiWave(root, { mockupPages = ['pages/login.html'], deliver = true } = {}) {
+  await frozenWebRoot(root);
+  const mpDecl = mockupPages.length ? ` | mockupPages: ${mockupPages.join(',')}` : '';
+  await writeFile(path.join(root, 'specs', 'tasks.md'),
+    `- [${deliver ? 'x' : ' '}] F-1 登入（對應 REQ-E2E-001）\n      blockedBy: — | conflictZone: api/${mpDecl}\n`, 'utf8');
+  await S.writeManifest(root, { tasks: [{ id: 'F-1', blockedBy: [], conflictZone: ['api/'], ...(mockupPages.length ? { mockupPages } : {}) }] });
+  if (deliver) await S.writeLedger(root, 'F-1', { state: 'delivered' });
+}
+
+test('wave --compute 首件檢驗：已交付 UI task 缺視覺比對記錄 → exit 2（別把系統性走樣複製進下一波）', async () => {
+  await withRoot(async (root) => {
+    await seedDeliveredUiWave(root);
+    const r = run(['wave', '--compute'], root);
+    assert.equal(r.code, 2);
+    assert.match(r.err, /首件檢驗/);
+    assert.match(r.err, /pages\/login\.html/);
+  });
+});
+
+test('wave --compute 首件檢驗：已交付頁視覺比對已 pass（現行快照）→ exit 0 照常出波次', async () => {
+  await withRoot(async (root) => {
+    await seedDeliveredUiWave(root);
+    await writeUiCompareCapture(root);
+    assert.equal(run(['ui-compare', 'pages/login.html', '--status', 'pass'], root).code, 0);
+    const r = run(['wave', '--compute'], root);
+    assert.equal(r.code, 0, r.err);
+  });
+});
+
+test('wave --compute 首件檢驗：ui-compare-waiver 生效 → exit 0 且降級為人工對照（stdout 提示）', async () => {
+  await withRoot(async (root) => {
+    await seedDeliveredUiWave(root);
+    run(['decision', 'ui-compare-waiver', '--choice', '略過首件檢驗', '--why', 'x'], root);
+    const r = run(['wave', '--compute'], root);
+    assert.equal(r.code, 0, r.err);
+    assert.match(r.out, /ui-compare-waiver 生效/);
+  });
+});
+
+test('wave --compute 首件檢驗：無任何已交付 task → 不擋', async () => {
+  await withRoot(async (root) => {
+    await seedDeliveredUiWave(root, { deliver: false });
+    const r = run(['wave', '--compute'], root);
+    assert.equal(r.code, 0, r.err);
+  });
+});
+
+test('wave --compute 首件檢驗：已交付 task 無 mockupPages → 不擋', async () => {
+  await withRoot(async (root) => {
+    await seedDeliveredUiWave(root, { mockupPages: [] });
+    const r = run(['wave', '--compute'], root);
+    assert.equal(r.code, 0, r.err);
   });
 });
 
@@ -1576,6 +1635,168 @@ test('complete-check：code-review 後又改原始碼（HEAD 變）→ exit 2；
     await writeFile(path.join(root, 'notes.md'), '# 只是文件\n', 'utf8');
     execSync('git add -A && git -c user.email=t@t -c user.name=t -c commit.gpgsign=false commit -q -m doc', { cwd: root });
     assert.equal(run(['complete-check'], root).code, 0, '只改 .md/測試 → 不要求重審');
+  });
+});
+
+// ── 視覺比對閘門（ui-compare）：CLI 黑箱測試 ──
+
+// 造一份最小合法 capture.json manifest＋雙邊假 png（≥100 bytes）；預設對 frozenWebRoot 的 pages/login.html。
+async function writeUiCompareCapture(root, { pageRel = 'pages/login.html', viewports = ['1440x900'], mockupAggHash, includeMockup = true, includeImpl = true } = {}) {
+  const outDir = path.join(root, '.flow', 'trace', 'ui-compare');
+  const slug = S.uiCompareSlug(pageRel);
+  const subdir = path.join(outDir, slug);
+  await mkdir(subdir, { recursive: true });
+  const buf = Buffer.alloc(200, 1);   // ≥100 bytes 假 png（截圖內容本身不驗，只驗有沒有真的截）
+  const shots = [];
+  for (const vp of viewports) {
+    if (includeMockup) { const p = path.join(subdir, `mockup-${vp}.png`); await writeFile(p, buf); shots.push(path.relative(root, p).replace(/\\/g, '/')); }
+    if (includeImpl) { const p = path.join(subdir, `impl-${vp}.png`); await writeFile(p, buf); shots.push(path.relative(root, p).replace(/\\/g, '/')); }
+  }
+  const agg = mockupAggHash !== undefined ? mockupAggHash : S.mockupAggHash(await S.mockupFileHashes(root));
+  const manifest = { at: new Date().toISOString(), head: '', mockupAggHash: agg, viewports, base: 'http://localhost:4173', pages: { [pageRel]: { slug, url: '/x', shots } }, unmapped: [], failures: [] };
+  await writeFile(path.join(outDir, 'capture.json'), JSON.stringify(manifest, null, 2), 'utf8');
+  return manifest;
+}
+
+// frozenWebRoot 的雙頁版（login.html + items.html）——n/a decision 跨頁重用測試需要 ≥2 頁分母。
+async function frozenWebRootTwoPages(root) {
+  await S.init(root, { project: 'p', tasks: [] });
+  await S.writeStateJson(root, { mode: 'manual' });
+  await writeReq(root, READY_REQ);
+  run(['project-type', 'web-app'], root);
+  await writeMockups(root, '<h2>REQ-E2E-001</h2><a href="pages/login.html">走</a><a href="pages/items.html">走</a>');
+  await mkdir(path.join(root, 'specs', 'ui-mockups', 'pages'), { recursive: true });
+  await writeFile(path.join(root, 'specs', 'ui-mockups', 'pages', 'login.html'), PAGE_OK, 'utf8');
+  await writeFile(path.join(root, 'specs', 'ui-mockups', 'pages', 'items.html'), PAGE_OK, 'utf8');
+  await writeFile(path.join(root, 'specs', 'ui-mockups', 'app.js'), 'const db = {};', 'utf8');
+  await writeFile(path.join(root, 'specs', 'ui-mockups', 'tokens.css'), ':root { --color-primary: #333; --font-body: sans-serif; }', 'utf8');
+  await passLenses(root);
+  run(['decision', 'ui-signoff', '--choice', '方向 OK', '--why', 'x'], root);
+  const r = run(['spec-ready', '--freeze'], root);
+  assert.equal(r.code, 0, 'frozenWebRootTwoPages 凍結失敗：' + r.err);
+}
+
+test('ui-compare：pass 但查無 capture.json manifest → exit 2', async () => {
+  await withRoot(async (root) => {
+    await frozenWebRoot(root);
+    const r = run(['ui-compare', 'pages/login.html', '--status', 'pass'], root);
+    assert.equal(r.code, 2);
+    assert.match(r.err, /capture\.json/);
+  });
+});
+
+test('ui-compare：pass 雙邊截圖齊全 → 成功落記錄；省略 pages/ 前綴＋大小寫不敏感也能比對到頁', async () => {
+  await withRoot(async (root) => {
+    await frozenWebRoot(root);
+    await writeUiCompareCapture(root);
+    const r = run(['ui-compare', 'LOGIN.html', '--status', 'pass'], root);
+    assert.equal(r.code, 0, r.err);
+    const rec = await S.readUiCompare(root);
+    assert.equal(rec.pages['pages/login.html'].status, 'pass');
+    assert.equal(rec.pages['pages/login.html'].shots.length, 2, '雙邊截圖都記進去');
+  });
+});
+
+test('ui-compare：manifest 只截一邊（缺 impl-）→ exit 2（堵「只截一邊就 pass」）', async () => {
+  await withRoot(async (root) => {
+    await frozenWebRoot(root);
+    await writeUiCompareCapture(root, { includeImpl: false });
+    const r = run(['ui-compare', 'pages/login.html', '--status', 'pass'], root);
+    assert.equal(r.code, 2);
+    assert.match(r.err, /impl/);
+  });
+});
+
+test('ui-compare：fail 缺 --note → exit 1；附 note → 落檔', async () => {
+  await withRoot(async (root) => {
+    await frozenWebRoot(root);
+    assert.equal(run(['ui-compare', 'pages/login.html', '--status', 'fail'], root).code, 1);
+    const r = run(['ui-compare', 'pages/login.html', '--status', 'fail', '--note', '按鈕位置偏移'], root);
+    assert.equal(r.code, 0, r.err);
+    const rec = await S.readUiCompare(root);
+    assert.equal(rec.pages['pages/login.html'].note, '按鈕位置偏移');
+  });
+});
+
+test('ui-compare：n/a 缺 --decision → exit 1；decision 不存在 → exit 2', async () => {
+  await withRoot(async (root) => {
+    await frozenWebRoot(root);
+    assert.equal(run(['ui-compare', 'pages/login.html', '--status', 'n/a'], root).code, 1);
+    assert.equal(run(['ui-compare', 'pages/login.html', '--status', 'n/a', '--decision', 'ghost'], root).code, 2);
+  });
+});
+
+test('ui-compare：n/a --decision 跨頁重用 → exit 2（逐頁各自表態，同 verify-e2e W2-3）', async () => {
+  await withRoot(async (root) => {
+    await frozenWebRootTwoPages(root);
+    run(['decision', 'e2e-na-1', '--choice', '略過', '--why', 'x'], root);
+    assert.equal(run(['ui-compare', 'pages/login.html', '--status', 'n/a', '--decision', 'e2e-na-1'], root).code, 0);
+    const r = run(['ui-compare', 'pages/items.html', '--status', 'n/a', '--decision', 'e2e-na-1'], root);
+    assert.equal(r.code, 2);
+    assert.match(r.err, /已被/);
+  });
+});
+
+test('ui-compare：頁不在分母 → exit 1 並列出合法頁', async () => {
+  await withRoot(async (root) => {
+    await frozenWebRoot(root);
+    const r = run(['ui-compare', 'pages/ghost.html', '--status', 'pass'], root);
+    assert.equal(r.code, 1);
+    assert.match(r.err, /login\.html/);
+  });
+});
+
+test('ui-compare：mockup 定版快照漂移 → exit 2', async () => {
+  await withRoot(async (root) => {
+    await frozenWebRoot(root);
+    await writeFile(path.join(root, 'specs', 'ui-mockups', 'pages', 'login.html'), PAGE_OK + '<p>改</p>', 'utf8');
+    const r = run(['ui-compare', 'pages/login.html', '--status', 'pass'], root);
+    assert.equal(r.code, 2);
+    assert.match(r.err, /定版快照不符/);
+  });
+});
+
+test('complete-check（web 類有原型）：缺 ui-compare 記錄 → fails 含視覺比對；補記錄 → 放行', async () => {
+  await withRoot(async (root) => {
+    await frozenWebRoot(root);
+    await writeFile(path.join(root, 'specs', 'tasks.md'), '- [x] **F-1**\n', 'utf8');
+    run(['verify-e2e', 'REQ-E2E-001', '--status', 'pass', '--evidence', await evid(root)], root);
+    run(['verify-perf', 'REQ-PERF-001', '--value', '2.0', '--evidence', await evid(root, 'lh.json')], root);
+    run(['decision', 'code-review-waiver', '--choice', 'x', '--why', 'x'], root);
+    run(['decision', 'plan-check-waiver', '--choice', 'x', '--why', 'x'], root);
+    await writeSpec(root, 'tests/e2e/ok.spec.ts',
+      "import {test, expect} from '@playwright/test'\ntest('x', async ({page}) => { await page.goto('/login'); await page.getByRole('button',{name:/登入/}).click(); await expect(page).toHaveURL(/home/) })");
+    assert.equal(run(['journey-check'], root).code, 0);
+    await mkdir(path.join(root, 'src'), { recursive: true });
+    await writeFile(path.join(root, 'src', 'app.css'), '.btn { color: var(--color-primary) }', 'utf8');
+    assert.equal(run(['ui-fidelity'], root).code, 0);
+    const r0 = run(['complete-check'], root);
+    assert.equal(r0.code, 2, '缺 ui-compare 記錄 → 擋（畫面像不像沒機讀底線的洞已封）');
+    assert.match(r0.err, /視覺比對/);
+    await writeUiCompareCapture(root);
+    assert.equal(run(['ui-compare', 'pages/login.html', '--status', 'pass'], root).code, 0);
+    const r1 = run(['complete-check'], root);
+    assert.equal(r1.code, 0, '補齊視覺比對記錄 → 放行：' + r1.err);
+  });
+});
+
+test('complete-check：ui-compare-waiver 生效 → 不列視覺比對 fail', async () => {
+  await withRoot(async (root) => {
+    await frozenWebRoot(root);
+    await writeFile(path.join(root, 'specs', 'tasks.md'), '- [x] **F-1**\n', 'utf8');
+    run(['verify-e2e', 'REQ-E2E-001', '--status', 'pass', '--evidence', await evid(root)], root);
+    run(['verify-perf', 'REQ-PERF-001', '--value', '2.0', '--evidence', await evid(root, 'lh.json')], root);
+    run(['decision', 'code-review-waiver', '--choice', 'x', '--why', 'x'], root);
+    run(['decision', 'plan-check-waiver', '--choice', 'x', '--why', 'x'], root);
+    await writeSpec(root, 'tests/e2e/ok.spec.ts',
+      "import {test, expect} from '@playwright/test'\ntest('x', async ({page}) => { await page.goto('/login'); await page.getByRole('button',{name:/登入/}).click(); await expect(page).toHaveURL(/home/) })");
+    assert.equal(run(['journey-check'], root).code, 0);
+    await mkdir(path.join(root, 'src'), { recursive: true });
+    await writeFile(path.join(root, 'src', 'app.css'), '.btn { color: var(--color-primary) }', 'utf8');
+    assert.equal(run(['ui-fidelity'], root).code, 0);
+    run(['decision', 'ui-compare-waiver', '--choice', '略過視覺比對', '--why', 'x'], root);
+    const r = run(['complete-check'], root);
+    assert.equal(r.code, 0, 'waiver 生效 → 不擋：' + r.err);
   });
 });
 

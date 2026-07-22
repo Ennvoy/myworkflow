@@ -55,9 +55,11 @@ bind/listen port 的產出物驗證前 SHALL 清 port，細節見 `references/ve
 
 ## UI 忠實度（web 類有互動原型時，宣稱綠前 SHALL 做）
 
-定版 mockup 是使用者拍板的 UI 契約，驗證要回頭對照、不是只驗功能：
-- **機檢先跑**：`flow-state ui-fidelity`——mockup 定版快照漂移（凍結後被改）、或定版 `tokens.css` 變數在實作**零引用**（UI 基準被整組丟棄）→ exit 2；通過落 `.flow/trace/ui-fidelity.json`（綁 HEAD，`complete-check` 對賬 web 類必有）。實作端合法不用 CSS 變數 → 使用者拍板 `ui-fidelity-waiver` 降級，仍須跑。
-- **Evaluator 人工維度**（機器判不了「像不像」）：走每條 journey 時把實作頁與該 task `mockupPages` 對應的 `specs/ui-mockups/pages/*.html` 並排對照——版面結構、元件層級、互動狀態（hover/disabled/loading）、異常態（空/錯誤/權限不足）忠不忠於原型；明顯偏離且無需求級變更 decision → 該維度 FAIL（見 `dist/agents/evaluator.md` 鐵則 6）。
+定版 mockup 是使用者拍板的 UI 契約，驗證要回頭對照、不是只驗功能，分三層：
+
+1. **機檢**：`flow-state ui-fidelity`——mockup 定版快照漂移（凍結後被改）、或定版 `tokens.css` 變數在實作**零引用**（UI 基準被整組丟棄）→ exit 2；通過落 `.flow/trace/ui-fidelity.json`（綁 HEAD，`complete-check` 對賬 web 類必有）。實作端合法不用 CSS 變數 → 使用者拍板 `ui-fidelity-waiver` 降級，仍須跑。
+2. **截圖比對自動化**：Evaluator 先寫 `.flow/trace/ui-compare/map.json`（`{ "base": "http://localhost:4173", "storageState": "選填", "pages": { "pages/login.html": "/login", … } }`）→ 跑 `node <flow-toolkit>/ui-compare-capture.mjs --root .`（腳本自帶「mockup 未凍結/快照漂移」exit 2 閘門）在雙 viewport（1440x900＋390x844）逐 mapping 頁各截 fullPage 圖到 `.flow/trace/ui-compare/<slug>/mockup-*.png`／`impl-*.png`＋落 `capture.json` manifest → Evaluator 逐頁 Read 雙邊截圖多模態對照（版面結構/元件層級/互動狀態/異常態，見 `dist/agents/evaluator.md` 鐵則 6）→ 逐頁 `flow-state ui-compare <page> --status <pass|fail|n/a>` 落 `.flow/trace/ui-compare.json`（fail SHALL 附 `--note` 指偏離區塊；n/a SHALL 綁實存 decision 且不得跨頁重用）。
+3. **complete-check 逐頁對賬**：mockup-index 每個 `pages/*.html` 都要有 ui-compare 記錄、無 fail、判的是現行凍結版原型；豁免走使用者拍板 `flow-state decision ui-compare-waiver`（整包降級為人工對照，附警告）。
 
 ## journey 真實性閘門（web 宣稱綠前 SHALL 跑，確定性節點）
 
@@ -89,7 +91,7 @@ Web 產出物宣稱綠**之前 SHALL 跑** `flow-state journey-check`（`flow-st
 - [ ] 真實資料鏈路：seed 進真 DB、UI→真 API→真 DB 讀回，無 mock 假綠
 - [ ] Web 三鐵則齊（production build + headed + listener 零 error）
 - [ ] `flow-state journey-check` 綠（無 mock/網路攔截、每 test 單一入口 goto）
-- [ ] web 類有原型：`flow-state ui-fidelity` 綠（快照未漂移＋tokens 被沿用）＋Evaluator 對照原型頁判過 UI 忠實度
+- [ ] web 類有原型：`flow-state ui-fidelity` 綠（快照未漂移＋tokens 被沿用）＋每個原型頁 `flow-state ui-compare` 已落檔（Evaluator 逐頁多模態對照）
 - [ ] 效能每維度達 budget（p50+p95），無「太慢但算過」
 - [ ] state.json verify/tdd 由真跑結果寫入，非手填
 - [ ] 每條真綠的 `REQ-E2E-*` 已 `flow-state verify-e2e` 記錄（供 ship 對賬）

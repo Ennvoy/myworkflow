@@ -15,7 +15,7 @@ description: Flow Phase 3 — 多工交付（混合基座）。取當前波次�
 
 ## Step 1：算當前波次可並行集合
 
-**別在 thinking 裡心算波次**——SHALL 跑 `flow-state wave --compute`：讀 manifest 的 `blockedBy`/`conflictZone` ＋ ledger delivered 算拓樸序，落 `.flow/trace/wave-plan.json`（含 manifest hash + reqHash）＝本波 dispatch 的**唯一事實來源**；**成環/懸空依賴 exit 2**。manifest 事後改動 → 重跑本指令。拓樸細節/foundation 先序列/契約釘法/波次寬度/就緒探針見 `build-playbook.md` §一。
+**別在 thinking 裡心算波次**——SHALL 跑 `flow-state wave --compute`：讀 manifest 的 `blockedBy`/`conflictZone` ＋ ledger delivered 算拓樸序，落 `.flow/trace/wave-plan.json`（含 manifest hash + reqHash）＝本波 dispatch 的**唯一事實來源**；**成環/懸空依賴 exit 2**。manifest 事後改動 → 重跑本指令。拓樸細節/foundation 先序列/契約釘法/波次寬度/就緒探針見 `build-playbook.md` §一。`wave --compute` 現亦為**首件檢驗**閘門：已交付 task 承接的原型頁缺視覺比對記錄／有 fail／判的是舊原型 → exit 2 不放行下一波（豁免＝使用者拍板 `ui-compare-waiver`）。
 
 ## Step 1.5：執行策略閘門（偏離預設平行 SHALL 彈窗，別在散文裡自己降級）
 
@@ -43,7 +43,7 @@ Workflow 回來後，orchestrator 依拓樸序**一個一個**收尾每個 featu
 
 ## Step 5：feature 自身驗證 → per-task commit（序列，一次一個；驗證與 commit 解耦）
 
-接 Step 4 逐 feature。**便宜 sensor 先跑、一錯馬上停**：秒級 type-check / lint / 單元測試擋笨錯誤，**過了才**燒分鐘級行為驗證（`/flow-verify` 窄範圍：Playwright headed + 真實資料鏈路）——別在貴的 headed e2e 上為一個 typo 燒一輪。**貴迴圈有界＋check-in 間隔**見 `verification-playbook.md` §四。
+接 Step 4 逐 feature。**便宜 sensor 先跑、一錯馬上停**：秒級 type-check / lint / 單元測試擋笨錯誤，**過了才**燒分鐘級行為驗證（`/flow-verify` 窄範圍：Playwright headed + 真實資料鏈路）——別在貴的 headed e2e 上為一個 typo 燒一輪。**貴迴圈有界＋check-in 間隔**見 `verification-playbook.md` §四。窄範圍驗證（web 類）SHALL 含該 feature 原型頁的截圖比對＋`flow-state ui-compare` 逐頁落檔——沒做，下一波起手的首件檢驗會擋。
 - **Context firewall（computational sensor 蒸餾，鐵則）**：type-check / lint / 單元測試 / build SHALL 包進獨立 subagent 或 `flow-state run` 腳本跑，只把蒸餾後的「pass/fail ＋ 前 N 條錯誤摘要」回傳主迴圈——冗長完整輸出**不得**直接灌進 orchestrator context（見 flow.md「Context 預算」）。
 - **效能：每 feature 只跑便宜 smoke**；**嚴謹 p50/p95 留到 `/flow-ship` 量一次**，避免嚴謹量測在每 feature ×N 重燒。
 - **驗證與 commit 解耦**：驗證 PASS 才進 commit；某 feature FAIL/BLOCKED **不擋其他已 PASS feature 的 commit**。
@@ -65,7 +65,7 @@ Workflow 回來後，orchestrator 依拓樸序**一個一個**收尾每個 featu
 
 ## 完成判準（self-check）
 - [ ] foundation 先序列、features 才同 repo 平行（conflictZone 算準）
-- [ ] **`flow-state wave --compute` 綠**：拓樸/逐字 reqText 落 wave-plan.json，dispatch 用它的 `reqText`
+- [ ] **`flow-state wave --compute` 綠**：拓樸/逐字 reqText 落 wave-plan.json，dispatch 用它的 `reqText`＋首件檢驗綠
 - [ ] **整合前 `flow-state scope --wave` 綠**：無 worker 越界改共用檔；另對賬 wave-plan 成員/manifest 未漂移
 - [ ] 執行策略沒在散文裡自決：偏離預設平行有先彈窗拍板＋寫進 manifest/journal
 - [ ] 每 feature 紅軍先行、攻擊面已落檔 `.flow/redteam/<id>.json`、attackCoverage 對賬過、worker 走 TDD + 真實資料鏈路（無 mock 假綠）

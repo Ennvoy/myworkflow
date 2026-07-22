@@ -1721,3 +1721,66 @@ test('syncFingerprint：回穩定字串、內容不變同指紋（C-3③）', as
   assert.equal(fp1, fp2, '同輸入同指紋（stat-only 冪等）');
   assert.match(fp1, /^\d+:\d+:\d+$/, 'count:maxMtime:totalSize 格式');
 });
+
+// ── 視覺比對閘門（ui-compare）純函式 ──
+
+test('mockupPageList：只收 pages/*.html(m)，根 index.html/tokens.css 不算、子目錄算；無 index 回空陣列', () => {
+  const files = { 'index.html': 'h', 'tokens.css': 'h', 'app.js': 'h', 'pages/login.html': 'h', 'pages/sub/settings.htm': 'h' };
+  assert.deepEqual(S.mockupPageList({ files }), ['pages/login.html', 'pages/sub/settings.htm']);
+  assert.deepEqual(S.mockupPageList(null), [], '無 index 向後相容回空陣列');
+  assert.deepEqual(S.mockupPageList({ files: {} }), []);
+});
+
+test('uiCompareSlug：同輸入穩定同輸出；防撞——不同層同 basename 轉出不同 slug（UF-4 同根因）', () => {
+  const a1 = S.uiCompareSlug('pages/admin-items.html');
+  const a2 = S.uiCompareSlug('pages/admin-items.html');
+  assert.equal(a1, a2, '確定性');
+  const b = S.uiCompareSlug('pages/admin/items.html');
+  assert.notEqual(a1, b, '不同層不撞名（互蓋截圖）');
+  assert.match(a1, /^admin-items-[0-9a-f]{8}$/);
+  assert.match(b, /^admin-items-[0-9a-f]{8}$/);
+});
+
+test('uiCompareProblems：無記錄/FAIL/舊 agg 逐頁點名；全 pass+n-a 且 agg 相符 → 空陣列', () => {
+  const pages = ['pages/login.html', 'pages/items.html', 'pages/settings.html'];
+  const records = {
+    'pages/login.html': { status: 'fail', note: '按鈕位置偏移' },
+    'pages/items.html': { status: 'pass', mockupAggHash: 'old' },
+    // pages/settings.html 無記錄
+  };
+  const problems = S.uiCompareProblems({ pages, records, aggHashNow: 'new' });
+  assert.equal(problems.length, 3);
+  assert.match(problems.find(p => p.includes('settings')), /尚無視覺比對記錄/);
+  assert.match(problems.find(p => p.includes('login')), /FAIL.*按鈕位置偏移/);
+  assert.match(problems.find(p => p.includes('items')), /舊版原型/);
+  const okRecords = {
+    'PAGES/LOGIN.html': { status: 'pass', mockupAggHash: 'new' },   // 大小寫不敏感比對
+    'pages/items.html': { status: 'n/a', mockupAggHash: 'new' },
+    'pages/settings.html': { status: 'pass', mockupAggHash: 'new' },
+  };
+  assert.deepEqual(S.uiCompareProblems({ pages, records: okRecords, aggHashNow: 'new' }), [], '全 pass/n-a 且 agg 相符 → 空陣列');
+});
+
+test('writeUiCompareRecord/readUiCompare：read-merge-write，同頁覆寫、他頁保留', async () => {
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [] });
+    await S.writeUiCompareRecord(root, 'pages/login.html', { status: 'pass', mockupAggHash: 'h1' });
+    await S.writeUiCompareRecord(root, 'pages/items.html', { status: 'fail', note: 'x' });
+    let rec = await S.readUiCompare(root);
+    assert.equal(Object.keys(rec.pages).length, 2);
+    await S.writeUiCompareRecord(root, 'pages/login.html', { status: 'fail', note: '改判' });
+    rec = await S.readUiCompare(root);
+    assert.equal(rec.pages['pages/login.html'].status, 'fail', '同頁覆寫');
+    assert.equal(rec.pages['pages/items.html'].status, 'fail', '他頁記錄不受影響');
+  });
+});
+
+test('ensureFlowGitignore：trace/ui-compare/ 目錄被忽略（截圖可重生）；trace/ui-compare.json 記錄照常 track', async () => {
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [] });
+    const gi = await readFile(path.join(root, '.flow', '.gitignore'), 'utf8');
+    assert.ok(gi.includes('trace/ui-compare/'), '截圖目錄應忽略');
+    const lines = gi.split('\n').map(l => l.trim());
+    assert.ok(!lines.includes('trace/ui-compare.json'), '記錄檔不該被忽略（目錄尾斜線不誤中 .json）');
+  });
+});

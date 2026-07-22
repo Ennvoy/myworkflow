@@ -459,6 +459,28 @@ switch (cmd) {
           for (const p of ph) console.error('  - ' + p);
           process.exit(2);
         }
+        // 首件檢驗（製造業借法）：病根＝視覺比對若只在 verify/ship 才做，同一波平行生成早把
+        // 「版殼/間距/元件風格」的系統性走樣複製到全站，出貨前才發現＝整站重改。修法＝算下一波前
+        // 先對賬「已交付 task 承接的原型頁都過了視覺比對」，缺就不放行下一波——最壞情況縮成一個 feature 重改。
+        const uiCmpWaiverPath = path.join(root, '.flow', 'decisions', 'ui-compare-waiver.json');
+        if (existsSync(uiCmpWaiverPath)) {
+          console.log('⚠ ui-compare-waiver 生效——首件檢驗（已交付頁視覺比對對賬）已降級為人工對照。');
+        } else {
+          const deliveredSet = new Set(delivered);
+          const deliveredPages = [...new Set(
+            (manifest.tasks || []).filter(t => deliveredSet.has(t.id)).flatMap(t => t.mockupPages || [])
+          )];
+          if (deliveredPages.length) {
+            const uiCmp = await S.readUiCompare(root);
+            const probs = S.uiCompareProblems({ pages: deliveredPages, records: uiCmp && uiCmp.pages, aggHashNow: S.mockupAggHash(mHashes) });
+            if (probs.length) {
+              console.error('✗ 首件檢驗未過（已交付 task 的原型頁 SHALL 先過視覺比對——系統性走樣別複製進下一波）：');
+              for (const p of probs) console.error('  - ' + p);
+              console.error('  修法：窄範圍驗證跑 ui-compare-capture 截圖＋Evaluator 逐頁 flow-state ui-compare 落檔；或使用者拍板 flow-state decision ui-compare-waiver。');
+              process.exit(2);
+            }
+          }
+        }
         const tokPath = path.join(root, 'specs', 'ui-mockups', 'tokens.css');
         // designBase fallback 到 state.json（UF-7）：flow-plan 同步 tasks 重寫 manifest 時漏保欄位，雙寫的另一份救回來
         uiCtx = {
@@ -546,7 +568,7 @@ switch (cmd) {
     // H2-F4（體檢）：豁免/定版檔靠字面 id 精確比對才生效——打錯字會「看起來記成功」但永遠不被閘門認得＝無聲失守。
     // 觸發二選一：id 含 waiver/signoff 字樣、或與已知豁免 id 編輯距離 ≤2（抓 perf-waver 這類掉字母型）。
     // 自由形自決 id（兩者皆否，如 D-1/e2e-na-1）不受限。redteam-waiver-<taskId>-<attackId> 動態形只驗前綴結構。
-    const KNOWN_WAIVERS = ['mockup-waiver', 'perf-waiver', 'plan-check-waiver', 'code-review-waiver', 'journey-waiver', 'retry-waiver', 'ui-signoff', 'ui-fidelity-waiver'];
+    const KNOWN_WAIVERS = ['mockup-waiver', 'perf-waiver', 'plan-check-waiver', 'code-review-waiver', 'journey-waiver', 'retry-waiver', 'ui-signoff', 'ui-fidelity-waiver', 'ui-compare-waiver'];
     const lev = (a, b) => {
       const d = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]);
       for (let j = 1; j <= b.length; j++) d[0][j] = j;
@@ -944,13 +966,21 @@ switch (cmd) {
         const mcp = S.mockupChainProblem({ dirExists: ccDir, index: ccIdx, frozen: ccFrozen, waived: existsSync(path.join(root, '.flow', 'decisions', 'mockup-waiver.json')) });
         if (mcp) fails.push(mcp);
         else if (ccDir) {
-          const mhpCC = S.mockupHashProblem(ccIdx, await S.mockupFileHashes(root));
+          const ccHashes = await S.mockupFileHashes(root);
+          const mhpCC = S.mockupHashProblem(ccIdx, ccHashes);
           if (mhpCC) fails.push(mhpCC);
           const uf = await S.readUiFidelity(root);
           if (!uf) fails.push('web 專案有互動原型但未過 UI 忠實度閘門——flow-state ui-fidelity（mockup 快照未漂移＋定版 tokens 被實作沿用；實作端合法不用 CSS 變數走 ui-fidelity-waiver 降級，仍須跑）。');
           else {
             const headNow = gitHead(root);
             if (uf.head && headNow && uf.head !== headNow) fails.push('ui-fidelity 記錄不是當前 HEAD（驗的是舊 code）——重跑 flow-state ui-fidelity（秒級）。');
+          }
+          // 視覺比對逐頁對賬（uiCompareProblems）：ui-fidelity 只驗 token 沿用，這裡補「版面像不像」的機讀底線。
+          if (existsSync(path.join(root, '.flow', 'decisions', 'ui-compare-waiver.json'))) {
+            console.log('⚠ ui-compare-waiver 生效——視覺比對逐頁對賬已降級，版面忠實度全靠人工對照，別讓豁免變常態。');
+          } else {
+            const uiCmp = await S.readUiCompare(root);
+            fails.push(...S.uiCompareProblems({ pages: S.mockupPageList(ccIdx), records: uiCmp && uiCmp.pages, aggHashNow: S.mockupAggHash(ccHashes) }));
           }
         }
       }
@@ -1287,6 +1317,80 @@ switch (cmd) {
     console.log('  版面像不像原型仍由 Evaluator（flow-verify UI 忠實度維度）/藍軍（flow-ship）對照原型頁人工判——本閘門只守確定性底線。');
     break;
   }
+  case 'ui-compare': {
+    // 視覺比對閘門（Evaluator 落檔用；截圖交給確定性節點 ui-compare-capture.mjs）：
+    // 「截圖有沒有真的截、雙邊有沒有齊全」機檢卡死，Evaluator 只負責看圖判讀後逐頁落記錄——
+    // 一句「我看過了」矇混不過去（同 verify-e2e pass 證據驗真的思路）。complete-check 逐頁對賬（uiCompareProblems）。
+    // 用法：flow-state ui-compare <pageRel> --status <pass|fail|n/a> [--note "<偏離描述>"] [--decision <id>]
+    const rawPage = argv[1];
+    if (!rawPage || rawPage.startsWith('--')) { console.error('usage: flow-state ui-compare <pageRel> --status <pass|fail|n/a> [--note "<偏離描述>"] [--decision <id>]'); process.exit(1); }
+    const mIdx = await S.readMockupIndex(root);
+    if (!mIdx) { console.error('✗ 查無 .flow/trace/mockup-index.json——互動原型尚未定版凍結，先跑 flow-state spec-ready --freeze。'); process.exit(2); }
+    const cmpPages = S.mockupPageList(mIdx);
+    // <pageRel> 解析：大小寫不敏感、可省略 pages/ 前綴，無歧義才放行——防打錯字誤配錯頁。
+    const normP = p => String(p).trim().replace(/^\.\//, '').replace(/\\/g, '/').replace(/\/$/, '').toLowerCase();
+    const wantExact = normP(rawPage);
+    const wantNoPrefix = wantExact.replace(/^pages\//, '');
+    const hits = cmpPages.filter(p => { const n = normP(p); return n === wantExact || n.replace(/^pages\//, '') === wantNoPrefix; });
+    if (hits.length !== 1) {
+      console.error(hits.length === 0 ? `✗ 「${rawPage}」不在互動原型分母裡——合法頁：` : `✗ 「${rawPage}」比對到多頁、有歧義——合法頁：`);
+      for (const p of cmpPages) console.error('  · ' + p);
+      process.exit(1);
+    }
+    const pageRel = hits[0];
+    const cmpStatus = (flag('--status') || '').toLowerCase();
+    if (!/^(pass|fail|n\/?a)$/.test(cmpStatus)) { console.error('--status 須為 pass / fail / n/a'); process.exit(1); }
+    const normStatus = /^n\/?a$/.test(cmpStatus) ? 'n/a' : cmpStatus;
+    // 凍結分母對賬（同 ui-fidelity）：現行 mockup 檔 vs 凍結快照漂移 → 擋，判的是舊原型不算數。
+    const cmpHashes = await S.mockupFileHashes(root);
+    const cmpHp = S.mockupHashProblem(mIdx, cmpHashes);
+    if (cmpHp) { console.error('✗ ' + cmpHp); process.exit(2); }
+    const cmpAggNow = S.mockupAggHash(cmpHashes);
+
+    let shots = [];
+    if (normStatus === 'pass') {
+      const captureManifestPath = path.join(root, '.flow', 'trace', 'ui-compare', 'capture.json');
+      if (!existsSync(captureManifestPath)) { console.error('✗ 查無 .flow/trace/ui-compare/capture.json——pass 前 SHALL 先跑 ui-compare-capture.mjs 產雙邊截圖。'); process.exit(2); }
+      let manifest;
+      try { const raw = readFileSync(captureManifestPath, 'utf8'); manifest = JSON.parse(raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw); }
+      catch (e) { console.error(`✗ capture.json 解析失敗：${e.message}`); process.exit(2); }
+      const entry = manifest.pages && manifest.pages[pageRel];
+      if (!entry) { console.error(`✗ capture.json 查無「${pageRel}」的截圖記錄——重跑 ui-compare-capture.mjs（確認 map.json 含這一頁的 mapping）。`); process.exit(2); }
+      const entryShots = entry.shots || [];
+      for (const rel of entryShots) {
+        const abs = path.resolve(root, rel);
+        if (!existsSync(abs)) { console.error(`✗ 截圖檔不存在（${rel}）——重跑 ui-compare-capture.mjs。`); process.exit(2); }
+        let sz = 0; try { sz = statSync(abs).size; } catch { /* existsSync 剛過，理論不會落這 */ }
+        if (sz < 100) { console.error(`✗ 截圖檔形同空檔（${rel}，${sz} bytes）——重跑 ui-compare-capture.mjs。`); process.exit(2); }
+      }
+      // 雙邊齊全：每個 viewport SHALL 同時有 mockup- 與 impl- 兩邊，堵「沒截圖就 pass」「只截一邊就 pass」。
+      for (const vp of (manifest.viewports || [])) {
+        const hasMockup = entryShots.some(s => path.basename(s) === `mockup-${vp}.png`);
+        const hasImpl = entryShots.some(s => path.basename(s) === `impl-${vp}.png`);
+        if (!hasMockup || !hasImpl) { console.error(`✗ 「${pageRel}」viewport ${vp} 未截齊雙邊（缺 ${[!hasMockup && 'mockup', !hasImpl && 'impl'].filter(Boolean).join('/')}）——重跑 ui-compare-capture.mjs。`); process.exit(2); }
+      }
+      if (manifest.mockupAggHash !== cmpAggNow) { console.error('✗ capture.json 截的是舊版原型（mockup 已重定版）——重跑 ui-compare-capture.mjs 後再判。'); process.exit(2); }
+      shots = entryShots;
+    }
+
+    const note = flag('--note') || '';
+    if (normStatus === 'fail' && !note) { console.error('fail 須附 --note（哪一頁哪個區塊偏離——修復錨點）'); process.exit(1); }
+
+    const naDecision = flag('--decision');
+    if (normStatus === 'n/a') {
+      if (!naDecision) { console.error('n/a 須附 --decision <id>（先 flow-state decision <id> --choice "…" --why "<原因>" 留檔）——堵批量 n/a 洗掉難判頁。'); process.exit(1); }
+      if (/[\/\\]|\.\./.test(naDecision)) { console.error('✗ --decision id 不得含路徑分隔或 ..'); process.exit(1); }
+      if (!existsSync(path.join(root, '.flow', 'decisions', naDecision + '.json'))) { console.error(`✗ 查無 decision「${naDecision}」——先 flow-state decision ${naDecision} --choice … --why … 留檔。`); process.exit(2); }
+      const existing = (await S.readUiCompare(root)) || { pages: {} };
+      const reused = Object.entries(existing.pages || {}).find(([k, v]) => v && v.decision === naDecision && k.toLowerCase() !== pageRel.toLowerCase());
+      if (reused) { console.error(`✗ decision「${naDecision}」已被「${reused[0]}」的 n/a 用過——每頁各自表態一次，別一張 decision 洗全批。`); process.exit(2); }
+    }
+
+    await S.writeUiCompareRecord(root, pageRel, { status: normStatus, note, shots, head: gitHead(root), mockupAggHash: cmpAggNow, ...(naDecision ? { decision: naDecision } : {}) });
+    console.log(`✓ 已記視覺比對：${pageRel} = ${normStatus}${note ? `（${note}）` : ''}`);
+    console.log('  complete-check 會逐頁對賬 mockup-index 分母（uiCompareProblems）。');
+    break;
+  }
   case 'spec-review': {
     // 收一輪 lens 審查 findings 落機讀 ledger（第 1 波）。docHash 由本 CLI 讀現行 requirements.md 自算
     // （模型不可自填）、round 自動遞增——「哪些 lens 跑過、跑了幾輪、審的是哪版文字」變成檔案事實。
@@ -1356,7 +1460,7 @@ switch (cmd) {
     break;
   }
   default:
-    console.log(`flow-state <resume|status|done|checkpoint|mode|project-type|design-base|scope|wave|redteam|journey-check|run|verify-ok|verify-e2e|verify-perf|plan-check|review-code|code-resolve|diagnose|lesson|decision|pending|journal-archive|guardrail-check|complete-check|spec-ready|spec-review|review-resolve|mockup-check|ui-fidelity> [--root <path>]
+    console.log(`flow-state <resume|status|done|checkpoint|mode|project-type|design-base|scope|wave|redteam|journey-check|run|verify-ok|verify-e2e|verify-perf|plan-check|review-code|code-resolve|diagnose|lesson|decision|pending|journal-archive|guardrail-check|complete-check|spec-ready|spec-review|review-resolve|mockup-check|ui-fidelity|ui-compare> [--root <path>]
   resume | status        冷啟動：reconstruct 印現況 + 下一步 + mid-task 進度 + 對帳 + 已知死路（換 session/電腦/中斷後接手；平行波看 /workflows）
   done <id> [--commit]   標一個 task 完成：翻 tasks.md [x] + ledger→delivered（自帶 verify 閘門；先標、再 commit）
   checkpoint <id> --phase <red|green|refactor|integrated> [--note]   記 mid-task 進度（開發中當機 → resume 帶出「上次做到第幾步」，只補沒做完的）
@@ -1385,5 +1489,6 @@ switch (cmd) {
   review-resolve <SR-id> --as <resolved:REQ-xxx|open|deferred:<id>|rejected:<id>>   把一條 finding 走到終局（附機器可驗指標，發現不能無痕蒸發）
   mockup-check [--dir]   互動原型走查閘門：specs/ui-mockups/index.html 缺 REQ-E2E 走查卡、本地連結 404、或連到的頁面是空殼（無 app.js/互動元素）→ exit 2（產完原型、開瀏覽器請使用者定版前跑）
   ui-fidelity [--src]    UI 忠實度閘門（web 類 verify/ship 宣稱綠前）：mockup 定版快照漂移、或定版 tokens.css 變數在實作零引用（無 ui-fidelity-waiver）→ exit 2；通過落 trace（綁 HEAD，complete-check 對賬）
+  ui-compare <pageRel> --status <pass|fail|n/a> [--note] [--decision]   視覺比對逐頁落檔（截圖交給 ui-compare-capture.mjs）：pass 驗 capture.json 雙邊截圖齊全且非舊原型、fail 須 --note、n/a 須 --decision（禁跨頁重用）；complete-check 逐頁對賬（無 ui-compare-waiver 時）
 決策/討論一律回 Claude（彈窗）；狀態都在專案的 .flow/。`);
 }

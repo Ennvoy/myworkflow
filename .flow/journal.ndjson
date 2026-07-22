@@ -16,3 +16,14 @@
 {"t":"2026-07-21T09:37:05.529Z","ev":"verify.attempt","id":"node dist/skills/flow-toolkit/statelib.test.mjs dist/skills/flow-toolkit/flow-state.test.mjs 2>&1 | tail","sig":"ok","exit":0}
 {"t":"2026-07-21T09:37:46.830Z","ev":"verify.attempt","id":"c:/users/ennvoy.lin/desktop/workflow/dist/skills/flow-toolkit|node flow-state.test.mjs statelib.test.mjs 2>&1 | tail","sig":"ok","exit":0}
 {"t":"2026-07-21T09:40:09.994Z","ev":"verify.attempt","id":"node dist/skills/flow-toolkit/statelib.test.mjs dist/skills/flow-toolkit/flow-state.test.mjs 2>&1 | tail","sig":"ok","exit":0}
+{"t":"2026-07-22T03:05:12.435Z","ev":"verify.attempt","id":"$outputencoding = [text.encoding]::utf8 node \"c:\\users\\ennvoy.lin\\desktop\\workflow\\dist\\skills\\flow-toolkit\\statelib.test.mjs\" 2>&1 | select-object 80","sig":"ok","exit":0}
+{"t":"2026-07-22T03:08:19.190Z","ev":"verify.attempt","id":"$outputencoding = [text.encoding]::utf8 node \"c:\\users\\ennvoy.lin\\desktop\\workflow\\dist\\skills\\flow-toolkit\\flow-state.test.mjs\" 2>&1 | select-object 100","sig":"ok","exit":0}
+{"t":"2026-07-22T03:16:27.884Z","ev":"verify.attempt","id":"$outputencoding = [text.encoding]::utf8 node \"c:\\users\\ennvoy.lin\\desktop\\workflow\\dist\\skills\\flow-toolkit\\flow-state.test.mjs\" 2>&1 | select-object 40","sig":"ok","exit":0}
+{"t":"2026-07-22T03:17:47.065Z","ev":"verify.attempt","id":"$outputencoding = [text.encoding]::utf8 node \"c:\\users\\ennvoy.lin\\desktop\\workflow\\dist\\skills\\flow-toolkit\\ui-compare-capture.test.mjs\" 2>&1 node \"c:\\users\\ennvoy.lin\\desktop\\workflow\\dist\\skills\\flo","sig":"ok","exit":0}
+{"t":"2026-07-22T03:18:06.606Z","ev":"verify.attempt","id":"$outputencoding = [text.encoding]::utf8 node \"c:\\users\\ennvoy.lin\\desktop\\workflow\\dist\" 2>&1 | select-object 40","sig":"ok","exit":0}
+{"t":"2026-07-22T03:18:45.864Z","ev":"verify.attempt","id":"$outputencoding = [text.encoding]::utf8 $root = \"c:\\users\\ennvoy.lin\\desktop\\workflow\\dist\" $files = get-childitem $root \"*.test.mjs\" | foreach-object { $_.fullname } node @files 2>&1 | select-object ","sig":"ok","exit":0}
+{"t":"2026-07-22T03:19:37.487Z","ev":"verify.attempt","id":"node dist 2>&1 | tail","sig":"ok","exit":0}
+{"t":"2026-07-22T03:24:57.552Z","ev":"verify.attempt","id":"node \"dist/**/*.test.mjs\" 2>&1 | tail","sig":"ok","exit":0}
+{"t":"2026-07-22T03:47:17.829Z","ev":"verify.attempt","id":"c:\\users\\ennvoy.lin\\desktop\\workflow|node dist/skills/flow-toolkit/flow-state.test.mjs dist/skills/flow-toolkit/statelib.test.mjs 2>&1 | tail","sig":"ok","exit":0}
+{"t":"2026-07-22T03:49:56.203Z","ev":"verify.attempt","id":"timeout 90 node \"c:\\users\\ennvoy.lin\\desktop\\workflow\\dist\\skills\\flow-toolkit\\statelib.test.mjs\" 2>&1 | tail","sig":"ok","exit":0}
+{"t":"2026-07-22T03:57:29.931Z","ev":"verify.attempt","id":"c:\\users\\ennvoy.lin\\desktop\\workflow|echo exit=$?","sig":"ok","exit":0}

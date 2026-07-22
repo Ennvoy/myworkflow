@@ -177,3 +177,41 @@ const WHITELIST = [/favicon\.ico/, /OTS parsing error/];  // 每條都附註解�
 - [ ] headed（config headless:false 或 --headed）
 - [ ] 效能對真 DB 真資料量量、p95 達 budget、超過即 FAIL
 - [ ] seed 資料有可識別 tag、驗完精準清（失敗保留 artifact）
+
+## UI 視覺比對截圖（ui-compare capture）
+
+有 `specs/ui-mockups/` 時，Evaluator 先寫 `.flow/trace/ui-compare/map.json`（原型頁↔實作路由對應）：
+
+```json
+{
+  "base": "http://localhost:4173",
+  "storageState": "auth.json",
+  "pages": {
+    "pages/login.html": "/login",
+    "pages/dashboard.html": "/dashboard"
+  }
+}
+```
+
+`storageState` 選填，僅需登入態的實作頁要填；產法：登入 journey 測試裡 `await context.storageState({ path: 'auth.json' })` 存檔即可。
+
+```bash
+# mac/linux
+node ~/.claude/skills/flow-toolkit/ui-compare-capture.mjs --root .
+```
+```powershell
+# Windows PowerShell
+[Console]::OutputEncoding = [Text.Encoding]::UTF8; $OutputEncoding = [Text.Encoding]::UTF8
+node "$env:USERPROFILE\.claude\skills\flow-toolkit\ui-compare-capture.mjs" --root .
+```
+
+腳本自帶閘門（mockup 未凍結或快照漂移 → exit 2），逐 mapping 頁在雙 viewport（1440x900＋390x844）各截 fullPage 圖存 `.flow/trace/ui-compare/<slug>/mockup-*.png`／`impl-*.png`，manifest 落 `.flow/trace/ui-compare/capture.json`（截圖目錄不進版控，manifest 照常 track）。
+
+判讀：Evaluator 逐頁 Read 雙邊截圖多模態對照（版面結構/元件長相/字級層級）。
+落檔：`flow-state ui-compare <page> --status <pass|fail|n/a> [--note "…"] [--decision <id>]`。
+
+### 自查
+- [ ] map.json 已寫，`pages` 對應到現行凍結版原型
+- [ ] capture 腳本跑過、無 exit 2（mockup 已凍結、快照未漂移）
+- [ ] 每個 mapping 頁雙邊（mockup+impl）×雙 viewport 截圖皆實存
+- [ ] 每頁已 `flow-state ui-compare` 落檔（fail 附 `--note`；n/a 附 `--decision`）

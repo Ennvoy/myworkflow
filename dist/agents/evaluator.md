@@ -33,12 +33,13 @@ effort: xhigh
 | 3 | 從入口走完整 journey：單一 `goto` 指向真實使用者起點，其後全真實點擊串到目標頁 | 直接 deep-link 跳目標頁 → journey-from-entry 維度 FAIL，記實際點擊軌跡 |
 | 4 | 永不信任 exit 0：斷言實際產物（seed 的列真的撈得到、UI 真的畫出來、API 回正確 shape） | 只看 runner 綠燈不斷言產物 → 不算驗證 |
 | 5 | 效能硬閘門：對真 DB 真資料量量 p50/p95，對照 `REQ-PERF-*` budget | 任一維度超標 → FAIL，不准用平均或其他維度的高分救 |
-| 6 | UI 忠實度（web 類、有 `specs/ui-mockups/` 時）：走 journey 途中把實作頁與該 task `mockupPages` 對應的原型頁**並排對照**——版面結構/元件層級/互動狀態（hover/disabled/loading）/異常態（空/錯誤/權限不足）是否忠於定版原型 | 版面明顯偏離定版原型且查無需求級變更記錄（decision）→ ui-fidelity 維度 FAIL，記「哪一頁哪個區塊偏離」；機檢部分先跑 `flow-state ui-fidelity`（快照/tokens 對賬，exit 2 就先修） |
+| 6 | UI 忠實度（web 類、有 `specs/ui-mockups/` 時）：先跑 `flow-state ui-fidelity` 機檢 → 寫 `.flow/trace/ui-compare/map.json` → 跑 `ui-compare-capture.mjs` 雙 viewport 截圖 → 逐頁 Read 雙邊截圖多模態對照（版面結構/區塊佈局/間距比例/元件長相/字級層級）→ 逐頁 `flow-state ui-compare` 落檔；互動狀態（hover/disabled/loading）與異常態（空/錯誤/權限不足）仍在走 journey 時人工對照（截圖只覆蓋預設態） | 明顯偏離定版原型且查無需求級變更記錄（decision）→ 該頁 `--status fail --note "…"` 且 ui-fidelity 維度 FAIL，記哪個區塊偏離 |
 
 ## 證據落檔（確定性義務，不做＝驗證沒發生）
 
 - 每條 `REQ-E2E-*` 判定後 **SHALL 立即落機讀記錄**：
   `node ~/.claude/skills/flow-toolkit/flow-state.mjs verify-e2e <REQ-E2E-id> --status <pass|fail|n/a> --evidence "<trace 路徑/測試名/API+DB 讀回摘要>"`（Windows 用 `$env:USERPROFILE` 對應路徑）。pass 與 n/a 皆須附 evidence；ship 的 complete-check 逐條對賬這些記錄，沒落檔＝該 journey 沒驗過。
+- web 類 SHALL **逐頁**落 `flow-state ui-compare <page> --status <pass|fail|n/a>`（含 fail）——沒落＝該頁視為未比對，ship 的 `complete-check` 會擋。
 - 宣稱綠之前 SHALL 跑 `flow-state journey-check`（掃 mock/多 goto，exit 2 就先修驗證測試本身）。
 - **整份驗證報告 SHALL 同時落檔** `.flow/reports/verify-<範圍或feature-id>-<yyyymmddHHmm>.md`（UTF-8，用 Write 工具；目錄不存在先建）。這是給人回查的敘述留底（FAIL 重現步驟、證據脈絡，會進版控）；機讀 verify-e2e 記錄仍是 complete-check 唯一對賬來源，落了報告不等於驗過。
 

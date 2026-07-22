@@ -60,6 +60,7 @@ const FLOW_GITIGNORE_BLOCK = [
   'monitor.port',
   '*.log',
   '*-reminded',
+  'trace/ui-compare/',   // 視覺比對截圖二進位，可用 ui-compare-capture.mjs 重生；trace/ui-compare.json（記錄）目錄尾斜線不誤中，照常 track
   '# <<< flow-state <<<',
 ].join('\n');
 
@@ -1379,6 +1380,49 @@ export function tokenUsageAudit(tokenVars, usedVars) {
 const uiFidelityPath = root => path.join(traceDir(root), 'ui-fidelity.json');
 export async function writeUiFidelity(root, obj) { await writeJSON(uiFidelityPath(root), { ...obj, at: nowISO() }); }
 export async function readUiFidelity(root) { return readJSON(uiFidelityPath(root), null); }
+
+// ── 視覺比對閘門（ui-compare）：mockup 頁×實作頁雙邊截圖 + Evaluator 逐頁判讀落檔 ──
+// 病根：ui-fidelity 只驗「hash 沒漂移＋tokens 被引用」，「版面像不像原型」全靠散文自報，沒有機讀節點。
+// 修法：ui-compare-capture.mjs（確定性截圖節點）產雙邊截圖 → Evaluator 看圖判讀 → flow-state ui-compare
+// 逐頁落機讀記錄 → complete-check 逐頁對賬（uiCompareProblems）。分母沿用 mockupPageList——
+// 與 mockupPageCoverage 同一世界觀：只認 specs/ui-mockups/pages/ 底下實存的 *.html/*.htm。
+export function mockupPageList(index) {
+  return Object.keys((index && index.files) || {}).filter(k => /^pages\/.+\.html?$/i.test(k)).sort();
+}
+// 確定性檔名 slug：normPath 後去 pages/ 前綴、去副檔名、路徑分隔／非法字元轉 -、轉小寫，
+// 尾端加「normPath 全文（小寫）」hash 前 8 碼——防「pages/admin-items.html」與「pages/admin/items.html」
+// 轉出同一個 slug、互蓋彼此截圖（純字串轉換撞名一旦發生無從察覺，故用內容雜湊墊底）。
+export function uiCompareSlug(rel) {
+  const n = normPath(rel);
+  const base = n.replace(/^pages\//i, '').replace(/\.html?$/i, '')
+    .replace(/[\\/]/g, '-').replace(/[^A-Za-z0-9_-]/g, '-').toLowerCase();
+  return `${base}-${sha256Text(n.toLowerCase()).slice(0, 8)}`;
+}
+const uiComparePath = root => path.join(traceDir(root), 'ui-compare.json');
+export async function readUiCompare(root) { return readJSON(uiComparePath(root), null); }
+// read-merge-write：同頁重記＝覆寫，其餘頁保留（每頁各自落一筆，不因單頁重跑蓋掉別頁記錄）。
+export async function writeUiCompareRecord(root, pageRel, rec) {
+  const cur = (await readUiCompare(root)) || { pages: {} };
+  const pages = { ...(cur.pages || {}), [pageRel]: { ...rec, at: nowISO() } };
+  await writeJSON(uiComparePath(root), { pages, at: nowISO() });
+}
+// complete-check 用純函式：逐頁對賬 mockupPageList（分母）vs ui-compare.json 記錄（records key 大小寫不敏感）。
+export function uiCompareProblems({ pages, records, aggHashNow }) {
+  const byKey = new Map();
+  for (const [k, v] of Object.entries(records || {})) byKey.set(normPath(k).toLowerCase(), v);
+  const problems = [];
+  for (const page of (pages || [])) {
+    const rec = byKey.get(normPath(page).toLowerCase());
+    if (!rec) {
+      problems.push(`「${page}」尚無視覺比對記錄——/flow-verify 跑 ui-compare-capture 截圖後由 Evaluator flow-state ui-compare ${page} --status … 逐頁落檔`);
+    } else if (String(rec.status).toLowerCase() === 'fail') {
+      problems.push(`「${page}」視覺比對 FAIL（${rec.note || ''}）——修版面後重截重判`);
+    } else if (rec.mockupAggHash !== aggHashNow) {
+      problems.push(`「${page}」的視覺比對判的是舊版原型（mockup 已重定版）——重跑 capture＋重判`);
+    }
+  }
+  return problems;
+}
 
 // ── design.md「UI 對焦結論」機檢（plan-check 用，純函式）──
 // flow-plan Step 2.5 的 SHALL 原本是純散文（模型自覺、閘門不驗）。這裡驗兩件確定性的：

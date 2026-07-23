@@ -561,7 +561,7 @@ test('complete-check（web 類有原型）：缺 ui-fidelity 記錄 → exit 2�
   });
 });
 
-test('wave --compute：原型存在 → 對賬定版快照（漂移 exit 2）；過了把 tokens 逐字＋designBase＋mockupPages 落 wave-plan（UI 投餵）', async () => {
+test('wave --compute：原型存在 → 對賬定版快照（漂移 exit 2）；過了把 tokensPath＋designBase＋mockupPages 落 wave-plan（UI 投餵，C-7）', async () => {
   await withRoot(async (root) => {
     await frozenWebRoot(root);
     run(['design-base', 'shadcn'], root);
@@ -573,7 +573,8 @@ test('wave --compute：原型存在 → 對賬定版快照（漂移 exit 2）；
     assert.match(r.out, /UI 投餵已附/);
     const wp = await S.readWavePlan(root);
     assert.equal(wp.ui.designBase, 'shadcn', 'manifest 漏欄位時從 state.json fallback（UF-7）');
-    assert.match(wp.ui.tokensCss, /--color-primary/, '定版 tokens.css 逐字進 wave-plan');
+    assert.equal(wp.ui.tokensPath, 'specs/ui-mockups/tokens.css', 'C-7：wave-plan 只存 tokens.css 路徑，不再逐字塞全文');
+    assert.ok(!('tokensCss' in wp.ui), 'wave-plan.ui 不含 tokensCss 全文欄位');
     assert.deepEqual(wp.waves[0][0].mockupPages, ['pages/login.html'], 'per-task 原型頁帶到 dispatch');
     // 偷改原型 → wave fail-closed（別把漂移 UI 餵給 worker，與 reqHash 同級）
     await writeFile(path.join(root, 'specs', 'ui-mockups', 'pages', 'login.html'), PAGE_OK + '<p>改</p>', 'utf8');
@@ -779,18 +780,34 @@ test('run --task：runner 紅→exit 2 落 journal；done 據此擋「跑過但�
     await S.writeStateJson(root, { verify: 'ok:e2e', tdd: 'green' });
     // npm test 是白名單 runner（避開 node --test 在外層 test runner 內的 NODE_TEST_CONTEXT 衝突）；t.mjs 控制 exit
     await writeFile(path.join(root, 'package.json'), '{"scripts":{"test":"node t.mjs"}}', 'utf8');
-    await writeFile(path.join(root, 't.mjs'), 'process.exit(1)', 'utf8');
+    await writeFile(path.join(root, 't.mjs'), 'console.log("RUNNER_MARKER_OUTPUT"); process.exit(1)', 'utf8');
     // 非 runner 命令（node --version）→ 拒（堵 no-op 洗綠）
     assert.equal(runTask('F-1', ['node', '--version'], root).code, 1, 'no-op 非 runner 拒');
     // runner 紅
-    assert.equal(runTask('F-1', ['npm', 'test', '--silent'], root).code, 2, 'runner 紅→exit 2');
+    const rRed = runTask('F-1', ['npm', 'test', '--silent'], root);
+    assert.equal(rRed.code, 2, 'runner 紅→exit 2');
+    // C-4：紅跑 stdout 印尾段摘要（含真實輸出特徵字串）＋完整 log 路徑；log 檔實存且含完整輸出（含首兩行 $cmd/exit code）
+    assert.match(rRed.out, /RUNNER_MARKER_OUTPUT/, '紅跑 stdout 含尾段摘要');
+    const logMatchRed = rRed.out.match(/完整輸出：(\.flow[\\/]reports[\\/]\S+\.log)/);
+    assert.ok(logMatchRed, '紅跑 stdout 印出 log 路徑');
+    const logContentRed = await readFile(path.join(root, logMatchRed[1]), 'utf8');
+    assert.match(logContentRed, /^\$ /, 'log 檔首行記命令');
+    assert.match(logContentRed, /^exit 1$/m, 'log 檔第二行記 exit code');
+    assert.match(logContentRed, /RUNNER_MARKER_OUTPUT/, 'log 檔含完整輸出');
     // 有紅 attempt → done 擋（即使 verify/tdd 綠）
     const d = run(['done', 'F-1'], root);
     assert.equal(d.code, 2, '跑過但最後紅→擋 done');
     assert.match(d.err, /最後一次是紅/);
     // 同一 bucket 修綠（t.mjs 改成必過）→ done 放行
-    await writeFile(path.join(root, 't.mjs'), 'process.exit(0)', 'utf8');
-    assert.equal(runTask('F-1', ['npm', 'test', '--silent'], root).code, 0, '同 bucket 真跑綠');
+    await writeFile(path.join(root, 't.mjs'), 'console.log("RUNNER_MARKER_OUTPUT"); process.exit(0)', 'utf8');
+    const rGreen = runTask('F-1', ['npm', 'test', '--silent'], root);
+    assert.equal(rGreen.code, 0, '同 bucket 真跑綠');
+    // C-4：綠跑 stdout 不再灌回完整輸出，只印摘要行＋log 路徑；完整輸出仍落 log 檔
+    assert.doesNotMatch(rGreen.out, /RUNNER_MARKER_OUTPUT/, '綠跑 stdout 不含 runner 完整輸出特徵字串');
+    const logMatchGreen = rGreen.out.match(/完整輸出：(\.flow[\\/]reports[\\/]\S+\.log)/);
+    assert.ok(logMatchGreen, '綠跑 stdout 仍印 log 路徑');
+    const logContentGreen = await readFile(path.join(root, logMatchGreen[1]), 'utf8');
+    assert.match(logContentGreen, /RUNNER_MARKER_OUTPUT/, '綠跑完整輸出仍落 log 檔');
     assert.equal(run(['done', 'F-1'], root).code, 0, '同 bucket 真跑綠後 done 放行');
   });
 });
@@ -982,6 +999,38 @@ test('complete-check：requirements.md 實存但 0 條 REQ-E2E（被收束成殼
     const r = run(['complete-check'], root);
     assert.equal(r.code, 2, '0/0 vacuous 全綠＝完成謂詞被歸檔關閉，硬擋');
     assert.match(r.err, /查無任何 REQ-E2E/);
+  });
+});
+
+test('complete-check：0 條 REQ-E2E 無 e2e-waiver → exit 2（同上）；有 e2e-waiver → 放行（T5 逃生口，純小修場景）', async () => {
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [] });
+    await mkdir(path.join(root, 'specs'), { recursive: true });
+    await writeFile(path.join(root, 'specs', 'tasks.md'), '- [x] **F-1**\n', 'utf8');
+    const reqMd = '# 需求（已收束）\n完整版見 archive/requirements-v1.md\n';
+    await writeReq(root, reqMd);
+    await S.writeReqIndex(root, reqMd, '');   // 最小凍結分母（不走 CLI freeze，鏡射既有 seedWave 模式）
+    run(['decision', 'plan-check-waiver', '--choice', '略過計畫對賬', '--why', '最小 fixture'], root);
+    run(['decision', 'code-review-waiver', '--choice', '本測不驗藍軍', '--why', 'x'], root);
+    const r0 = run(['complete-check'], root);
+    assert.equal(r0.code, 2, '0 條 REQ-E2E 無 waiver → 仍擋');
+    run(['decision', 'e2e-waiver', '--choice', '純小修無 journey', '--why', '本次無使用者可見流程'], root);
+    const r1 = run(['complete-check'], root);
+    assert.equal(r1.code, 0, 'e2e-waiver 生效 → 放行：' + r1.err);
+    assert.match(r1.out, /e2e-waiver 生效/);
+  });
+});
+
+test('complete-check：e2e-waiver 對已存在 ≥1 條 REQ-E2E 無效——豁免不得繞過既有條目的覆蓋要求（T5）', async () => {
+  await withRoot(async (root) => {
+    await frozenRoot(root);
+    await writeFile(path.join(root, 'specs', 'tasks.md'), '- [x] **F-1**\n', 'utf8');
+    run(['decision', 'e2e-waiver', '--choice', '嘗試豁免', '--why', 'x'], root);
+    run(['verify-perf', 'REQ-PERF-001', '--value', '2.0', '--evidence', await evid(root, 'lh.json')], root);
+    run(['decision', 'code-review-waiver', '--choice', 'x', '--why', 'x'], root);
+    const r = run(['complete-check'], root);
+    assert.equal(r.code, 2, 'e2e-waiver 不影響既有 REQ-E2E-001 的覆蓋要求（未跑 verify-e2e）');
+    assert.match(r.err, /REQ-E2E 未全部驗綠/);
   });
 });
 
@@ -1230,12 +1279,15 @@ test('journey-check：合法 journey 測試 → exit 0', async () => {
   });
 });
 
-test('journey-check：找不到 journey 測試 → exit 0（非 web 專案不誤擋）', async () => {
+test('journey-check：找不到 journey 測試 → exit 0（非 web 專案不誤擋）；0 檔也落記錄標 noTests:true（T5 死鎖修復）', async () => {
   await withRoot(async (root) => {
     await S.init(root, { project: 'p', tasks: [] });
     const r = run(['journey-check'], root);
     assert.equal(r.code, 0);
     assert.match(r.out, /未找到/);
+    const jc = await S.readJourneyCheck(root);
+    assert.ok(jc, '0 檔也落 journey-check.json（過去只 break、從不落檔，web 專案永遠過不了 complete-check）');
+    assert.equal(jc.noTests, true, '記錄標 noTests:true 供 complete-check 對賬');
   });
 });
 
@@ -1292,6 +1344,32 @@ test('complete-check（web 類）：全綠但缺 journey-check 記錄 → exit 2
       "import {test} from '@playwright/test'\ntest('x', async ({page}) => { await page.route('**/pay/**', r=>r.fulfill({body:'{}'})); await page.goto('/') })");
     assert.equal(run(['journey-check'], root).code, 0, 'waiver 在 → journey-check 降級 mock 違規為警告、通過落 jc@HEAD');
     assert.equal(run(['complete-check'], root).code, 0, '跑過 journey-check@HEAD＋waiver → 放行');
+  });
+});
+
+test('complete-check（web 類）：journey-check 0 檔（noTests）且無 e2e-waiver → exit 2；補 e2e-waiver → exit 0（T5 死鎖修復）', async () => {
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [] });
+    await S.writeStateJson(root, { mode: 'manual' });
+    await writeReq(root, READY_REQ);
+    run(['project-type', 'web-app'], root);
+    await passLenses(root);
+    run(['decision', 'mockup-waiver', '--choice', '跳過原型', '--why', '測試'], root);
+    assert.equal(run(['spec-ready', '--freeze'], root).code, 0, 'web 類走 mockup-waiver 豁免路徑凍結');
+    await writeFile(path.join(root, 'specs', 'tasks.md'), '- [x] **F-1**\n', 'utf8');
+    run(['verify-e2e', 'REQ-E2E-001', '--status', 'pass', '--evidence', await evid(root)], root);
+    run(['verify-perf', 'REQ-PERF-001', '--value', '2.0', '--evidence', await evid(root, 'lh.json')], root);
+    run(['decision', 'code-review-waiver', '--choice', '本測不驗藍軍', '--why', 'x'], root);
+    run(['decision', 'plan-check-waiver', '--choice', '略過計畫對賬', '--why', '最小 fixture'], root);
+    // repo 內完全沒有 journey 測試檔——journey-check 現在 0 檔仍 exit 0，但落 noTests:true 記錄
+    assert.equal(run(['journey-check'], root).code, 0, '0 檔仍 exit 0（不因 0 檔就擋 journey-check 本身）');
+    const jc = await S.readJourneyCheck(root);
+    assert.equal(jc.noTests, true);
+    const r0 = run(['complete-check'], root);
+    assert.equal(r0.code, 2, '0 個 journey 測試、無 e2e-waiver → complete-check 擋（別讓 web 專案永遠過不了）');
+    assert.match(r0.err, /0 個 journey 測試/);
+    run(['decision', 'e2e-waiver', '--choice', '本次無新 UI journey', '--why', '純後端調整'], root);
+    assert.equal(run(['complete-check'], root).code, 0, 'e2e-waiver 補上後放行');
   });
 });
 
@@ -1630,11 +1708,40 @@ test('complete-check：code-review 後又改原始碼（HEAD 變）→ exit 2；
     const stale = run(['complete-check'], root);
     assert.equal(stale.code, 2, 'review 之後改了原始碼 → 擋');
     assert.match(stale.err, /src\.js|舊 code/);
-    // 改的是文件/測試 → 不擋：再 review 一次拉回 HEAD，然後只改 .md
+    // 改的是文件/測試 → 不擋：再 review 一次＋重驗 e2e/perf（T4 新增：這兩者也吃新鮮度）拉回 HEAD，然後只改 .md
     run(['review-code', '--file', fp], root);
+    run(['verify-e2e', 'REQ-E2E-001', '--status', 'pass', '--evidence', await evid(root)], root);
+    run(['verify-perf', 'REQ-PERF-001', '--value', '2.0', '--evidence', await evid(root, 'lh.json')], root);
     await writeFile(path.join(root, 'notes.md'), '# 只是文件\n', 'utf8');
     execSync('git add -A && git -c user.email=t@t -c user.name=t -c commit.gpgsign=false commit -q -m doc', { cwd: root });
     assert.equal(run(['complete-check'], root).code, 0, '只改 .md/測試 → 不要求重審');
+  });
+});
+
+test('complete-check：verify-e2e/verify-perf pass 後又改原始碼（HEAD 變）→ exit 2；改的是測試/文件 → 放行（T4，鏡射 C-7 code-review 新鮮度）', async () => {
+  await withRoot(async (root) => {
+    await frozenRoot(root);
+    gitClean(root);   // 真 git repo（新鮮度只在記錄有 head 時對賬）
+    await writeFile(path.join(root, 'specs', 'tasks.md'), '- [x] **F-1**\n', 'utf8');
+    run(['verify-e2e', 'REQ-E2E-001', '--status', 'pass', '--evidence', await evid(root)], root);
+    run(['verify-perf', 'REQ-PERF-001', '--value', '2.0', '--evidence', await evid(root, 'lh.json')], root);
+    run(['decision', 'code-review-waiver', '--choice', 'x', '--why', 'x'], root);
+    assert.equal(run(['complete-check'], root).code, 0, '同 HEAD → 綠');
+    // 改一個原始碼檔並 commit（HEAD 前進）→ verify-e2e/verify-perf 的 pass 證據都變舊
+    await writeFile(path.join(root, 'src.js'), 'console.log("changed source")\n', 'utf8');
+    execSync('git add -A && git -c user.email=t@t -c user.name=t -c commit.gpgsign=false commit -q -m src', { cwd: root });
+    const stale = run(['complete-check'], root);
+    assert.equal(stale.code, 2, '驗證之後改了原始碼 → 擋');
+    assert.match(stale.err, /REQ-E2E-001[^\n]*舊 code/, 'REQ-E2E pass 證據被點名過舊');
+    assert.match(stale.err, /重跑 flow-state verify-e2e/);
+    assert.match(stale.err, /REQ-PERF-001[^\n]*舊 code/, 'REQ-PERF pass 證據被點名過舊');
+    assert.match(stale.err, /重跑 flow-state verify-perf/);
+    // 改的是文件/測試 → 不擋：重新驗證拉回 HEAD，然後只改 .md
+    run(['verify-e2e', 'REQ-E2E-001', '--status', 'pass', '--evidence', await evid(root)], root);
+    run(['verify-perf', 'REQ-PERF-001', '--value', '2.0', '--evidence', await evid(root, 'lh.json')], root);
+    await writeFile(path.join(root, 'notes.md'), '# 只是文件\n', 'utf8');
+    execSync('git add -A && git -c user.email=t@t -c user.name=t -c commit.gpgsign=false commit -q -m doc', { cwd: root });
+    assert.equal(run(['complete-check'], root).code, 0, '只改 .md/測試 → 不要求重驗');
   });
 });
 

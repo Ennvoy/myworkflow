@@ -30,6 +30,7 @@ description: Flow 工作流的參考檔倉庫與提示者。當使用者談到�
 - `references/tasks-template.md` — P-*/F-*/X- 三層分組範本 + 依賴分波（`/flow-plan` 用）
 - `references/orchestration-guide.md` — 混合多工編排、成本路由、effort 分級、recipe 用法（`/flow-build` 用）
 - `references/verification-playbook.md` — TDD 三相 + 驗證矩陣 + 兩層 sensor + 修復迴圈（`/flow-verify` 用）
+- `references/debugging-playbook.md` — 除錯紀律：連續修復失敗前的 tight feedback loop／可證偽假說／單變因實驗／清理（`/flow-build`、`/flow-verify` 用）
 - `references/playwright-real-data-template.md` — Playwright 真實資料鏈路 spec 範本（`/flow-verify`、`/flow-ship` 用）
 - `references/perf-budget.md` — 效能硬閘門：量什麼、budget 怎麼設、p50/p95（`/flow-verify`、`/flow-ship` 用）
 - `references/ship-receipt.md` — 出貨收據：complete-check 通過後 on-demand 產單頁交付證明＋Artifact 發布，純 render 機讀記錄（`/flow-ship` Step 5.5 用）
@@ -39,8 +40,7 @@ description: Flow 工作流的參考檔倉庫與提示者。當使用者談到�
 
 ## 工具腳本（直接 `node` 跑，不進 context）
 
-- `flow-state.mjs` — 狀態 CLI：`resume`/`status`（冷啟動 reconstruct 印現況 + 下一步）/`done <id>`（**標一個 task 完成**：翻 tasks.md `[x]` + ledger→delivered，先標再 commit；被 `flow-commit-gate` 擋下時就跑它。**自帶 done 閘門**：state.json `verify`/`tdd` 空/`none` → exit 2、交付即歸零綠燈）/`project-type <type>`（專案類型正門：Step 1 彈窗拍板後落檔，`--freeze` 對賬——web 類須有互動原型或 mockup-waiver 豁免檔）/`design-base <slug|none>`（品牌基底正門：ui-signoff 定版時落檔 manifest+state.json，`wave --compute` 帶給 build worker 沿用）/`spec-review <lens> --file`＋`review-resolve <SR-id> --as`＋`diagnose review`（lens 審查 ledger：docHash 由 CLI 自算、findings 逐條終局、`--freeze` 對賬收斂——見 references/spec-review-loop.md）/`scope --wave <ids>`（檔案越界閘門）/`redteam --wave <ids>`（紅軍對賬閘門：high 攻擊未全 covered、testFile 不實存、或高危關鍵字攻擊無痕 skipped（無 waiver decision）→ exit 2）/`journey-check [--dir]`（journey 真實性閘門：Playwright 測試 mock/網路攔截・單一 test >1 goto、playwright.config retries 非 0・webServer dev → exit 2）/`run --task <id> -- <cmd>`（verify runner wrapper：真跑捕 exit code 綁 taskId，done 據此擋跑過但最後紅）/`verify-e2e <id> --status <pass\|fail\|n/a> --evidence [--decision <id>]`（記 REQ-E2E 驗證，自動綁 HEAD/reqHash；n/a 須 decision）/`verify-perf <id> --value --evidence`（REQ-PERF 達標，超標拒記）/`plan-check`（REQ↔task 覆蓋＋tasks.md↔manifest 一致 → plan-done，否則 exit 2）/`review-code --file`＋`code-resolve <CR-id> --as <fixed:<ev>|waiver:<id>>`＋`diagnose code`（藍軍 red flag 落機讀檔＋逐條終局，未終局擋 ship）/`diagnose coverage`、`complete-check`（全鏈：tasks 全 [x]＋requirements hash==凍結分母＋REQ-E2E/REQ-PERF 逐條達標＋manifest 未漂移＋code-review red flag 全終局＋pending 待決單清空，缺 exit 2）/`pending <add|list|resolve>`（自駕待決單：不准自建 waiver 時記單續跑、收尾彈窗逐筆拍板——見 references/autonomous-mode.md「待決單」）/`mockup-check [--dir]`（互動原型走查閘門：`specs/ui-mockups/index.html` 缺 REQ-E2E 走查卡、本地連結 404、或連到的頁面空殼（無 app.js/互動元素）→ exit 2；`spec-ready --freeze` 在目錄存在時一併驗，通過凍結時逐檔 hash 落 mockup-index）/`ui-fidelity [--src]`（UI 忠實度閘門：mockup 定版快照漂移、或定版 tokens.css 變數在實作零引用（無 ui-fidelity-waiver）→ exit 2；通過落 trace@HEAD，complete-check 對 web 類有原型者對賬）。
-- `clean-verify-artifacts.mjs` — **commit 前清驗證垃圾**的確定性節點（`/flow-build` Step 5、`/flow-ship` Step 6、`/flow-verify` 全綠後用；判斷函數同時被 `flow-commit-gate` 閘門一 import＝單一事實來源）：白名單整刪驗證產物（含 **Playwright MCP 的 `.playwright-mcp/`：console-*.log／page-*.yml a11y snapshot／截圖**）+ 一次性 debug 殘留、補 `.gitignore`，不碰 source 測試檔／specs／.flow ledger／baseline。Tier A 絕對垃圾無條件清、Tier B（散落截圖／`*.webm` 錄影）僅 git untracked 才清。`--apply` 才真刪、`--gitignore` 補忽略規則（細節見 `references/verification-playbook.md` §七）。
+flow-state.mjs 完整 subcommand 清單與閘門語意：見 `references/gates-reference.md`（唯一詳述處）或 `node flow-state.mjs help`。
 
 ## 三條跨階段主軸（憲法摘要，細節見各 reference）
 

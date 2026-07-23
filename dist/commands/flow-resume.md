@@ -19,7 +19,7 @@ node ~/.claude/skills/flow-toolkit/flow-state.mjs resume
 # Windows PowerShell（先設 console UTF-8）
 [Console]::OutputEncoding=[Text.Encoding]::UTF8; node "$env:USERPROFILE\.claude\skills\flow-toolkit\flow-state.mjs" resume
 ```
-輸出含：已交付/開發中/驗收中/待開發/⚠️等你決策 計數、推進模式、待決策清單、**⏳ mid-task 進度（checkpoint：開發中 task 上次做到第幾步 red/green/refactor，接續只補沒做完的相、別重跑整個 task）**、**↻ 未完成動作（dangling：journal 有 `actionStart` 但無 `actionDone`，並行多 worker 各自獨立不互蓋）**、**⚠️ 已知死路（lessons：再生計畫別重走的失敗 approach）**、**⚠ 對帳（tasks.md↔ledger 分歧、已交付但沒記 commit sha；ledger 為唯一真相 → 跑 `flow-state done <id>` / `done <id> --commit <sha>` 冪等重同步）**、下一步。
+輸出含：已交付/開發中/驗收中/待開發/⚠️等你決策 計數、推進模式、待決策清單、**⏳ mid-task 進度（checkpoint：開發中 task 上次做到第幾步 red/green/refactor，接續只補沒做完的相、別重跑整個 task）**、**⚠️ 已知死路（lessons：再生計畫別重走的失敗 approach）**、**⚠ 對帳（tasks.md↔ledger 分歧、已交付但沒記 commit sha；ledger 為唯一真相 → 跑 `flow-state done <id>` / `done <id> --commit <sha>` 冪等重同步）**、下一步。
 補充來源：`specs/`（讀 `[ ]`/`[x]`）、`git`（branch、最後 commit）。
 **換電腦也接得上**：`.flow/` 的 manifest/ledger/journal 進 git，clone 下來 reconstruct 一樣重建（細粒度進度不掉到 task 級）。進度跑 `flow-state status`；平行波看 `/workflows`。
 
@@ -38,11 +38,11 @@ node ~/.claude/skills/flow-toolkit/flow-state.mjs resume
 
 ## Step 2：呈現進度
 
-白話摘要：在哪個 phase、哪些 feature delivered / building / blocked / needs-decision、還剩哪些 task、有沒有上次中斷的 dangling（生成完但 verify/commit 沒收尾）。
+白話摘要：在哪個 phase、哪些 feature delivered / building / blocked / needs-decision、還剩哪些 task。
 
-## Step 3：補 dangling（冪等）
+## Step 3：補半成品（冪等）
 
-上次中斷留下的半成品：`verify` 空但 code 已寫 → 補跑 `/flow-verify` → `flow-state done` → commit；`actionStart` 有但 `actionDone` 無 → 重做該 action（冪等，不重做已 delivered 的）。
+上次中斷留下的半成品：`verify` 空但 code 已寫 → 補跑 `/flow-verify` → `flow-state done` → commit（冪等，不重做已 delivered 的）。
 
 ## Step 4：待決策彈窗
 

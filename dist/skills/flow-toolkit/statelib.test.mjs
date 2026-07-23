@@ -1,5 +1,5 @@
 // statelib.test.mjs — Flow .flow/ 耐久狀態庫測試（node --test）
-// 重點：append-only journal 讓「並行多 worker 的 dangling」都留得住（修單檔 state.json 互蓋硬傷）。
+// 重點：append-only journal 讓「並行多 worker 各自的事件」都留得住（修單檔 state.json 互蓋硬傷）。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm, readFile, writeFile, mkdir, readdir } from 'node:fs/promises';
@@ -110,38 +110,6 @@ test('transition 更新 ledger 並記 journal', async () => {
     assert.equal(l.branch, 'flow/F-1');
     const j = await S.readJournal(root);
     assert.ok(j.some(e => e.ev === 'task.transition' && e.id === 'F-1' && e.to === 'building'));
-  });
-});
-
-test('actionStart 無 actionDone → reconstruct dangling 抓到', async () => {
-  await withRoot(async (root) => {
-    await S.init(root, { project: 'p', tasks: [{ id: 'F-1' }] });
-    await S.actionStart(root, 'F-1', 'building');
-    const v = await S.reconstruct(root);
-    assert.equal(v.dangling.length, 1);
-    assert.equal(v.dangling[0].id, 'F-1');
-    assert.equal(v.dangling[0].action, 'building');
-  });
-});
-
-test('actionStart + actionDone → 無 dangling', async () => {
-  await withRoot(async (root) => {
-    await S.init(root, { project: 'p', tasks: [{ id: 'F-1' }] });
-    await S.actionStart(root, 'F-1', 'building');
-    await S.actionDone(root, 'F-1', 'building', 'ok');
-    assert.equal((await S.reconstruct(root)).dangling.length, 0);
-  });
-});
-
-// 關鍵：並行多 dangling（修 Flow 單檔 state.json 互蓋硬傷）
-test('兩個並行 actionStart（不同 id）→ reconstruct 兩個 dangling 都在', async () => {
-  await withRoot(async (root) => {
-    await S.init(root, { project: 'p', tasks: [{ id: 'F-1' }, { id: 'F-2' }] });
-    await S.actionStart(root, 'F-1', 'building');
-    await S.actionStart(root, 'F-2', 'building');
-    const v = await S.reconstruct(root);
-    assert.equal(v.dangling.length, 2);
-    assert.deepEqual(v.dangling.map(d => d.id).sort(), ['F-1', 'F-2']);
   });
 });
 
@@ -858,14 +826,15 @@ test('extractCssVars/tokenUsageAudit：抽 :root 定義變數（var() 引用不�
   assert.equal(a.total, 2);
 });
 
-test('buildWavePlan：uiCtx 附進 wave-plan.ui、per-task mockupPages 自 manifest 帶出（UI 逐字投餵）', () => {
+test('buildWavePlan：uiCtx 附進 wave-plan.ui（tokensPath 路徑契約，不存全文）、per-task mockupPages 自 manifest 帶出（UI 投餵，C-7）', () => {
   const manifest = { tasks: [{ id: 'F-1', blockedBy: [], conflictZone: ['api/'], mockupPages: ['pages/login.html'] }] };
   const tasksMd = '- [ ] F-1 登入（對應 REQ-E2E-001）\n      blockedBy: — | conflictZone: api/ | mockupPages: pages/login.html\n';
   const reqMd = 'REQ-E2E-001：登入 → 首頁 → 斷言。';
-  const plan = S.buildWavePlan(manifest, [], tasksMd, reqMd, null, { designBase: 'shadcn', tokensCss: ':root{--c:red}', mockupDir: 'specs/ui-mockups', mockupAggHash: 'h' });
+  const plan = S.buildWavePlan(manifest, [], tasksMd, reqMd, null, { designBase: 'shadcn', tokensPath: 'specs/ui-mockups/tokens.css', mockupDir: 'specs/ui-mockups', mockupAggHash: 'h' });
   assert.deepEqual(plan.problems, []);
   assert.equal(plan.ui.designBase, 'shadcn');
-  assert.equal(plan.ui.tokensCss, ':root{--c:red}', 'tokens 逐字');
+  assert.equal(plan.ui.tokensPath, 'specs/ui-mockups/tokens.css', 'tokens.css 只存路徑（C-7：不再逐字塞全文進 wave-plan）');
+  assert.ok(!('tokensCss' in plan.ui), 'wave-plan.ui 不再含 tokensCss 全文欄位');
   assert.deepEqual(plan.waves[0][0].mockupPages, ['pages/login.html']);
   assert.ok(!('ui' in S.buildWavePlan(manifest, [], tasksMd, reqMd, null)), '無 uiCtx（非 web）不附 ui 欄位');
 });
@@ -1330,7 +1299,6 @@ test('recordCheckpoint + reconstruct：帶出每 task 最新 checkpoint（修開
     assert.equal(v.tasks['F-1'].checkpoint.note, '轉綠 60%');
     assert.ok(v.tasks['F-1'].checkpoint.at, 'checkpoint 有時戳');
     assert.equal(v.tasks['F-2'].checkpoint.phase, 'red');
-    assert.equal(v.dangling.length, 0, 'checkpoint 事件不被誤判成 dangling');
   });
 });
 
@@ -1385,14 +1353,13 @@ test('markTaskDone：verifyTaskId 用嚴格 !== 而非 idMatches——尾段相�
   });
 });
 
-test('summarizeView：含計數/mode/mid-task checkpoint/dangling/下一步', () => {
+test('summarizeView：含計數/mode/mid-task checkpoint/下一步', () => {
   const view = {
     manifest: { tasks: [{ id: 'F-1' }, { id: 'F-2' }] },
     tasks: {
       'F-1': { id: 'F-1', state: 'building', checkpoint: { phase: 'green', note: '60%' } },
       'F-2': { id: 'F-2', state: 'pending', blockedBy: [] },
     },
-    dangling: [{ id: 'F-1', action: 'building' }],
     lessons: [], mode: 'auto', order: ['F-1', 'F-2'],
   };
   const out = S.summarizeView(view).join('\n');
@@ -1400,7 +1367,6 @@ test('summarizeView：含計數/mode/mid-task checkpoint/dangling/下一步', ()
   assert.match(out, /自駕/);
   assert.match(out, /上次做到第幾步/);
   assert.match(out, /F-1：green（60%）/);
-  assert.match(out, /F-1 → building/, 'dangling 列出');
   assert.match(out, /下一步/);
 });
 
@@ -1449,7 +1415,7 @@ test('briefStatus：開發中 + 等你決策 → 提醒一行', () => {
   assert.match(b.line, /等你決策/);
 });
 
-// ── Codex 審查後的恢復增強：白嫖根治／deliveredNoCommit／dangling 提醒／mode 進 manifest ──
+// ── Codex 審查後的恢復增強：白嫖根治／deliveredNoCommit／mode 進 manifest ──
 
 test('markTaskDone：from=verifying（verify 不搶標 delivered 的新流程）→ done 仍歸零、堵下個 task 白嫖（連舊專案無 verifyTaskId）', async () => {
   await withRoot(async (root) => {
@@ -1469,18 +1435,6 @@ test('reconcile：delivered 但 ledger 無 commit → deliveredNoCommit（done �
     { id: 'F-2', state: 'delivered' },                                  // 無 commit
   ]);
   assert.deepEqual(r.deliveredNoCommit, ['F-2']);
-});
-
-test('briefStatus：全 delivered+shipped 但有 dangling 動作 → 仍 hasWork、列出未完成動作', () => {
-  const view = {
-    manifest: { phase: 'shipped', tasks: [{ id: 'F-1' }] },
-    tasks: { 'F-1': { id: 'F-1', state: 'delivered' } },
-    dangling: [{ id: 'F-1', action: 'deploy' }],
-    order: ['F-1'],
-  };
-  const b = S.briefStatus(view);
-  assert.equal(b.hasWork, true, 'dangling 不該被靜默漏掉');
-  assert.match(b.line, /未完成動作/);
 });
 
 test('reconstruct：mode 優先讀 git-tracked manifest（換機 clone 後自駕不掉回 manual）', async () => {
@@ -1653,11 +1607,11 @@ test('#11：extractAllReqIds 不吞尾 ASCII 句點（task 行 REQ id 接句號�
 });
 
 test('W0-2 hookWiringProblems：實存 flow hook 未註冊即回報；test/非註冊型/dispatch 合併門/非 flow 檔排除', () => {
-  const files = ['flow-size-check.mjs', 'flow-auto-gate.mjs', 'flow-spec-gate.mjs', 'flow-commit-gate.mjs',
+  const files = ['flow-size-check.mjs', 'flow-auto-gate.mjs', 'flow-spec-gate.mjs', 'flow-commit-gate.mjs', 'flow-git-guardrail.mjs',
     'flow-commit-gate.test.mjs', 'flow-precommit.mjs', 'commit-gate-core.mjs', 'settings.flow.json'];
   const settings = '{"hooks":{"PreToolUse":[{"hooks":[{"command":"node hooks/flow-dispatch.mjs"}]}]}}';
   assert.deepEqual(S.hookWiringProblems(files, settings), ['flow-size-check.mjs'],
-    'size-check 檔案在、沒接線 → 回報；C-3① 經 dispatch 合併的 auto/spec/commit-gate 豁免；.test/precommit/core 不算');
+    'size-check 檔案在、沒接線 → 回報；C-3① 經 dispatch 合併的 auto/spec/commit-gate/git-guardrail 豁免；.test/precommit/core 不算');
   assert.deepEqual(S.hookWiringProblems(files, settings + ' flow-size-check.mjs'), [], '接上即空');
   assert.deepEqual(S.hookWiringProblems([], settings), [], '空清單不炸');
 });

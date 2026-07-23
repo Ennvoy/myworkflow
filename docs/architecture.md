@@ -24,7 +24,7 @@ Flow 的狀態**全在磁碟**，不在對話 context（harness 鐵則：狀態�
 .flow/
 ├── manifest.json          # wave --compute 算出的波次拓樸（blockedBy/conflictZone）；scope --wave、resume 判 blockedBy 是否已滿足的權威來源
 ├── state.json             # 當前 task 的衍生指標（phase/tdd/verify/commit），瞬時、可從 journal 重建，不入版控
-├── journal.ndjson         # append-only 事件log（含 checkpoint 事件）；reconstruct 的唯一真相，N 個並行 worker 各自 dangling 都留得住
+├── journal.ndjson         # append-only 事件log（含 checkpoint 事件）；reconstruct 的唯一真相，N 個並行 worker 各自進度都留得住
 ├── lessons.ndjson         # 已知死路（failedApproach/why），再生計畫時 resume 提示別重走
 ├── ledger/                # 逐 task 交付狀態（delivered/…），tasks.md `[x]` 與此對帳，分歧時以 ledger 為唯一真相
 ├── decisions/             # 自駕模式 C 類分歧決策 + perf-waiver.json 等豁免記錄

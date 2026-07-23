@@ -18,6 +18,8 @@ description: Flow Phase 4 — 獨立驗證。另開 context 的 Evaluator 用 Pl
 
 **decorrelation 兩級**：上面是「跨 context」級（全新 context＋對抗人設，已是業界硬規格）。對**沒有 runner 可錨定的 inferential 維度**（security / 耦合度這類純 LLM 語義判斷）可再上一級「**跨 model 家族**」評估，進一步去 self-preference bias（模型偏愛自己風格的產出）。但**有真 runner 的維度（功能 / 真實鏈路 / 效能）以 runner 為唯一真、不換 model**——外接一個讀不懂執行軌跡的 model 反而更差（CMU 反例）。故跨 model 只套在 inferential 軟維度，computational 維度照跑 runner。
 
+**輕量路徑例外**（符合 `/flow` Step 0.5 條件的 1-2 檔小修）：允許主迴圈親自真跑 runner／真點擊驗證、免 spawn 獨立 Evaluator；其餘鐵則（真實資料鏈路、禁 mock、Web 三鐵則、效能門）照常適用。
+
 ## 鐵則二：真實資料鏈路（禁 mock 假綠）
 
 涉資料的驗證 SHALL 走 **UI → 真 API → 真 query → 真 DB**（可拋棄/local test DB）。**禁止**在 API client/網路層/前端用 mock/stub/MSW/寫死 fixture 攔截回假 response 冒充功能完成。
@@ -47,7 +49,7 @@ Web 驗證（完整範本 `references/playwright-real-data-template.md`）：
 
 ## 兩層 sensor + 有界重試
 
-Computational（lint/type-check/unit，每迴圈先跑）vs Inferential（security/耦合 review，慢節奏）兩層、修復迴圈上限與 check-in 間隔，細節見 `references/verification-playbook.md` §二、§四。
+Computational（lint/type-check/unit，每迴圈先跑）vs Inferential（security/耦合 review，慢節奏）兩層、修復迴圈上限與 check-in 間隔，細節見 `references/verification-playbook.md` §二、§四。連續 2 次修復失敗 → 停止盲猜，載入 `references/debugging-playbook.md` 照紀律排查。
 
 ## Step 0：起服務前置（避免驗到卡 port 的舊 build）
 

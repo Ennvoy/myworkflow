@@ -38,6 +38,21 @@ test('dispatch → spec-gate 命中：裸寫 phase=spec-done 進 state.json → 
   });
 });
 
+test('dispatch → git-guardrail 命中：git checkout -b feature → exit 2（排最前面、statelib 都還沒碰就先攔）', async () => {
+  await withFlow(async (root) => {
+    const r = run(bash(root, 'git checkout -b feature'));
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, /git guardrail|checkout/);
+  }, 'manual');
+});
+
+test('dispatch → git-guardrail 逃生口：帶 FLOW_GIT_OK → 放行（manual 模式、非 commit 也不誤觸其他道）', async () => {
+  await withFlow(async (root) => {
+    const r = run(bash(root, 'FLOW_GIT_OK=1 git checkout -b feature'));
+    assert.equal(r.status, 0);
+  }, 'manual');
+});
+
 test('dispatch → commit-gate 命中：git commit --no-verify → exit 2', async () => {
   await withFlow(async (root) => {
     const r = run(bash(root, 'git commit --no-verify -m x'));
@@ -53,11 +68,11 @@ test('dispatch：全放行（manual、唯讀命令）→ exit 0；壞輸入 → 
   assert.equal(spawnSync(process.execPath, [HOOK], { input: '{bad', encoding: 'utf8' }).status, 0);
 });
 
-test('dispatchWiringProblems：dispatch 引用三道閘門＋提示器 → 空；漏引用 → 回該檔', () => {
+test('dispatchWiringProblems：dispatch 引用四道閘門＋提示器 → 空；漏引用 → 回該檔', () => {
   const src = readFileSync(HOOK, 'utf8');
-  assert.deepEqual(S.dispatchWiringProblems(src), [], 'flow-dispatch.mjs 引用了三道合併閘門＋design 提示器');
+  assert.deepEqual(S.dispatchWiringProblems(src), [], 'flow-dispatch.mjs 引用了四道合併閘門＋design 提示器');
   assert.deepEqual(S.dispatchWiringProblems("import { autoGateCheck } from './flow-auto-gate.mjs'"),
-    ['flow-commit-gate.mjs', 'flow-spec-gate.mjs', 'flow-design-base-hint.mjs'], '漏引用即回報');
+    ['flow-commit-gate.mjs', 'flow-spec-gate.mjs', 'flow-git-guardrail.mjs', 'flow-design-base-hint.mjs'], '漏引用即回報');
 });
 
 test('C-3②：dispatch → design 基底提示：新建前端檔注入 additionalContext、同檔僅一次、阻擋優先', async () => {

@@ -52,6 +52,16 @@
 - Wave 1（並行）：F-1、F-2（conflictZone 不重疊，可同時 fan-out）
 - Wave 2：F-3（blockedBy F-2）
 
+## 寬幅重構：expand–contract
+
+**定義**：單一機械式改動、但 blast radius 橫跨全庫（如改一個共用型別名、換一個全域介面簽章）——這種不硬塞進某個 `F-*` 的垂直切片，改走三段式：
+
+- **expand**：新增新形式，新舊並存、不壞任何既有呼叫端（一個獨立 task，先做，`blockedBy` 無）。
+- **migrate**：逐一呼叫端搬去新形式，按目錄/模組分批，各自成一個 task、`blockedBy: expand`、依各自觸及目錄分 `conflictZone`（可並行）。
+- **contract**：確認所有呼叫端都搬完後，刪掉舊形式（一個獨立 task，`blockedBy` 全部 migrate task）。
+
+判準：改動夠機械（不需要每處都做決策）但涉及檔案面太廣、硬拆進某個 feature 會讓 conflictZone 互撞——才用這個模式；一般垂直切片能覆蓋的功能開發不套用。
+
 ## task size
 
 以「**能向使用者 demo 一次的 user story**」衡量，不用時間衡量。size 自然會大（數小時甚至更長）；task 內部可包多個 commit，但維持 **per-task 一輪驗收 + 一個 feature 完成 commit**。

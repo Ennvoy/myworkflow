@@ -6,6 +6,7 @@
 // 設計鐵則：**逐道 fail-open**——某道 import/判定丟例外一律當「該道放行」，絕不因一道壞了就誤擋（也不因它壞了就靜默關掉其他道）。
 //   各道邏輯仍留在原檔（flow-{commit,auto,spec}-gate.mjs 各自 export check(input) 並保留獨立 main 可單跑/單測）；
 //   本檔只是編排。接線完整性（本檔真的引用三道）由 flow-session-start 的 dispatchWiringProblems 對賬，防「合併後漏掉一道＝靜默失效」。
+import { gitGuardrailCheck } from './flow-git-guardrail.mjs';
 import { commitGateCheck } from './flow-commit-gate.mjs';
 import { autoGateCheck } from './flow-auto-gate.mjs';
 import { specGateCheck } from './flow-spec-gate.mjs';
@@ -23,7 +24,8 @@ async function main() {
   let input = {};
   try { input = JSON.parse(stripBom(raw).trim() || '{}'); } catch { process.exit(0); }
   // 逐道跑，第一個 block 即擋（各道自 try-catch fail-open，一道壞了不影響其他道）。
-  for (const check of [commitGateCheck, autoGateCheck, specGateCheck]) {
+  // git guardrail 排最前面：純 regex、零 fs，比其餘三道（要碰 statelib/檔案）便宜，先跑最省。
+  for (const check of [gitGuardrailCheck, commitGateCheck, autoGateCheck, specGateCheck]) {
     let r = null;
     try { r = await check(input); } catch { r = null; }   // 該道 fail-open
     if (r && r.block) { process.stderr.write(String(r.message || '') + '\n'); process.exit(2); }

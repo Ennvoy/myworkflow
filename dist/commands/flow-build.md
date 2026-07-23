@@ -6,11 +6,11 @@ description: Flow Phase 3 — 多工交付（混合基座）。取當前波次�
 
 **目標**：把 `tasks.md` 的 features **真的並行**做掉，每個 task 從 UI 一路做到 DB、可 demo、可 commit、可放生。
 
-**混合基座（已定）**：**波次內** fan-out 用 Workflow 腳本（背景跑、結構化回傳、可重播）；**階段/波次之間**保留互動式人工閘門，你拍板才推進。**同 repo 模型**：worker 平行**生成**（只寫各自不重疊的檔），build/驗證/commit 由主流程**序列**做。**前提**：當前專案是 git repo；不是 → 先 `git init`。展開細節見 `references/build-playbook.md`。
+**混合基座（已定）**：**波次內** fan-out 用 Workflow 腳本（背景跑、結構化回傳、可重播）；**階段/波次之間**保留互動式人工閘門，你拍板才推進。**同 repo 模型**：worker 平行**生成**（只寫各自不重疊的檔），build/驗證/commit 由主流程**序列**做。**前提**：當前專案是 git repo；不是 → 先 `git init`。展開細節見 `references/build-playbook.md`。**輕量路徑例外**：`/flow` Step 0.5 觸發的小修不進本檔多工流程——主迴圈直接做、不 fan-out。
 
 ## Step 0：冷啟動讀現況
 
-跑 `flow-state resume`（本檔 `flow-state ×` 一律＝`node <flow-toolkit>/flow-state.mjs ×`，路徑依 host 見憲法「語言與環境」）用 statelib **reconstruct** 純從磁碟重建「還剩什麼 + 未完成 dangling」，有 dangling 先冪等補完；補 `specs/tasks.md` 的 `[ ]`/`[x]`。**也帶出每個開發中 task 的 mid-task checkpoint——接續該相、別重跑整個 task**（語法見 build-playbook.md §四）。
+跑 `flow-state resume`（本檔 `flow-state ×` 一律＝`node <flow-toolkit>/flow-state.mjs ×`，路徑依 host 見憲法「語言與環境」）用 statelib **reconstruct** 純從磁碟重建「還剩什麼」；補 `specs/tasks.md` 的 `[ ]`/`[x]`。**也帶出每個開發中 task 的 mid-task checkpoint——接續該相、別重跑整個 task**（語法見 build-playbook.md §四）。
 **進度怎麼看**：`flow-state status`；平行生成看 Workflow 的 `/workflows`。
 
 ## Step 1：算當前波次可並行集合
@@ -28,7 +28,7 @@ description: Flow Phase 3 — 多工交付（混合基座）。取當前波次�
 ## Step 3：fan-out 平行生成 worker（Workflow 腳本，同 repo）
 
 用 `references/recipes/parallel-build.js` spawn worker，**每 feature 一個**，同一工作目錄平行生成。prompt 帶逐字 REQ（`wave-plan.json` 的 `reqText`，別叫 worker 自讀 requirements.md）+ 契約 + conflictZone、紅軍攻擊面轉失敗安全測試、TDD 三相（每過一相落 checkpoint）、真實資料鏈路鐵則（禁 mock、真依賴未 ready 標 BLOCKED）、涉 UI 先取 `ui-ux-pro-max` 建議、檔案/工具邊界、要求結構化回傳。**完整 prompt 模板＋worker 禁令清單**見 `build-playbook.md` §二、§三。
-- **UI 投餵（web 類，定版原型＝版面單一事實來源）**：dispatch 時把 `wave-plan.json` 的 `ui`（定版 `tokens.css` 逐字＋`designBase`）原樣傳給 recipe 的 `args.ui`，per-task `mockupPages` 已在 wave-plan 各 task 上——worker prompt 會硬性要求「先讀承接的原型頁、沿用其版面/tokens、改版面＝需求級變更標 BLOCKED」。**別省這個欄位**：漏傳＝worker 退回通用元件建議、成品偏離定版 mockup（正是這條鏈路過去的斷點）。
+- **UI 投餵（web 類，定版原型＝版面單一事實來源）**：`wave-plan.json` 的 `ui` 只存 `tokensPath` 等中繼資料（不再存 `tokens.css` 全文）——dispatch 時讀 `specs/ui-mockups/tokens.css` 全文組進 `args.ui.tokensCss`（連同 `designBase`）傳給 recipe，per-task `mockupPages` 已在 wave-plan 各 task 上；`specs/CONTEXT.md` 存在時一併讀入 `args.contextGlossary`——worker prompt 會硬性要求「先讀承接的原型頁、沿用其版面/tokens、改版面＝需求級變更標 BLOCKED」。**別省這兩個欄位**：漏傳＝worker 退回通用元件建議、成品偏離定版 mockup（正是這條鏈路過去的斷點）。
 - **成本路由（Reasoning Sandwich）**：平行苦工 worker 走較便宜 model（recipe 的 `args.workerModel`，預設 Sonnet、可覆寫、不 hardcode 行為）——省 token＝同預算能 fan-out 更寬的波；紅軍／Evaluator 高價值對抗審查，**維持高階不降級**。
 
 fan-out 前 orchestrator 先 write-ahead：對本波每個 id 呼叫 `statelib.transition(root, id, 'pending', 'building')`，讓 `flow-state status` 反映生成中；並落 `flow-state checkpoint --phase dispatched/worker-returned/integrated` 三個確定性節點守中斷重啟接續（語法見 `build-playbook.md` §四）。
@@ -44,7 +44,7 @@ Workflow 回來後，orchestrator 依拓樸序**一個一個**收尾每個 featu
 ## Step 5：feature 自身驗證 → per-task commit（序列，一次一個；驗證與 commit 解耦）
 
 接 Step 4 逐 feature。**便宜 sensor 先跑、一錯馬上停**：秒級 type-check / lint / 單元測試擋笨錯誤，**過了才**燒分鐘級行為驗證（`/flow-verify` 窄範圍：Playwright headed + 真實資料鏈路）——別在貴的 headed e2e 上為一個 typo 燒一輪。**貴迴圈有界＋check-in 間隔**見 `verification-playbook.md` §四。窄範圍驗證（web 類）SHALL 含該 feature 原型頁的截圖比對＋`flow-state ui-compare` 逐頁落檔——沒做，下一波起手的首件檢驗會擋。
-- **Context firewall（computational sensor 蒸餾，鐵則）**：type-check / lint / 單元測試 / build SHALL 包進獨立 subagent 或 `flow-state run` 腳本跑，只把蒸餾後的「pass/fail ＋ 前 N 條錯誤摘要」回傳主迴圈——冗長完整輸出**不得**直接灌進 orchestrator context（見 flow.md「Context 預算」）。
+- **Context firewall（computational sensor 蒸餾，鐵則）**：type-check / lint / 單元測試 / build SHALL 包進獨立 subagent 或 `flow-state run` 腳本跑，只把蒸餾後的「pass/fail ＋ 前 N 條錯誤摘要」回傳主迴圈——冗長完整輸出**不得**直接灌進 orchestrator context（見 flow.md「Context 預算」）。`flow-state run` 已自動把完整輸出落 `.flow/reports/run-*.log`，主 context 只收摘要。
 - **效能：每 feature 只跑便宜 smoke**；**嚴謹 p50/p95 留到 `/flow-ship` 量一次**，避免嚴謹量測在每 feature ×N 重燒。
 - **驗證與 commit 解耦**：驗證 PASS 才進 commit；某 feature FAIL/BLOCKED **不擋其他已 PASS feature 的 commit**。
 - **commit 前清驗證垃圾**（雙軌流程、白名單、`flow-commit-gate` 擋法）：見 `references/verification-playbook.md` §七。

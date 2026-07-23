@@ -3,7 +3,7 @@
 // 全域裝一次（~/.claude/skills/flow-toolkit），對「當前專案」生效（讀 cwd 或 --root 的 .flow/）。
 // 決策/討論一律回 Claude（彈窗）；狀態都在各專案的 .flow/。進度看這支的文字輸出；平行波看 /workflows。
 import path from 'node:path';
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync, mkdirSync, writeFileSync } from 'node:fs';
 import { execSync, execFileSync } from 'node:child_process';
 import * as S from './statelib.mjs';
 
@@ -61,6 +61,19 @@ function evidenceProblem(evidence, evidenceFile, opts = {}) {
 // 現行 HEAD sha（best-effort；非 git/無 commit/失敗回 ''，不洩漏 git stderr）——trace 記「凍結/驗證在哪個 commit」的審計錨。
 function gitHead(r) {
   try { return execSync('git rev-parse HEAD', { cwd: r, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch { return ''; }
+}
+
+// C-4：run 落 log 檔用——緊湊時戳（yyyyMMddHHmmss），檔名安全、可依時間排序。
+function tsCompact(d = new Date()) {
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+}
+// C-4：runner 紅時 stdout 只印尾段摘要（別把整包輸出灌回主 context）——最後 60 行、再收斂到最後 4000 字元（兩個上限取小）。
+function tailSummary(text, maxChars = 4000, maxLines = 60) {
+  const lines = String(text || '').split(/\r?\n/);
+  let tail = lines.slice(-maxLines).join('\n');
+  if (tail.length > maxChars) tail = tail.slice(-maxChars);
+  return tail;
 }
 
 // C-7：兩個 commit 之間變動的檔名（review 新鮮度對賬用）。git 失敗回 null（無從判定→上層 fail-open，不憑空擋 ship）。
@@ -205,7 +218,7 @@ async function resume() {
   const view = await S.reconstruct(root);
   const L = [];
   L.push(`\n=== flow resume :: ${view.manifest.project || '(未命名)'}  (phase: ${view.manifest.phase || '?'}) ===`);
-  // 計數/模式/待決策/mid-task checkpoint/dangling/死路/下一步：與 SessionStart hook 同一份摘要邏輯
+  // 計數/模式/待決策/mid-task checkpoint/死路/下一步：與 SessionStart hook 同一份摘要邏輯
   for (const line of S.summarizeView(view)) L.push(line);
   // 純檔案對帳（ledger=唯一真相）：崩潰在 markTaskDone 跨檔三步中途、或 done 後 commit 前當機會留分歧
   const tp = path.join(root, 'specs', 'tasks.md');
@@ -481,12 +494,15 @@ switch (cmd) {
             }
           }
         }
-        const tokPath = path.join(root, 'specs', 'ui-mockups', 'tokens.css');
+        // C-7：wave-plan 不再存 tokens.css 全文（token 逐字投餵改走路徑契約——orchestrator dispatch 時自行讀
+        // tokensPath 組 args.ui.tokensCss，省掉全文常駐 wave-plan.json／每次讀波次都吃一份 token 開銷）。
+        // 存在性/內容已由上面 mockupHashProblem 對賬過（tokens.css 是 aggHash 涵蓋的文字資產之一），這裡不重讀。
+        const mockupDirRel = 'specs/ui-mockups';
         // designBase fallback 到 state.json（UF-7）：flow-plan 同步 tasks 重寫 manifest 時漏保欄位，雙寫的另一份救回來
         uiCtx = {
           designBase: manifest.designBase || (await S.readStateJson(root)).designBase || '',
-          tokensCss: existsSync(tokPath) ? readFileSync(tokPath, 'utf8') : '',
-          mockupDir: 'specs/ui-mockups',
+          tokensPath: `${mockupDirRel}/tokens.css`,
+          mockupDir: mockupDirRel,
           mockupAggHash: S.mockupAggHash(mHashes),
         };
       }
@@ -502,7 +518,7 @@ switch (cmd) {
     console.log(`✓ 波次已算：${plan.waves.length} 波、${nTask} 個未交付 task（已排除 delivered）。落 .flow/trace/wave-plan.json。`);
     for (let i = 0; i < plan.waves.length; i++) console.log(`  Wave ${i}: ${plan.waves[i].map((t) => t.id).join(', ')}`);
     if (plan.warnings && plan.warnings.length) { console.log('\n⚠ 並行度提醒（conflictZone 重疊自動拆波）：'); for (const w of plan.warnings) console.log('  · ' + w); }
-    if (uiCtx) console.log(`\n  UI 投餵已附：wave-plan.ui（designBase=${uiCtx.designBase || '(未落檔)'}、tokens.css ${uiCtx.tokensCss ? '逐字 ' + uiCtx.tokensCss.length + ' 字' : '缺檔'}）＋per-task mockupPages——dispatch 把 wave-plan.ui 傳給 recipe 的 args.ui。`);
+    if (uiCtx) console.log(`\n  UI 投餵已附：wave-plan.ui（designBase=${uiCtx.designBase || '(未落檔)'}、tokensPath=${uiCtx.tokensPath}）＋per-task mockupPages——dispatch 讀 tokensPath 自組 args.ui.tokensCss，傳給 recipe。`);
     console.log('\n  dispatch 時：worker prompt 直接用 wave-plan 該 task 的逐字 reqText（不叫 worker 自讀 requirements.md，堵版本漂移）；');
     console.log('  整合前 flow-state scope --wave 會對賬「本波成員＝wave-plan 某波、manifest 未漂移」。manifest 若合法改動 → 重跑本指令。');
     break;
@@ -568,7 +584,7 @@ switch (cmd) {
     // H2-F4（體檢）：豁免/定版檔靠字面 id 精確比對才生效——打錯字會「看起來記成功」但永遠不被閘門認得＝無聲失守。
     // 觸發二選一：id 含 waiver/signoff 字樣、或與已知豁免 id 編輯距離 ≤2（抓 perf-waver 這類掉字母型）。
     // 自由形自決 id（兩者皆否，如 D-1/e2e-na-1）不受限。redteam-waiver-<taskId>-<attackId> 動態形只驗前綴結構。
-    const KNOWN_WAIVERS = ['mockup-waiver', 'perf-waiver', 'plan-check-waiver', 'code-review-waiver', 'journey-waiver', 'retry-waiver', 'ui-signoff', 'ui-fidelity-waiver', 'ui-compare-waiver'];
+    const KNOWN_WAIVERS = ['mockup-waiver', 'perf-waiver', 'plan-check-waiver', 'code-review-waiver', 'journey-waiver', 'retry-waiver', 'ui-signoff', 'ui-fidelity-waiver', 'ui-compare-waiver', 'e2e-waiver'];
     const lev = (a, b) => {
       const d = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]);
       for (let j = 1; j <= b.length; j++) d[0][j] = j;
@@ -671,12 +687,21 @@ switch (cmd) {
     let out = '', code = 0;
     try { out = execSync(cmd, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }); }
     catch (e) { code = (e.status ?? 1); out = String(e.stdout || '') + String(e.stderr || ''); }
-    process.stdout.write(out);
+    // C-4：runner 完整輸出不再灌回主 context（吃 token）——落實體 log 檔存底，stdout 只印摘要＋log 路徑。
+    // verifyFailSig/recordVerifyAttempt 照舊吃完整 out（stall 指紋/對賬需要全文，不受本改動影響）。
+    const reportsDir = path.join(root, '.flow', 'reports');
+    mkdirSync(reportsDir, { recursive: true });
+    const logRel = path.join('.flow', 'reports', `run-${rid.replace(/[^A-Za-z0-9_.-]/g, '-')}-${tsCompact()}.log`);
+    writeFileSync(path.join(root, logRel), `$ ${cmd}\nexit ${code}\n${out}`, 'utf8');
     const sig = code === 0 ? 'ok' : S.verifyFailSig(cmd, out);
     await S.recordVerifyAttempt(root, bucket, sig, code, rid);
-    console.log(code === 0
-      ? `✓ ${rid}：runner 綠（exit 0）——已綁 taskId 落 journal，done 閘門認得。`
-      : `✗ ${rid}：runner 紅（exit ${code}）——已落 journal；done 會擋到你真跑綠。`);
+    if (code === 0) {
+      console.log(`✓ ${rid}：runner 綠（exit 0）——已綁 taskId 落 journal，done 閘門認得。（完整輸出：${logRel}）`);
+    } else {
+      console.log(tailSummary(out));   // 尾段摘要（最後 60 行、再收斂到最後 4000 字元）
+      console.log(`✗ ${rid}：runner 紅（exit ${code}）——已落 journal；done 會擋到你真跑綠。`);
+      console.log(`  完整輸出：${logRel}`);
+    }
     process.exit(code === 0 ? 0 : 2);
     break;
   }
@@ -895,7 +920,13 @@ switch (cmd) {
     // W0-7：缺 requirements.md 從警告升 exit 2——「歸檔/改名 spec ＝ 整段 REQ-E2E 完成謂詞靜默關閉」的洞封死。
     if (cov.skipped) { console.error('✗ 查無 specs/requirements.md——REQ-E2E 完成謂詞無從對賬，不准發 COMPLETE（spec 被歸檔/改名？還原它，或用 --root 指對專案根）。'); process.exit(2); }
     // 檔案實存但被收束成 0 條 REQ-E2E 的殼（/flow-compact 歸檔變體）＝完成謂詞 0/0 空轉，同擋。
-    if (cov.audit.total === 0) { console.error('✗ specs/requirements.md 實存但查無任何 REQ-E2E-*——spec 被收束成殼？（凍結底線＝至少 1 條）從 specs/archive/ 還原完整版再對賬，不准發 COMPLETE。'); process.exit(2); }
+    // T5：e2e-waiver 逃生口——僅在 0 條 REQ-E2E 時生效（純小修/無使用者可見 journey 場景）；
+    // 只要 requirements.md 有 ≥1 條 REQ-E2E，本豁免完全不介入，既有逐條覆蓋對賬照舊不得繞過。
+    const e2eWaived = existsSync(path.join(root, '.flow', 'decisions', 'e2e-waiver.json'));
+    if (cov.audit.total === 0) {
+      if (!e2eWaived) { console.error('✗ specs/requirements.md 實存但查無任何 REQ-E2E-*——spec 被收束成殼？（凍結底線＝至少 1 條）從 specs/archive/ 還原完整版再對賬，或純小修經 flow-state decision e2e-waiver 附理由豁免，不准發 COMPLETE。'); process.exit(2); }
+      console.log('⚠ e2e-waiver 生效——0 條 REQ-E2E 已豁免（純小修/無 journey 場景），完成謂詞略過 REQ-E2E 覆蓋對賬。');
+    }
     printCoverage(cov.audit);
     // W3-3③：凍結分母 SHALL 實存（後續 hash/perf 對賬要用）——結構前置，維持 fail-fast。
     const idx = await S.readReqIndex(root);
@@ -907,15 +938,34 @@ switch (cmd) {
     if (!cov.audit.ok) fails.push('REQ-E2E 未全部驗綠：每條 journey 經 /flow-verify 真跑綠後 flow-state verify-e2e <id> --status pass --evidence …；無法自動化標 --status n/a 附原因。');
     const hp = S.reqHashProblem(idx, reqMd);
     if (hp) fails.push(hp);
-    // W2-3 n/a 醒目列出（每條都該有 decision 撐著）
-    for (const r of await S.listVerifyRecords(root)) if (String(r.status) === 'n/a') console.log(`  ⚠ ${r.id} 標 n/a（decision=${r.decision || '?'}）——ship 前確認此 journey 真的無法自動化`);
+    // W2-3 n/a 醒目列出（每條都該有 decision 撐著）＋T4：pass 證據新鮮度——鏡射下面 code-review 那套「記錄 HEAD 之後
+    // 原始碼又改過＝驗的是舊 code」判定（sourceChanged 過濾測試/文件/.flow，只認真原始碼變動）。舊資料無 head 欄位/
+    // status=n/a 一律跳過（相容）。
+    for (const r of await S.listVerifyRecords(root)) {
+      if (String(r.status) === 'n/a') console.log(`  ⚠ ${r.id} 標 n/a（decision=${r.decision || '?'}）——ship 前確認此 journey 真的無法自動化`);
+      if (String(r.status) === 'pass' && r.head) {
+        const headNow = gitHead(root);
+        if (headNow && r.head !== headNow) {
+          const src = sourceChanged(gitDiffNames(root, r.head));
+          if (src.length) fails.push(`${r.id} 的 pass 證據是舊 code（${r.head} 之後原始碼又改過：${src.slice(0, 8).join('、')}）——重跑 flow-state verify-e2e`);
+        }
+      }
+    }
     // W2-4 REQ-PERF 對賬：量測型 SHALL 有 verify-perf pass；非量測型（無 budget/N/A）SHALL 有 perf-waiver。
     const perfIds = S.extractReqPerf(reqMd);
     const perfWaived = existsSync(path.join(root, '.flow', 'decisions', 'perf-waiver.json'));
     for (const pid of perfIds) {
       if (S.perfIsNonMeasurable(reqMd, pid)) { if (!perfWaived) fails.push(`REQ-PERF ${pid} 非量測型/N/A 但無 perf-waiver decision（flow-state decision perf-waiver …）`); continue; }
       const rec = await S.readPerfRecord(root, pid);
-      if (!rec || rec.status !== 'pass') fails.push(`REQ-PERF ${pid} 缺達標記錄——flow-state verify-perf ${pid} --value <實測> --evidence <ref>`);
+      if (!rec || rec.status !== 'pass') { fails.push(`REQ-PERF ${pid} 缺達標記錄——flow-state verify-perf ${pid} --value <實測> --evidence <ref>`); continue; }
+      // T4：verify-perf pass 證據新鮮度，同款鏡射。
+      if (rec.head) {
+        const headNow = gitHead(root);
+        if (headNow && rec.head !== headNow) {
+          const src = sourceChanged(gitDiffNames(root, rec.head));
+          if (src.length) fails.push(`REQ-PERF ${pid} 的 pass 證據是舊 code（${rec.head} 之後原始碼又改過：${src.slice(0, 8).join('、')}）——重跑 flow-state verify-perf`);
+        }
+      }
     }
     // C-9：plan-check.json SHALL 實存（計畫出口對賬從未跑或被刪＝可整段略過）。舊專案相容＝plan-check-waiver 逃生口。
     const pc = await S.readPlanCheck(root);
@@ -948,6 +998,9 @@ switch (cmd) {
       else {
         const headNow = gitHead(root);
         if (jc.head && headNow && jc.head !== headNow) fails.push('journey-check 記錄不是當前 HEAD（驗的是舊 code）——重跑 flow-state journey-check（秒級）。');
+        // T5：0 個 journey 測試檔的死鎖修復——journey-check 現在 0 檔也會落 noTests:true 記錄（不再單純 break 不落檔），
+        // 這裡要求搭配 e2e-waiver（與 0 條 REQ-E2E 共用同一豁免類型：純小修/無使用者可見 journey 場景）才放行。
+        else if (jc.noTests && !e2eWaived) fails.push('0 個 journey 測試——寫至少一條真 journey，或純小修經 flow-state decision e2e-waiver 附理由豁免');
         else if (journeyWaivedCC) {
           let wat = '';
           try { wat = (JSON.parse(readFileSync(journeyWaiverPath, 'utf8')).at || '').slice(0, 10); } catch { /* 時戳非關鍵 */ }
@@ -1084,8 +1137,12 @@ switch (cmd) {
     const problemsAll = [...fileProblems, ...configProblems];
     if (!journeyFiles.length) {
       console.log('⚠ 未找到 Playwright journey 測試檔（*.spec/.test/.e2e 內含 @playwright/test 或 page.goto）。');
-      console.log('  若本專案有 web 前端，代表還沒有「從入口真實點擊」的端到端驗證——請補 playwright-real-data-template 的 journey 測試。');
+      console.log('  若本專案有 web 前端，代表還沒有「從入口真實點擊」的端到端驗證——請補 playwright-real-data-template 的 journey 測試，或純小修經 flow-state decision e2e-waiver 附理由豁免。');
       console.log('  （非 web 專案無此要求，可忽略。）');
+      // T5：0 檔死鎖修復——過去 0 檔直接 break、從不落記錄，web 專案在寫出第一條 journey 前永遠過不了 complete-check。
+      // 改成 0 檔也落記錄並標 noTests:true；complete-check 的 web 分支據此要求搭配 e2e-waiver 才放行。
+      await S.writeJourneyCheck(root, { head: gitHead(root), files: 0, noTests: true });
+      console.log('  已落 .flow/trace/journey-check.json（noTests:true）——complete-check 的 web 分支需搭配 e2e-waiver 才放行。');
       break;
     }
     console.log(`掃描到 ${journeyFiles.length} 個 journey 測試檔：`);

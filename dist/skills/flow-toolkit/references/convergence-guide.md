@@ -27,7 +27,7 @@ prompt cache 命中價 = miss 的 1/10，而 cache 靠 **prefix 穩定**。所�
 | `specs/requirements.md` | spec 階段，**凍結** | 已實作章節摘要、全文歸檔 | 凍結後每迴圈重讀、不漂移 |
 | `specs/design.md` | plan 階段 | 已實作決策摘要 | **接縫契約、未完成 REQ、open questions 留主檔** |
 | `specs/tasks.md` | plan 階段 | 已 `[x]` 段詳情收一行 | `[ ]`/`[x]` 狀態是完成謂詞判據，保持可讀 |
-| `.flow/state.json` | 每 action write-ahead | 已完成 action journal 歸檔 | 當前 phase + 未完成 dangling 保留 |
+| `.flow/state.json` | 每 action write-ahead | 已完成 action journal 歸檔 | 當前 phase 保留 |
 | `.flow/lessons.ndjson` | 標 BLOCKED / stall 升級時記失敗 approach | delivered task 的死路自動失效（reconstruct 濾掉）、硬上限 5 筆丟最舊 | 只記 approach→why、**禁貼計畫全文**（短指紋，避免又污染 context） |
 
 **計畫是可丟棄/可再生的**：tasks/design 從 requirements 重生的成本 = 一個 planning loop。別把它當聖物無止盡打磨——「再潤一次同一個檔」是 context 腐化的來源，不是進步。

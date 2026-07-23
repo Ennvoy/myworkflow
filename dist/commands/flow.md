@@ -30,12 +30,20 @@ description: Flow 一鍵總控 — 偵測起始 phase，選自駕（spec 定版�
 
 ## Step 0.5：小功能輕量路徑（跳訪談、仍寫 SDD）
 
-使用者明說「小調整 / 不用訪談」**或** `/flow` 判斷改動範圍小（單一既有 feature 的局部調整、**無新實體 / 無新角色 / 無新外部整合**）→ 走輕量分支，貫徹 SDD 但不重：
-- **跳過**：`/flow-spec` 蘇格拉底全套訪談、互動原型對焦、lens 審查矩陣（spec-redteam/spec-consistency）。
-- **仍 SHALL 寫 SDD**：往 `specs/requirements.md` 的「當前迭代」段補一條精簡 `REQ-XXX`（EARS）+ 往 `specs/tasks.md` 補一個 `F-*` task。
-  - **design.md（C-29 澄清「沒 design.md 不寫 code」對輕量路徑的適用）**：輕量路徑是**既有 feature 的局部調整**，SHALL **沿用既有 `specs/design.md`**——不必為小改動另起完整設計；若既有 design.md 缺這塊接縫，補**一小節**（動到的接縫/契約）即可，不寫全套。真的無任何 design.md 可沿用（＝其實是新東西）就不算小改動、升回完整 `/flow-spec`。code-reviewer 會抓「實作與 design 漂移」補洞。
-- **照走 build 紀律**：紅軍（針對小範圍）→ TDD 三相 → 真實資料鏈路驗證 → per-task commit → 狀態落 `.flow/`。
-- **安全閘門（升回完整 `/flow-spec`）**：偵測到**需求級**變動——新實體 / 新角色 / auth / RBAC / payment / 個資 scope——**強制升回完整 `/flow-spec`**（自駕下這也是 T1 必停）。
+使用者明說「小調整 / 不用訪談」**或** `/flow` 判斷改動範圍小（單一既有 feature 的局部調整、**無新實體 / 無新角色 / 無新外部整合**）→ 走輕量分支，貫徹 SDD 但不重，共 7 個節點：
+
+1. **精簡 SDD**：往 `specs/requirements.md` 的「當前迭代」段補一條精簡 `REQ-XXX`（EARS）+ 往 `specs/tasks.md` 補一個 `F-*` task。跳過 `/flow-spec` 蘇格拉底全套訪談、互動原型對焦、lens 審查矩陣（spec-redteam/spec-consistency）。
+   - **design.md（C-29 澄清「沒 design.md 不寫 code」對輕量路徑的適用）**：輕量路徑是**既有 feature 的局部調整**，SHALL **沿用既有 `specs/design.md`**——不必為小改動另起完整設計；若既有 design.md 缺這塊接縫，補**一小節**（動到的接縫/契約）即可，不寫全套。真的無任何 design.md 可沿用（＝其實是新東西）就不算小改動、升回完整 `/flow-spec`。code-reviewer 會抓「實作與 design 漂移」補洞。
+2. **`plan-check` 照跑**（便宜）：REQ↔task 覆蓋對賬不因輕量路徑而免。
+3. **紅軍不 spawn 獨立 agent**：orchestrator 親列 3 個攻擊情境（邊界值/惡意輸入/相依故障擇要）落 `.flow/redteam/<id>.json`（CLI 本就允許非 agent 手動落檔）。
+4. **TDD 紅→綠**：經 `flow-state run` 真跑，真實資料鏈路鐵則不減（禁 mock、真依賴未 ready 標 BLOCKED）。
+5. **驗證走 `/flow-verify` 輕量路徑例外**：主迴圈親自真跑 runner／真點擊，免 spawn 獨立 Evaluator；其餘鐵則（真實資料鏈路、Web 三鐵則、效能門）照常適用。
+6. **全 diff 自審一次**：沒有獨立 code-reviewer context，也要有這道眼過一遍變動。
+7. **`flow-state done` → 一次 commit**：per-task commit 紀律不變，狀態落 `.flow/`。
+
+無新 journey 的純小修 → `flow-state decision` 落 `e2e-waiver`（附理由），`complete-check` 認得（僅 0 條 `REQ-E2E-*` 時適用；有 ≥1 條時該 waiver 無效）。
+
+**安全閘門（升回完整 `/flow-spec`）**：偵測到**需求級**變動——新實體 / 新角色 / auth / RBAC / payment / 個資 scope——**強制升回完整 `/flow-spec`**（自駕下這也是 T1 必停）。
 
 ## Step 1：依序跑各階段（推進方式依模式）
 

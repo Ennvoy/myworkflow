@@ -10,7 +10,7 @@ description: Flow Phase 2 — 設計。讀凍結的 requirements 產出 architec
 
 ## Step 1：讀凍結 specs，建立全景
 
-完整讀 `specs/requirements.md`（+ web 類讀 `specs/ui-mockups/` 互動原型：走查台 index.html＋各頁結構）。**不要**把整個既有 codebase 預先塞進 context——用 Grep/Glob/Read 隨用隨查（just-in-time，省 context 防腐化）。**盤點既有 codebase 找接縫/既有模式/可重用點時 SHALL 走 `references/recipes/research-sweep.js` fan-out**（便宜模型平行讀、蒸餾成 1-2k 摘要回傳）——orchestrator 只拿摘要做架構決策，主迴圈**不得**親自 grep/read 整個 repo 做大範圍掃描；對關鍵接縫檔（確定要動的少數檔）仍保留直讀權。
+完整讀 `specs/requirements.md`（+ web 類讀 `specs/ui-mockups/` 互動原型：走查台 index.html＋各頁結構）。**不要**把整個既有 codebase 預先塞進 context——用 Grep/Glob/Read 隨用隨查（just-in-time，省 context 防腐化）。**盤點既有 codebase 找接縫/既有模式/可重用點時 SHALL 走 `references/recipes/research-sweep.js` fan-out**（便宜模型平行讀、蒸餾成 1-2k 摘要回傳）——orchestrator 只拿摘要做架構決策，主迴圈**不得**親自 grep/read 整個 repo 做大範圍掃描；對關鍵接縫檔（確定要動的少數檔）仍保留直讀權。research-sweep 蒸餾出的 domain 詞彙與訪談用語有落差 → 補進 `specs/CONTEXT.md`（沒有就建）。
 
 **先取已知死路**（防再生撞同一面牆）：跑 `flow-state resume` 看 `.flow/lessons.ndjson` 的「⚠️ 已知死路」。**計畫可丟棄、但失敗教訓不該丟**——再生時別重選上次失敗過的 approach（`reconstruct` 已自動帶出、delivered task 的死路會自動失效）。
 

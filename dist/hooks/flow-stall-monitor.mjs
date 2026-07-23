@@ -53,13 +53,16 @@ async function main() {
   const ti = input.tool_input ?? input.toolInput ?? {};
   const command = String(ti.command ?? '');
 
+  // C-9：cwd＋.flow 存在性早退搬到 import statelib（120KB）之前——非 Flow 專案的每次 Bash/PowerShell
+  // 都不再白繳這支模組的載入稅。純 fs 判斷、零成本，比 import 便宜太多，理當先跑。
+  const cwd = input.cwd ?? process.cwd();
+  if (!existsSync(join(cwd, '.flow'))) return;              // 非 Flow 專案 → 不污染
+
   let S;
   try { S = await import('../skills/flow-toolkit/statelib.mjs'); } catch { return; }  // 缺檔/壞檔 → fail-open
   // C-13：test/build runner，或連紅的 flow-state 閘門子命令（後者只軟提醒、不進 auto-gate 硬天花板）→ 都納入 doom-loop 偵測
   if (!S.isRunnerCommand(command) && !S.isGateThrash(command)) return;
 
-  const cwd = input.cwd ?? process.cwd();
-  if (!existsSync(join(cwd, '.flow'))) return;              // 非 Flow 專案 → 不污染
   const bucket = S.runnerBucket(command);
 
   const { failed, exit, text } = extractFailure(input.tool_output ?? input.tool_response ?? input.toolOutput ?? input.toolResponse);
@@ -79,6 +82,7 @@ async function main() {
     '  1) 換一條本質不同的 approach（不是微調），並 `flow-state lesson <id> --approach "<試過>" --why "<為何失敗>"` 記下。',
     '  2) 真依賴未 ready / 無解 → 標 BLOCKED，跳下一個 task。',
     '  3) 需要使用者拍板 → 立刻 AskUserQuestion 同步升級（白話講卡在哪、試過什麼、要他決定什麼）。',
+    '  4) 照 references/debugging-playbook.md 的除錯紀律系統化排查（先建 tight feedback loop、列 3-5 個可證偽假說再動手，禁盲猜連試）。',
     `（連續忽略到 ${threshold + 3} 輪，flow-auto-gate 會在下一次同 runner 的 PreToolUse 硬擋。）`,
   ].join('\n');
   process.stdout.write(JSON.stringify({

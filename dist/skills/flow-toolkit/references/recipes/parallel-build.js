@@ -19,7 +19,8 @@ export const meta = {
 // args.wave: [{ id, title, req, reqText?, mockupPages?, conflictZone, ui? }]；args.contractPath / args.reqPath / args.ui?
 //   reqText（W3-2）＝orchestrator dispatch 前跑 `flow-state wave --compute`、從 wave-plan.json 取的「逐字 REQ 區塊」——
 //   直接內嵌 worker prompt，取代叫 worker 自讀 requirements.md（堵版本漂移：同 task＋同凍結 spec → 逐 byte 相同規格）。
-//   mockupPages＋args.ui（wave-plan.ui 原樣傳入：{ designBase, tokensCss, mockupDir }）＝UI 逐字投餵——
+//   mockupPages＋args.ui（{ designBase, tokensCss, mockupDir }；tokensCss 由 orchestrator dispatch 時讀
+//   wave-plan.ui.tokensPath 指向的檔案全文組出——wave-plan 只存路徑契約、不存全文）＝UI 逐字投餵——
 //   定版原型是版面/互動的單一事實來源：worker SHALL 先讀自己承接的原型頁、沿用 tokens.css 同一組變數，
 //   堵「UI 基準被偷換成通用元件建議」的斷鏈（mockup 定版後成品走樣的病根）。
 // 成本路由＝兩根正交軸（Reasoning Sandwich）：
@@ -30,7 +31,7 @@ export const meta = {
 //   會靜默把對抗審查降級，與憲法「對抗審查不降級」矛盾）；args.redTeamEffort 仍可覆寫（但不該降級）。
 const wave = (args && args.wave) || []
 if (!wave.length) { log('parallel-build: 空波次，無事可做'); return [] }
-const UI = (args && args.ui) || null            // wave-plan.ui：{ designBase, tokensCss, mockupDir }（無原型＝null）
+const UI = (args && args.ui) || null            // { designBase, tokensCss, mockupDir }（tokensCss 由 dispatch 讀 tokensPath 組出；無原型＝null）
 const WORKER_MODEL  = (args && args.workerModel)  || 'sonnet'
 const WORKER_EFFORT = (args && args.workerEffort)  || 'medium'   // 平行苦工 generate：中檔
 const RED_EFFORT    = args && args.redTeamEffort                 // 紅軍：預設不覆寫、吃 frontmatter xhigh
@@ -109,6 +110,11 @@ const results = await pipeline(
     (f.reqText
       ? `需求（逐字取自凍結 requirements.md，這就是完整規格、別再自行讀檔以免讀到漂移版本）：\n${f.reqText}\n`
       : `需求：讀 ${args.reqPath} 對應 ${f.req}（未跑 wave --compute 逐字投餵，退回 id 引用）。\n`) +
+    // args.contextGlossary（specs/CONTEXT.md 全文，orchestrator dispatch 時讀入）＝域詞彙表逐字投餵——
+    // 堵團隊/worker 各自解讀同一詞（如「帳號」指 Customer 還是 User）的漂移，命名/用詞 SHALL 沿用。
+    (args.contextGlossary
+      ? `== 域詞彙表（specs/CONTEXT.md，命名/用詞 SHALL 沿用）==\n${args.contextGlossary}\n`
+      : '') +
     `紅軍攻擊面（含 id，逐項對賬）：\n${JSON.stringify(attack && attack.attacks, null, 2)}\n` +
     `  每個攻擊 SHALL 先寫失敗安全測試、再用防禦碼轉綠，並回報 attackCoverage（attackId→testFile）；\n` +
     `  真的不適用才標 skipped+reason——**high severity 不准 skipped**（orchestrator 會驗 testFile 存在、不覆蓋會被擋整合）；\n` +

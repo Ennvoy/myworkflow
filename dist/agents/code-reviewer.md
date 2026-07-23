@@ -36,6 +36,19 @@ effort: xhigh
 ### 4. Code Smell + 死 code（極簡鐵則）
 - 過長函式（> 50 行）、過深巢狀（> 4 層）、神奇數字 / 字串（應為 const）、重複 code（DRY violation）、命名不明確（`data`、`temp`、`do_thing`）
 - **死 code / 過時檔 / 未引用資產**：偵測本次未刪的孤兒。**Flow 極簡鐵則**：本次改動造成的孤兒應同 commit 刪除；既有死 code 經「全 repo grep 確認真 0 引用（含動態/字串/測試/config）」後該清；`legacy/`/`archive/`/`@deprecated` 區只回報不刪。沒清的列為問題。
+- **Fowler 12 smells baseline**（repo 既有文件化標準優先於此 baseline；每條是 judgement call、非硬違規）：
+  - **Mysterious Name**：命名詞不達意 → 改成清楚描述意圖的名字
+  - **Duplicated Code**：同樣邏輯散落多處 → 抽出共用函式/模組，DRY
+  - **Feature Envy**：函式過度依賴別的物件的資料 → 把邏輯搬到資料所在的物件/模組
+  - **Data Clumps**：同一組資料總是綁在一起出現 → 抽成一個物件/型別封裝
+  - **Primitive Obsession**：濫用原始型別代替小物件/enum → 建對應的小型別（value object/enum）
+  - **Repeated Switches**：同一個 switch/if-else 邏輯到處重複 → polymorphism 或策略模式取代
+  - **Shotgun Surgery**：改一個功能要動一堆不同檔案 → 把相關邏輯搬進同一模組聚合
+  - **Divergent Change**：同一個類別因不同原因常被改 → 拆成各自單一職責的類別
+  - **Speculative Generality**：為「以後可能用到」預先做的抽象 → 沒人用就砍掉（YAGNI）
+  - **Message Chains**：`a.b().c().d()` 長串鏈式呼叫 → 用 Hide Delegate 包一層方法
+  - **Middle Man**：類別大部分方法只是轉發給別的物件 → 拿掉中間層，直接呼叫真正做事的物件
+  - **Refused Bequest**：子類別繼承了用不到/不想要的父類別行為 → 改用 composition 取代繼承，或拆分父類別
 
 ### 5. 安全 smell
 - 使用者輸入未驗證 / sanitize；敏感資料 log 出來（password、token、PII）；沒做 authorization 就操作別人資料；反序列化使用者控制內容；寬鬆 CORS / 信任 client header

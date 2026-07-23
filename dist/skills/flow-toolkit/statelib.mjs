@@ -1,7 +1,7 @@
 // statelib.mjs — Flow .flow/ 耐久狀態的唯一入口。
 // 設計：write-ahead journal（先記再做）+ 冷啟動 reconstruct（只讀磁碟即重建現場）。
-// append-only journal（用 id|action 當 key）讓 N 個並行 worker 各自的 dangling 都留得住——
-// 修掉「單檔 state.json 多 worker 互蓋」硬傷。state.json 保留為當前 task 衍生指標（相容既有 hook）。
+// append-only journal（每個 task 各自的事件獨立累積、不互蓋）修掉「單檔 state.json 多 worker 互蓋」硬傷。
+// state.json 保留為當前 task 衍生指標（相容既有 hook）。
 import { mkdir, readFile, writeFile, appendFile, readdir, rename, unlink, stat } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -134,7 +134,7 @@ export async function readJournal(root) {
 // 長程自駕單調變慢。把「已 delivered task 的任務域事件」搬 .flow/archive/journal.ndjson（append、可回溯），
 // 主檔只留未終局＋全域事件（spec.*/code.*/decision 一律留）。另對「無 taskId 的 verify.attempt」（stall-monitor 桶）
 // 保尾 cap——stallCount 只看尾端連續段，保最近 400 筆綽綽有餘。先落歸檔再原子重寫主檔（當機頂多重複、不丟）。
-const TASK_SCOPED_EVS = new Set(['verify.attempt', 'task.transition', 'action.start', 'action.done', 'checkpoint', 'lesson']);
+const TASK_SCOPED_EVS = new Set(['verify.attempt', 'task.transition', 'checkpoint', 'lesson']);
 const JOURNAL_ATTEMPT_CAP = 400;
 export async function archiveJournal(root, deliveredIds) {
   const delivered = new Set((deliveredIds || []).map(String));
@@ -273,10 +273,6 @@ export async function transition(root, id, from, to, patch = {}) {
   await writeLedger(root, id, { ...cur, ...patch, state: to });
   await appendJournal(root, { ev: 'task.transition', id, from, to });
 }
-
-// 長動作（會跑一陣、可能中途當機）：先記 start、做完記 done。冷啟動時 start-無-done = 待冪等補做。
-export async function actionStart(root, id, action) { await appendJournal(root, { ev: 'action.start', id, action }); }
-export async function actionDone(root, id, action, result) { await appendJournal(root, { ev: 'action.done', id, action, result }); }
 
 // mid-task 檢查點（修「開發中當機就重跑整個 task」）：worker 跑到某 TDD 相 / 整合階段時記一筆。
 // append-only、輕量（一行 journal）、崩潰安全。冷啟動 reconstruct 取每 task「最新一筆」→ 重啟只接著沒做完的相、
@@ -843,8 +839,9 @@ export function extractReqBlock(reqMd, id) {
 // 純函式：組裝 wave-plan（波次拓樸 + 每 task 逐字 REQ 文字 + UI 投餵）。任一拓樸無解或承接 REQ 抽不到區塊 → problems 非空。
 // reqText 逐字來自凍結 requirements.md（呼叫端 CLI 先過 reqHashProblem 確保是凍結版）＝同 task＋同凍結 spec →
 // worker 收到的規格文字逐 byte 相同（堵 H10：worker 各自 re-read 讀到漂移版本）。glob 前綴（REQ-PERF-*）不抽區塊、跳過。
-// uiCtx（選填，呼叫端在原型存在且過 mockupHashProblem 後給）：{ designBase, tokensCss, mockupDir, mockupAggHash }——
-// 逐字投餵機制延伸到 UI：tokens.css 原文＋per-task mockupPages（自 manifest）一路帶到 dispatch，
+// uiCtx（選填，呼叫端在原型存在且過 mockupHashProblem 後給）：{ designBase, tokensPath, mockupDir, mockupAggHash }——
+// C-7：tokens.css 不再逐字塞進 wave-plan（全文常駐 trace 檔太肥）——改存 tokensPath 路徑契約，orchestrator
+// dispatch 當下自行讀檔組 args.ui.tokensCss；per-task mockupPages（自 manifest）仍照舊一路帶到 dispatch，
 // 堵「REQ 文字防漂移做滿、定版 mockup 卻整段不在投餵清單」的斷鏈（worker 憑通用建議另起爐灶）。
 export function buildWavePlan(manifest, deliveredSet, tasksMd, reqMd, reqIndex, uiCtx = null) {
   const { waves, warnings, problems } = computeWaves(manifest, deliveredSet);
@@ -872,7 +869,7 @@ export function buildWavePlan(manifest, deliveredSet, tasksMd, reqMd, reqIndex, 
     manifestHash: manifestScopeHash(manifest),
     reqHash: sha256Text(reqMd || ''),
     reqIndexHash: (reqIndex && reqIndex.reqHash) || '',
-    ...(uiCtx ? { ui: { designBase: uiCtx.designBase || '', tokensCss: uiCtx.tokensCss || '', mockupDir: uiCtx.mockupDir || 'specs/ui-mockups', mockupAggHash: uiCtx.mockupAggHash || '' } } : {}),
+    ...(uiCtx ? { ui: { designBase: uiCtx.designBase || '', tokensPath: uiCtx.tokensPath || '', mockupDir: uiCtx.mockupDir || 'specs/ui-mockups', mockupAggHash: uiCtx.mockupAggHash || '' } } : {}),
     waves: detailWaves, warnings, problems: [],
   };
 }
@@ -1535,18 +1532,15 @@ export async function reconstruct(root) {
   for (const l of await listLedger(root)) { if (!l.id) continue; tasks[l.id] = { ...(tasks[l.id] || { id: l.id }), ...l }; seen(l.id); }
 
   const journal = await readJournal(root);
-  const open = new Map();   // action.start 沒對應 action.done；key=id|action → 並行各自獨立、不互蓋
   const checkpoints = {};   // 每 task 的最新 checkpoint（時序後者覆蓋前者）→ mid-task 接續「上次做到第幾步」
   for (const e of journal) {
-    if (e.ev === 'action.start') open.set(e.id + '|' + e.action, { id: e.id, action: e.action });
-    else if (e.ev === 'action.done') open.delete(e.id + '|' + e.action);
-    else if (e.ev === 'checkpoint' && e.id) checkpoints[e.id] = { phase: e.phase || '', note: e.note || '', at: e.at || e.t || '' };
+    if (e.ev === 'checkpoint' && e.id) checkpoints[e.id] = { phase: e.phase || '', note: e.note || '', at: e.at || e.t || '' };
   }
   // 半寫的最後一行 journal 會被 readJournal 丟掉 → 退回前一個 checkpoint（寧可接續較早的相、不可跳過沒做完的）。
   for (const id of Object.keys(checkpoints)) { if (tasks[id]) tasks[id].checkpoint = checkpoints[id]; }
   const lessons = (await readLessons(root)).filter(L => !L.stale && (tasks[L.id] || {}).state !== 'delivered');
   const mode = (manifest && manifest.mode) || (stateJson && stateJson.mode) || 'manual';   // 優先 git-tracked manifest（換機 clone 後自駕不掉回 manual）；相容舊的 state.json.mode
-  return { manifest, tasks, order, dangling: [...open.values()], journalLength: journal.length, lessons, mode };
+  return { manifest, tasks, order, journalLength: journal.length, lessons, mode };
 }
 
 // 下一個可推進 task：非 delivered/needs-decision、且 blockedBy 已全 delivered（純函式；resume 與 hook 共用）。
@@ -1608,7 +1602,6 @@ export function summarizeView(view) {
     L.push('', '⏳ 上次做到第幾步（接續只補沒做完的相、別重做整個 task、別覆蓋半成品）：');
     for (const t of building) L.push(`   - ${t.id}：${t.checkpoint.phase}${t.checkpoint.note ? `（${t.checkpoint.note}）` : ''}`);
   }
-  if ((view.dangling || []).length) { L.push('', '↻ 未完成動作（對帳會冪等補做）：'); for (const d of view.dangling) L.push(`   - ${d.id} → ${d.action}`); }
   if ((view.lessons || []).length) { L.push('', '⚠️ 已知死路（再生計畫別重走、見 .flow/lessons.ndjson）：'); for (const ls of view.lessons) L.push(`   - ${ls.id}：${ls.failedApproach || '?'} ✗ ${ls.why || ''}`); }
   const next = pickNext(view);
   L.push('', `下一步：${next ? `推進 ${next.id}（${next.state} → 下一階段）` : (need.length ? '等你決策後才有得做' : '無可推進（全部完成或卡依賴）')}`);
@@ -1628,14 +1621,12 @@ export function briefStatus(view) {
   }
   const phase = (view && view.manifest && view.manifest.phase) || '?';
   const allDelivered = tasks.length > 0 && c.delivered === tasks.length;
-  const danglingN = (view && view.dangling && view.dangling.length) || 0;
-  const hasWork = !!pickNext(view) || c.needsDecision > 0 || (allDelivered && phase !== 'shipped') || danglingN > 0;
+  const hasWork = !!pickNext(view) || c.needsDecision > 0 || (allDelivered && phase !== 'shipped');
   if (!hasWork) return { hasWork: false, line: '' };
   const bits = [];
   if (c.building) bits.push(`開發中 ${c.building}`);
   if (c.pending) bits.push(`待開發 ${c.pending}`);
   if (c.needsDecision) bits.push(`⚠️ ${c.needsDecision} 個等你決策`);
-  if (danglingN) bits.push(`↻ ${danglingN} 個未完成動作`);
   if (allDelivered && phase !== 'shipped') bits.push('task 全交付、待驗證/出貨');
   return { hasWork: true, line: `⚡ 有未完成的 Flow（phase=${phase}${bits.length ? '；' + bits.join('、') : ''}）→ 打 /flow-resume 看完整進度並接續。` };
 }
@@ -1645,14 +1636,14 @@ export function briefStatus(view) {
 // 「檔案在、沒接線」＝閘門形同虛設（flow-auto-gate 漏接線的實證教訓）。純函式，動作交呼叫端。
 // C-3①②：commit/auto/spec 三道閘門與 design-base-hint 提示器經 flow-dispatch 合併呼叫、**不直接註冊** settings.json（省 spawn），
 // 故從直接接線檢查豁免；改由 dispatchWiringProblems 驗「flow-dispatch.mjs 真的引用它們」——防「合併後漏掉＝靜默失效」（同 W0-1 教訓）。
-const WIRING_EXEMPT = new Set(['flow-precommit.mjs', 'flow-commit-gate.mjs', 'flow-auto-gate.mjs', 'flow-spec-gate.mjs', 'flow-design-base-hint.mjs']);
+const WIRING_EXEMPT = new Set(['flow-precommit.mjs', 'flow-commit-gate.mjs', 'flow-auto-gate.mjs', 'flow-spec-gate.mjs', 'flow-design-base-hint.mjs', 'flow-git-guardrail.mjs']);
 export function hookWiringProblems(hookFiles, settingsText) {
   const txt = String(settingsText || '');
   return (hookFiles || [])
     .filter((f) => /^flow-.+\.mjs$/.test(f) && !f.endsWith('.test.mjs') && !WIRING_EXEMPT.has(f))
     .filter((f) => !txt.includes(f));
 }
-export const DISPATCHED_GATES = ['flow-commit-gate.mjs', 'flow-auto-gate.mjs', 'flow-spec-gate.mjs'];
+export const DISPATCHED_GATES = ['flow-commit-gate.mjs', 'flow-auto-gate.mjs', 'flow-spec-gate.mjs', 'flow-git-guardrail.mjs'];
 // C-3②：非阻擋提示器也併進 dispatch——漏引用只是靜默少提醒（非閘門失守），但一樣要對賬出來。
 export const DISPATCHED_HINTS = ['flow-design-base-hint.mjs'];
 // 回 flow-dispatch.mjs 沒引用的檔名（空＝閘門與提示器都在）。純函式；dispatchSrc = flow-dispatch.mjs 全文。

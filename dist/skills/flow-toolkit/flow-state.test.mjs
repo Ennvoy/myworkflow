@@ -441,6 +441,30 @@ test('spec-ready --freeze：走原型路須有 ui-signoff 定版記錄，缺檔 
   });
 });
 
+test('spec-ready --freeze 重凍結：沿用舊 ui-signoff → exit 2（新鮮度）；重記 signoff → 過（逼重定版必重新走查）', async () => {
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [] });
+    await writeReq(root, READY_REQ);
+    run(['project-type', 'web-app'], root);
+    await writeMockups(root, '<h2>REQ-E2E-001</h2><a href="login.html">走</a>', { 'login.html': PAGE_OK.replace('../app.js', 'app.js') });
+    await writeFile(path.join(root, 'specs', 'ui-mockups', 'app.js'), 'const db = {};', 'utf8');
+    await passLenses(root);
+    run(['decision', 'ui-signoff', '--choice', '方向 OK', '--why', 'x'], root);
+    assert.equal(run(['spec-ready', '--freeze'], root).code, 0, '首次凍結');
+    // 原地修 mockup（模擬需求修正）→ 本週期 lens 重新收斂 → 沿用首次的舊 signoff 重凍結 → 擋
+    await writeFile(path.join(root, 'specs', 'ui-mockups', 'login.html'), PAGE_OK.replace('../app.js', 'app.js') + '<!-- 修正 -->', 'utf8');
+    await passLenses(root);
+    const r = run(['spec-ready', '--freeze'], root);
+    assert.equal(r.code, 2, '舊拍板不得重複過關');
+    assert.match(r.err, /早於（或等於）上次凍結/);
+    // 使用者重新走查後重記 signoff → 重凍結放行、mockup-index 更新為新內容
+    run(['decision', 'ui-signoff', '--choice', '修正後 OK', '--why', '重新走查'], root);
+    const r2 = run(['spec-ready', '--freeze'], root);
+    assert.equal(r2.code, 0, r2.err);
+    assert.equal(S.mockupHashProblem(await S.readMockupIndex(root), await S.mockupFileHashes(root)), null, '重凍結後快照對新內容');
+  });
+});
+
 test('design-base：落檔 manifest+state.json；非法 slug → exit 1（補文件空話的實作）', async () => {
   await withRoot(async (root) => {
     await S.init(root, { project: 'p', tasks: [] });

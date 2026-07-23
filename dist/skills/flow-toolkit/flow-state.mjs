@@ -1257,10 +1257,19 @@ switch (cmd) {
       }
       // UI 定版記錄（走了原型路才要求）：使用者彈窗定版後 SHALL 留檔——機器證明不了「使用者真點過」，
       // 但「沒有定版記錄就凍結」從此擋得住（decision 檔可由模型自寫屬蓄意欺騙級，靠彈窗雙寫＋git 審計線兜底）。
-      if (existsSync(path.join(root, mockDirRel)) && !decisionExists('ui-signoff')) {
-        console.error('✗ 互動原型存在但查無 UI 定版記錄——使用者照走查台點完、彈窗定版後 SHALL 留檔：');
-        console.error('  flow-state decision ui-signoff --choice "<方向 OK/改了哪幾頁後 OK>" --why "<使用者原話>"');
-        process.exit(2);
+      if (existsSync(path.join(root, mockDirRel))) {
+        if (!decisionExists('ui-signoff')) {
+          console.error('✗ 互動原型存在但查無 UI 定版記錄——使用者照走查台點完、彈窗定版後 SHALL 留檔：');
+          console.error('  flow-state decision ui-signoff --choice "<方向 OK/改了哪幾頁後 OK>" --why "<使用者原話>"');
+          process.exit(2);
+        }
+        // 重定版新鮮度：ui-signoff SHALL 嚴格晚於上次凍結——堵「舊拍板重複過關」＋「修正改到正典目錄外、
+        // 使用者沒重新走查就重凍結」（重走查一定看 specs/ui-mockups/ 的走查台，改錯地方當場人眼抓包）。
+        const soStale = S.uiSignoffFreshProblem((await S.readDecision(root, 'ui-signoff')).at, S.lastFrozenAt(journal0));
+        if (soStale) {
+          console.error('✗ ' + soStale);
+          process.exit(2);
+        }
       }
       const st = await S.readStateJson(root);
       await S.writeStateJson(root, { ...st, phase: 'spec-done' });        // read-modify-write，保留 mode/tasks/verify/tdd

@@ -732,6 +732,14 @@ test('mockupHashProblem：無 index 向後相容放行；相符 null；改動/�
   assert.match(S.mockupHashProblem({ files }, files), /損毀/, '缺 aggHash＝索引損毀要明講');
 });
 
+test('uiSignoffFreshProblem：首次凍結放行；重凍結需 signoff 嚴格晚於上次凍結；at 缺失明講', () => {
+  assert.equal(S.uiSignoffFreshProblem('2026-01-01T00:00:00Z', ''), null, '從未凍結＝首次，存在檢查已足夠');
+  assert.equal(S.uiSignoffFreshProblem('2026-01-02T00:00:00Z', '2026-01-01T00:00:00Z'), null, '晚於上次凍結＝重新走查過');
+  assert.match(S.uiSignoffFreshProblem('2026-01-01T00:00:00Z', '2026-01-02T00:00:00Z'), /早於（或等於）上次凍結/, '舊拍板重複過關要擋');
+  assert.match(S.uiSignoffFreshProblem('2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'), /早於（或等於）上次凍結/, '同刻＝未重新拍板');
+  assert.match(S.uiSignoffFreshProblem('', '2026-01-01T00:00:00Z'), /缺 at 時戳/, '損毀/舊格式要指路重記');
+});
+
 test('mockupFileHashes：只收文字資產、遞迴子目錄、行尾正規化（autocrlf 不算漂移）', async () => {
   await withRoot(async (root) => {
     const dir = path.join(root, 'specs', 'ui-mockups');

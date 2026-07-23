@@ -45,3 +45,5 @@
 {"t":"2026-07-23T10:07:38.479Z","ev":"verify.attempt","id":"c:/users/ennvoy.lin/desktop/workflow|node dist/hooks/*.test.mjs 2>&1 | grep \"^. tests|^. pass|^. fail|✖\" | head","sig":"ok","exit":0}
 {"t":"2026-07-23T10:43:03.372Z","ev":"verify.attempt","id":"c:/users/ennvoy.lin/desktop/workflow|grep \"tests [0-9]+|pass [0-9]+|fail [0-9]+\" \"$temp/hooks-test.log\" | tail","sig":"ok","exit":0}
 {"t":"2026-07-23T10:43:28.428Z","ev":"verify.attempt","id":"c:/users/ennvoy.lin/desktop/workflow|grep \"tests [0-9]+|pass [0-9]+|fail [0-9]+\" \"$temp/final-suite.log\" | tail","sig":"ok","exit":0}
+{"t":"2026-07-23T15:08:41.752Z","ev":"verify.attempt","id":"node dist/skills/flow-toolkit/statelib.test.mjs dist/skills/flow-toolkit/flow-state.test.mjs dist/skills/flow-toolkit/ui-compare-capture.test.mjs dist/skills/flow-toolkit/clean-verify-artifacts.test.m","sig":"ok","exit":0}
+{"t":"2026-07-23T15:09:23.458Z","ev":"verify.attempt","id":"node dist/hooks/flow-stall-monitor.test.mjs dist/hooks/precommit-install.test.mjs dist/hooks/flow-precompact.test.mjs dist/hooks/flow-size-check.test.mjs dist/hooks/flow-stop-gate.test.mjs dist/hooks/","sig":"ok","exit":0}

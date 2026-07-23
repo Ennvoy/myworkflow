@@ -1335,6 +1335,18 @@ export function mockupChainProblem({ dirExists, index, frozen, waived }) {
   if (frozen && !waived) return '互動原型已定版凍結（mockup-index/journal 有記錄）但 specs/ui-mockups/ 目錄消失——「刪目錄＝靜默關閉整條 UI 鏈」已封死：還原目錄（git checkout -- specs/ui-mockups），或使用者拍板 flow-state decision mockup-waiver 留檔。';
   return null;
 }
+// ── ui-signoff 新鮮度（spec-ready --freeze 重定版用，純函式）──
+// 病根：--freeze 只驗 ui-signoff「存在」，首次定版留的舊拍板可在重凍結時無限重複過關——
+// 「使用者重新走查」這步是散文、沒有機檢；更陰險的路：模型把 mockup 修正改到 specs/ui-mockups/ 之外
+// → 正典目錄零漂移、全鏈閘門不響、修正無聲蒸發。修法：重凍結（曾有 spec.frozen）時要求 decision 時戳
+// 嚴格晚於上次凍結——逼每次重定版都重新走查拍板；走查台只從 specs/ui-mockups/ 長出來（mockup-check／
+// 截圖器只認此目錄），修正若落在別處，使用者重走查當場看到「沒有修正的舊畫面」抓包。
+export function uiSignoffFreshProblem(decisionAt, lastFrozen) {
+  if (!lastFrozen) return null;                      // 首次凍結：存在檢查已足夠
+  if (!decisionAt) return 'ui-signoff 定版記錄缺 at 時戳（舊格式/損毀）——重凍結需重新走查：請使用者重新點過走查台後重記 flow-state decision ui-signoff。';
+  if (String(decisionAt) > String(lastFrozen)) return null;
+  return 'ui-signoff 定版記錄早於（或等於）上次凍結——重凍結沿用舊拍板已封死：mockup 修正 SHALL 原地改 specs/ui-mockups/（禁另開目錄/副本），過 mockup-check、開走查台請使用者重新點過、重記 flow-state decision ui-signoff 後再 --freeze。';
+}
 // token 引用比對（詞界版）：--gray-1 不誤中 --gray-10、--font 不誤中 --font-size——
 // 裸 includes 會把「另創撞前綴的色階」誤判成「已沿用」，正是本閘門要擋的路（與 reqTaskCoverage 防 REQ-1 誤配 REQ-10 同根因）。
 // 負向前瞻字元集與 extractCssVars 的變數名字元集一致。

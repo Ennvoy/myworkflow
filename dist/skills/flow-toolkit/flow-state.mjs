@@ -1029,11 +1029,15 @@ switch (cmd) {
             if (uf.head && headNow && uf.head !== headNow) fails.push('ui-fidelity 記錄不是當前 HEAD（驗的是舊 code）——重跑 flow-state ui-fidelity（秒級）。');
           }
           // 視覺比對逐頁對賬（uiCompareProblems）：ui-fidelity 只驗 token 沿用，這裡補「版面像不像」的機讀底線。
+          // 實作端新鮮度只在 ship 出口驗（wave 首件檢驗不驗——開發中 HEAD 逐 task 前進，逐 commit 重判會鎖死）。
           if (existsSync(path.join(root, '.flow', 'decisions', 'ui-compare-waiver.json'))) {
             console.log('⚠ ui-compare-waiver 生效——視覺比對逐頁對賬已降級，版面忠實度全靠人工對照，別讓豁免變常態。');
           } else {
             const uiCmp = await S.readUiCompare(root);
-            fails.push(...S.uiCompareProblems({ pages: S.mockupPageList(ccIdx), records: uiCmp && uiCmp.pages, aggHashNow: S.mockupAggHash(ccHashes) }));
+            fails.push(...S.uiCompareProblems({
+              pages: S.mockupPageList(ccIdx), records: uiCmp && uiCmp.pages, aggHashNow: S.mockupAggHash(ccHashes),
+              headNow: gitHead(root), srcChangedSince: (h) => sourceChanged(gitDiffNames(root, h)),
+            }));
           }
         }
       }

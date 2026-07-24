@@ -1416,10 +1416,19 @@ export async function writeUiCompareRecord(root, pageRel, rec) {
   await writeJSON(uiComparePath(root), { pages, at: nowISO() });
 }
 // complete-check 用純函式：逐頁對賬 mockupPageList（分母）vs ui-compare.json 記錄（records key 大小寫不敏感）。
-export function uiCompareProblems({ pages, records, aggHashNow }) {
+// 實作端新鮮度（選配，headNow＋srcChangedSince 有給才驗；wave 首件檢驗不給＝開發中不逐 commit 重判）：
+// 病根：pass 記錄綁 mockupAggHash 只抓「原型端」重定版，視覺 pass 後再改實作頁面＝舊合格證永遠有效、
+// 版面漂離 mockup 無機器抓——verify-e2e/perf/code-review 都有「HEAD 之後真原始碼改過＝驗舊 code」對賬，
+// 唯獨這裡漏裝。修法：鏡射同款（sourceChanged 過濾測試/文件/.flow；無 head 舊記錄/n-a/git 失敗跳過＝fail-open 相容）。
+export function uiCompareProblems({ pages, records, aggHashNow, headNow, srcChangedSince }) {
   const byKey = new Map();
   for (const [k, v] of Object.entries(records || {})) byKey.set(normPath(k).toLowerCase(), v);
   const problems = [];
+  const srcCache = new Map();          // 同 head 多頁共用一次 git 查詢
+  const changedSince = (h) => {
+    if (!srcCache.has(h)) srcCache.set(h, (srcChangedSince && srcChangedSince(h)) || []);
+    return srcCache.get(h);
+  };
   for (const page of (pages || [])) {
     const rec = byKey.get(normPath(page).toLowerCase());
     if (!rec) {
@@ -1428,6 +1437,9 @@ export function uiCompareProblems({ pages, records, aggHashNow }) {
       problems.push(`「${page}」視覺比對 FAIL（${rec.note || ''}）——修版面後重截重判`);
     } else if (rec.mockupAggHash !== aggHashNow) {
       problems.push(`「${page}」的視覺比對判的是舊版原型（mockup 已重定版）——重跑 capture＋重判`);
+    } else if (String(rec.status).toLowerCase() === 'pass' && rec.head && headNow && rec.head !== headNow) {
+      const src = changedSince(rec.head);
+      if (src.length) problems.push(`「${page}」的視覺比對之後原始碼又改過（${src.slice(0, 5).join('、')}${src.length > 5 ? `…等 ${src.length} 檔` : ''}）——實作端可能已漂離 mockup，重跑 capture＋重判`);
     }
   }
   return problems;

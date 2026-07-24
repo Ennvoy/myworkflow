@@ -1723,6 +1723,24 @@ test('uiCompareProblems：無記錄/FAIL/舊 agg 逐頁點名；全 pass+n-a 且
   assert.deepEqual(S.uiCompareProblems({ pages, records: okRecords, aggHashNow: 'new' }), [], '全 pass/n-a 且 agg 相符 → 空陣列');
 });
 
+test('uiCompareProblems 實作端新鮮度：pass 後真原始碼改過 → 判舊；只改測試/文件不擾動；無 head/n-a/未注入一律跳過（相容）', () => {
+  const pages = ['pages/a.html', 'pages/b.html', 'pages/c.html', 'pages/d.html'];
+  const records = {
+    'pages/a.html': { status: 'pass', mockupAggHash: 'agg', head: 'old1234' },
+    'pages/b.html': { status: 'pass', mockupAggHash: 'agg', head: 'old1234' },
+    'pages/c.html': { status: 'pass', mockupAggHash: 'agg' },                       // 舊記錄無 head
+    'pages/d.html': { status: 'n/a', mockupAggHash: 'agg', head: 'old1234', decision: 'D-1' },
+  };
+  let calls = 0;
+  const flagged = S.uiCompareProblems({ pages, records, aggHashNow: 'agg', headNow: 'new5678', srcChangedSince: (h) => { calls++; return ['src/app.jsx']; } });
+  assert.equal(flagged.length, 2, '兩張帶 head 的 pass 判舊；無 head 與 n/a 跳過');
+  assert.match(flagged[0], /原始碼又改過.*src\/app\.jsx/);
+  assert.equal(calls, 1, '同 head 多頁共用一次 git 查詢（memoize）');
+  assert.equal(S.uiCompareProblems({ pages, records, aggHashNow: 'agg', headNow: 'new5678', srcChangedSince: () => [] }).length, 0, '只改測試/文件（過濾後空）不擾動');
+  assert.equal(S.uiCompareProblems({ pages, records, aggHashNow: 'agg', headNow: 'old1234', srcChangedSince: () => ['src/x.js'] }).length, 0, 'HEAD 未動不驗');
+  assert.equal(S.uiCompareProblems({ pages, records, aggHashNow: 'agg' }).length, 0, '未注入 headNow/callback（wave 首件檢驗）＝行為不變');
+});
+
 test('writeUiCompareRecord/readUiCompare：read-merge-write，同頁覆寫、他頁保留', async () => {
   await withRoot(async (root) => {
     await S.init(root, { project: 'p', tasks: [] });

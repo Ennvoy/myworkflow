@@ -732,12 +732,25 @@ test('mockupHashProblem：無 index 向後相容放行；相符 null；改動/�
   assert.match(S.mockupHashProblem({ files }, files), /損毀/, '缺 aggHash＝索引損毀要明講');
 });
 
-test('uiSignoffFreshProblem：首次凍結放行；重凍結需 signoff 嚴格晚於上次凍結；at 缺失明講', () => {
-  assert.equal(S.uiSignoffFreshProblem('2026-01-01T00:00:00Z', ''), null, '從未凍結＝首次，存在檢查已足夠');
-  assert.equal(S.uiSignoffFreshProblem('2026-01-02T00:00:00Z', '2026-01-01T00:00:00Z'), null, '晚於上次凍結＝重新走查過');
-  assert.match(S.uiSignoffFreshProblem('2026-01-01T00:00:00Z', '2026-01-02T00:00:00Z'), /早於（或等於）上次凍結/, '舊拍板重複過關要擋');
-  assert.match(S.uiSignoffFreshProblem('2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'), /早於（或等於）上次凍結/, '同刻＝未重新拍板');
-  assert.match(S.uiSignoffFreshProblem('', '2026-01-01T00:00:00Z'), /缺 at 時戳/, '損毀/舊格式要指路重記');
+test('uiSignoffProblem：at 缺失/非 ISO/未來擋；重凍結需嚴格晚於上次凍結；內容綁定（含首次凍結）；全對放行', () => {
+  const ok = { at: '2026-01-02T00:00:00Z', mockupAggHash: 'H' };
+  assert.equal(S.uiSignoffProblem(ok, { lastFrozen: '', aggHashNow: 'H' }), null, '首次凍結＋指紋相符放行');
+  assert.equal(S.uiSignoffProblem(ok, { lastFrozen: '2026-01-01T00:00:00Z', now: '2026-01-03T00:00:00Z', aggHashNow: 'H' }), null, '晚於上次凍結＋同指紋放行');
+  assert.match(S.uiSignoffProblem({}, {}), /缺 at 時戳/, '空 decision（裸寫）擋');
+  assert.match(S.uiSignoffProblem({ at: 'zzzz' }, {}), /非 ISO 格式/, '怪字串時戳永遠比較晚——擋');
+  assert.match(S.uiSignoffProblem({ at: '2999-01-01T00:00:00Z' }, { now: '2026-01-02T00:00:00Z' }), /在未來/, '未來年份時戳擋');
+  assert.match(S.uiSignoffProblem(ok, { lastFrozen: '2026-01-05T00:00:00Z' }), /早於（或等於）上次凍結/, '舊拍板重複過關擋');
+  assert.match(S.uiSignoffProblem(ok, { lastFrozen: ok.at }), /早於（或等於）上次凍結/, '同刻＝未重新拍板');
+  assert.match(S.uiSignoffProblem(ok, { aggHashNow: 'H2' }), /簽的不是現行這份 mockup/, '簽名後原型又被改＝內容不符擋（F4）');
+  assert.match(S.uiSignoffProblem({ at: ok.at }, { aggHashNow: 'H' }), /未綁 mockup 指紋/, '舊版無指紋記錄指路重簽');
+  assert.equal(S.uiSignoffProblem({ at: ok.at }, { lastFrozen: '' }), null, '非 web／無原型（不給 aggHashNow）不驗內容');
+});
+
+test('captureHeadProblem：截圖 HEAD ≠ 現在擋（舊圖領新證）；相同/任一端非 git 放行', () => {
+  assert.match(S.captureHeadProblem('aaa1111', 'bbb2222'), /舊版工程的畫面/, '不重截只重跑 pass——擋（F2）');
+  assert.equal(S.captureHeadProblem('aaa1111', 'aaa1111'), null, '同版放行');
+  assert.equal(S.captureHeadProblem('', 'bbb2222'), null, '非 git 相容');
+  assert.equal(S.captureHeadProblem('aaa1111', ''), null, '非 git 相容');
 });
 
 test('mockupFileHashes：只收文字資產、遞迴子目錄、行尾正規化（autocrlf 不算漂移）', async () => {

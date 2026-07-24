@@ -73,7 +73,7 @@ mockup ≠ 幾頁靜態圖靠想像。產的是**零依賴互動原型**：可�
 4. **主動開瀏覽器**把走查台送到使用者眼前（mac `open <url>` / Windows `Start-Process <url>` / Linux `xdg-open <url>`；0 摩擦，避免被滑過）。
 5. `AskUserQuestion` 收方向：「照走查台把 journey 點完了嗎？方向 OK / 某幾頁要改 / 整個方向錯」。**改到使用者點頭才凍結**，點頭後 SHALL `flow-state decision ui-signoff --choice "<方向 OK/改哪幾頁後 OK>" --why "<使用者原話>"` 留定版記錄（`--freeze` 對賬，缺檔凍不了）。後續 plan/build 以原型為錨點反推 API/DB（build 沿用其 markup/tokens、把假資料層換真 API）。**選用的品牌基底 slug SHALL `flow-state design-base <slug|none>` 落檔**（寫 manifest＋state.json；**禁寫進 requirements.md**——凍結前任何一行後改都會讓 lens 末輪 docHash 失效、逼重跑）；`wave --compute` 會把它連同原型 `tokens.css` 逐字帶給 build worker。
 
-6. **修正鐵則（原地改，唯一正典）**：定版前後任何 mockup 修正 SHALL **原地修改 `specs/ui-mockups/` 既有檔案**——**禁另開目錄/副本/v2/暫存區**。整條驗證鏈（凍結分母、走查台、截圖、ui-compare）只認這個目錄：改到別處＝正典零漂移、閘門全不響、修正無聲蒸發。定版後的修正走重定版短路：原地改 → `mockup-check` → 開走查台請使用者**重新點過** → 重記 `ui-signoff` → `spec-ready --freeze`；`--freeze` 會機檢 ui-signoff 時戳**嚴格晚於上次凍結**（舊拍板重複過關已封死）。
+6. **修正鐵則（原地改，唯一正典）**：定版前後任何 mockup 修正 SHALL **原地修改 `specs/ui-mockups/` 既有檔案**——**禁另開目錄/副本/v2/暫存區**。整條驗證鏈（凍結分母、走查台、截圖、ui-compare）只認這個目錄：改到別處＝正典零漂移、閘門全不響、修正無聲蒸發。定版後的修正走重定版短路：原地改 → `mockup-check` → 開走查台請使用者**重新點過** → 重記 `ui-signoff` → `spec-ready --freeze`；`--freeze` 會機檢 ui-signoff 時戳**嚴格晚於上次凍結**＋**簽名快照的 mockup 指紋＝要凍結的這份**（舊拍板重複過關、簽完再偷改原型都已封死）；requirements 未變的 mockup-only 重定版，lens 沿用既有同文審查證明、不必重跑。
 
 > 例外：`cli`/`api`/純後端跳過整個 Step 5（Step 1 落檔的非 web enum 本身即豁免記錄）；**web 類**使用者明說「跳過 mockup」才可豁免，SHALL `flow-state decision mockup-waiver --choice "跳過互動原型" --why "<使用者原話>"` 留檔（**不是寫進 `### 開放問題`**——那會被 spec-ready 閘門擋住凍結），並警告「整體方向風險押到 build 才暴露」。`--freeze` 機檢：web 類無 `specs/ui-mockups/` 且無 mockup-waiver 檔 → exit 2（「不建目錄＝靜默豁免」已封死）。
 

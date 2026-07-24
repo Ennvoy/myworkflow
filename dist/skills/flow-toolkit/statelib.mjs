@@ -742,8 +742,9 @@ export function planManifestDiff(tasksMd, manifest) {
   return problems;
 }
 
-export async function writePlanCheck(root, manifest, head) {
-  await writeJSON(planCheckPath(root), { manifestHash: manifestScopeHash(manifest), head: head || '', at: nowISO() });
+export async function writePlanCheck(root, manifest, head, mockupAggHash) {
+  // mockupAggHash（Codex F6）：計畫綁原型版本——重定版後舊計畫（新頁無 task 承接）在 complete-check 被抓。
+  await writeJSON(planCheckPath(root), { manifestHash: manifestScopeHash(manifest), head: head || '', ...(mockupAggHash ? { mockupAggHash } : {}), at: nowISO() });
 }
 export async function readPlanCheck(root) { return readJSON(planCheckPath(root), null); }
 
@@ -1335,17 +1336,32 @@ export function mockupChainProblem({ dirExists, index, frozen, waived }) {
   if (frozen && !waived) return '互動原型已定版凍結（mockup-index/journal 有記錄）但 specs/ui-mockups/ 目錄消失——「刪目錄＝靜默關閉整條 UI 鏈」已封死：還原目錄（git checkout -- specs/ui-mockups），或使用者拍板 flow-state decision mockup-waiver 留檔。';
   return null;
 }
-// ── ui-signoff 新鮮度（spec-ready --freeze 重定版用，純函式）──
-// 病根：--freeze 只驗 ui-signoff「存在」，首次定版留的舊拍板可在重凍結時無限重複過關——
-// 「使用者重新走查」這步是散文、沒有機檢；更陰險的路：模型把 mockup 修正改到 specs/ui-mockups/ 之外
-// → 正典目錄零漂移、全鏈閘門不響、修正無聲蒸發。修法：重凍結（曾有 spec.frozen）時要求 decision 時戳
-// 嚴格晚於上次凍結——逼每次重定版都重新走查拍板；走查台只從 specs/ui-mockups/ 長出來（mockup-check／
-// 截圖器只認此目錄），修正若落在別處，使用者重走查當場看到「沒有修正的舊畫面」抓包。
-export function uiSignoffFreshProblem(decisionAt, lastFrozen) {
-  if (!lastFrozen) return null;                      // 首次凍結：存在檢查已足夠
-  if (!decisionAt) return 'ui-signoff 定版記錄缺 at 時戳（舊格式/損毀）——重凍結需重新走查：請使用者重新點過走查台後重記 flow-state decision ui-signoff。';
-  if (String(decisionAt) > String(lastFrozen)) return null;
-  return 'ui-signoff 定版記錄早於（或等於）上次凍結——重凍結沿用舊拍板已封死：mockup 修正 SHALL 原地改 specs/ui-mockups/（禁另開目錄/副本），過 mockup-check、開走查台請使用者重新點過、重記 flow-state decision ui-signoff 後再 --freeze。';
+// ── ui-signoff 定版記錄總驗（spec-ready --freeze 用，純函式）──
+// v0.35 只驗「時戳晚於上次凍結」（逼重定版必重新走查；走查台只從 specs/ui-mockups/ 長出來，
+// 修正落在別處會被使用者當場看到舊畫面抓包）。Codex 體檢（F4/F5）補齊三個缺角：
+// ① at 缺失/非 ISO/未來日期——裸寫 decision 塞 "zzzz" 或未來年份可永遠「比較晚」；
+// ② 簽名未綁內容——時戳只證「何時簽」、不證「簽的是這份 mockup」：簽完再改 mockup 再凍結，
+//    使用者沒走查過的內容會被凍結。修法：decision 落檔時快照 mockupAggHash、凍結時要求與現行相等。
+// 檢查順序：at 缺失 → 格式 → 未來 → 新鮮度（重凍結才驗）→ 內容綁定（有原型即驗，含首次凍結）。
+export function uiSignoffProblem(decision, { lastFrozen, now, aggHashNow } = {}) {
+  const at = decision && decision.at;
+  if (!at) return 'ui-signoff 定版記錄缺 at 時戳（裸寫/損毀）——請使用者重新走查後經正門重記 flow-state decision ui-signoff。';
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/.test(String(at))) return `ui-signoff 的 at 時戳非 ISO 格式（${at}）——裸寫時戳已封死：使用者重新走查後經正門重記。`;
+  if (now && String(at).slice(0, 10) > String(now).slice(0, 10)) return `ui-signoff 的 at 時戳在未來（${at}）——時鐘遊戲已封死：使用者重新走查後經正門重記。`;
+  if (lastFrozen && String(at) <= String(lastFrozen)) return 'ui-signoff 定版記錄早於（或等於）上次凍結——重凍結沿用舊拍板已封死：mockup 修正 SHALL 原地改 specs/ui-mockups/（禁另開目錄/副本），過 mockup-check、開走查台請使用者重新點過、重記 flow-state decision ui-signoff 後再 --freeze。';
+  if (aggHashNow && (decision.mockupAggHash || '') !== aggHashNow) {
+    return decision.mockupAggHash
+      ? 'ui-signoff 簽的不是現行這份 mockup（簽名後原型又被改過）——使用者沒走查過的內容不得凍結：重新走查後重記 ui-signoff 再 --freeze。'
+      : 'ui-signoff 定版記錄未綁 mockup 指紋（舊版/裸寫記錄）——重記 flow-state decision ui-signoff（CLI 會自動快照現行 mockup hash）後再 --freeze。';
+  }
+  return null;
+}
+// 截圖工程版本對賬（ui-compare pass 用，純函式；Codex F2）：capture manifest 的 head＝截圖當下 commit。
+// pass 時不驗它＝「不重截、只重跑 pass」能讓舊截圖領到新 HEAD 的合格證（rec.head 蓋的是落檔當下）。
+// 任一端非 git（''）跳過（相容）。
+export function captureHeadProblem(manifestHead, headNow) {
+  if (!manifestHead || !headNow || manifestHead === headNow) return null;
+  return `capture.json 截的是舊版工程的畫面（截圖時 ${String(manifestHead).slice(0, 7)} ≠ 現在 ${String(headNow).slice(0, 7)}）——重跑 ui-compare-capture.mjs 重截後再判。`;
 }
 // token 引用比對（詞界版）：--gray-1 不誤中 --gray-10、--font 不誤中 --font-size——
 // 裸 includes 會把「另創撞前綴的色階」誤判成「已沿用」，正是本閘門要擋的路（與 reqTaskCoverage 防 REQ-1 誤配 REQ-10 同根因）。

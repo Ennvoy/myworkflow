@@ -189,8 +189,13 @@ function mockupProblems(r, dirRel) {
   // index 只列 id 文字、一個本地連結都不放，等於整鏈空轉（省事模型最低成本過關路徑），硬擋。
   if (audit.reqIds.length > 0 && audit.hrefs.length === 0)
     problems.push('走查台零本地入口連結——每張 REQ-E2E 卡 SHALL 含入口連結（<a href> 連到本地頁），否則 journey 沒得點＝假走查台');
+  // 目錄圈地（Codex F1）：走查頁與其引用 script SHALL 全部位於 specs/ui-mockups/ 內——
+  // `../` 連到外部野生頁也能過走查＝「mockup 放錯地方」的漏網之路（外部頁不進定版指紋、不進 ui-compare 分母）。
+  const dirResolved = path.resolve(dir);
+  const inMockupDir = (p) => { const rel = path.relative(dirResolved, p); return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel)); };
   for (const h of audit.hrefs) {
     const abs = path.resolve(dir, h);
+    if (!inMockupDir(abs)) { problems.push(`走查台連結逃出 specs/ui-mockups/：${h}——走查頁 SHALL 全部位於正典目錄（原地改鐵則；外部頁不進定版指紋＝之後怎麼改都無人抓）`); continue; }
     if (!existsSync(abs)) { problems.push(`走查台連結 404：${h}（index.html 連到但檔案不存在＝假走查）`); continue; }
     // 空殼頁機檢（W0-8）：連到的每頁 SHALL 引用 app.js 且含互動元素——「有卡但頁面空殼」不算原型
     let page = '';
@@ -200,7 +205,9 @@ function mockupProblems(r, dirRel) {
     for (const sm of page.matchAll(/<script[^>]+src\s*=\s*["']([^"']+)["']/gi)) {
       const src = sm[1];
       if (/^(https?:|\/\/|data:)/i.test(src)) continue;
-      if (!existsSync(path.resolve(path.dirname(abs), src.split(/[?#]/)[0])))
+      const sAbs = path.resolve(path.dirname(abs), src.split(/[?#]/)[0]);
+      if (!inMockupDir(sAbs)) { problems.push(`${h}：引用的 script 逃出 specs/ui-mockups/：${src}（外部腳本不進定版指紋＝改動無人抓）`); continue; }
+      if (!existsSync(sAbs))
         problems.push(`${h}：引用的 script 不存在：${src}（掛了 script 但檔案缺＝假資料層失效、CRUD 無後果）`);
     }
   }
@@ -602,13 +609,24 @@ switch (cmd) {
     // 「使用者彈窗拍板後留檔」，預設記 by:'user'；其餘（自駕 C 類自決）預設 by:'auto'。--by 可明示覆寫。
     const by = flag('--by') || (/waiver|signoff/i.test(rid) ? 'user' : 'auto');
     if (by !== 'user' && by !== 'auto') { console.error('--by 須為 user / auto'); process.exit(1); }
-    // C-8：自駕下 AI 不得自建 waiver/signoff——那等於冒使用者名義關掉一道出貨安全門。改記待決單、收尾彈窗請使用者拍板。
-    if (/waiver|signoff/i.test(rid) && (await S.reconstruct(root)).mode === 'auto') {
-      console.error(`✗ 自駕模式下不可自建豁免/定版單（${rid}）——那等於 AI 冒你的名義關掉一道出貨安全門。`);
+    // C-8：自駕下 AI 不得自建 waiver——那等於冒使用者名義關掉一道出貨安全門。改記待決單、收尾彈窗請使用者拍板。
+    // 例外（Codex F8 解死鎖）：ui-signoff 不在此限——UI 定版本來就是「開走查台→使用者彈窗拍板」的互動正路
+    // （自駕憲法：spec 仍互動定版；重定版重簽同理），擋掉它＝自駕＋web 專案在凍結永久卡死（signoff 建不了、
+    // freeze 又必須要它）。信任邊界與 manual 同級（模型冒簽屬蓄意欺騙級，靠彈窗雙寫＋git 審計線兜底），
+    // 且 freeze 端另有時戳/內容綁定機檢（uiSignoffProblem）。
+    if (/waiver|signoff/i.test(rid) && rid !== 'ui-signoff' && (await S.reconstruct(root)).mode === 'auto') {
+      console.error(`✗ 自駕模式下不可自建豁免單（${rid}）——那等於 AI 冒你的名義關掉一道出貨安全門。`);
       console.error(`  → 改記待決單：flow-state pending add ${rid} --why "<為何需要豁免>"；自駕收尾時會一批彈窗請使用者拍板。`);
       process.exit(2);
     }
-    try { await S.recordDecision(root, rid, { question: flag('--question') || '', choice, why: flag('--why') || '', by }); }
+    if (rid === 'ui-signoff' && (await S.reconstruct(root)).mode === 'auto')
+      console.log('⚠ 自駕模式收 ui-signoff——此決策 SHALL 來自使用者走查後的彈窗拍板（by:user 進審計線），不得由 AI 自簽。');
+    // ui-signoff 簽名綁內容（Codex F4）：落檔當下快照現行 mockup 指紋——freeze 對賬「簽的就是要凍的這份」，
+    // 堵「先簽名→再改 mockup→拿舊簽名蓋章」讓沒走查過的內容被凍結。
+    let signoffExtra = {};
+    if (rid === 'ui-signoff' && existsSync(path.join(root, 'specs', 'ui-mockups')))
+      signoffExtra = { mockupAggHash: S.mockupAggHash(await S.mockupFileHashes(root)) };
+    try { await S.recordDecision(root, rid, { question: flag('--question') || '', choice, why: flag('--why') || '', by, ...signoffExtra }); }
     catch (e) { if (e && e.code === 'UNSAFE_ID') { console.error('✗ ' + e.message); process.exit(1); } throw e; }
     console.log(`✓ ${by === 'user' ? '已記使用者拍板' : '已記自決'}：${rid}：${choice}${flag('--why') ? `（${flag('--why')}）` : ''}`);
     console.log('  審計線在 .flow/journal.ndjson（ev:decision）；最新快照在 .flow/decisions/。使用者可事後翻、要改再說。');
@@ -730,6 +748,7 @@ switch (cmd) {
     // 舊專案相容（BC-2）：目錄在但從未凍結過 mockup-index（本版之前凍結的）→ 檢查結果降級為提醒不擋，
     // 重跑 spec-ready --freeze 落分母後轉硬檢。
     const dp = path.join(root, 'specs', 'design.md');
+    let planMockupAgg = '';
     {
       const mDirExists = existsSync(path.join(root, 'specs', 'ui-mockups'));
       const mIdx = await S.readMockupIndex(root);
@@ -739,6 +758,7 @@ switch (cmd) {
       if (mcp) problems.push(mcp);
       else if (mDirExists) {
         const mHashes = await S.mockupFileHashes(root);
+        planMockupAgg = S.mockupAggHash(mHashes);
         const pageFiles = Object.keys(mHashes).filter(f => /^pages\//i.test(f) && /\.html?$/i.test(f));
         const mCov = S.mockupPageCoverage(S.parseTasksMd(tasksMd), pageFiles);
         const uiProblems = [
@@ -767,7 +787,7 @@ switch (cmd) {
       console.log('\nREQ↔design 對照（人工掃：每條 REQ 在 design.md 有沒有交代）：');
       for (const id of idx.reqIds) console.log(`  ${dmd.includes(id) ? '✓' : '⚠ design 查無'}  ${id}`);
     }
-    await S.writePlanCheck(root, manifest, gitHead(root));
+    await S.writePlanCheck(root, manifest, gitHead(root), planMockupAgg);
     const st = await S.readStateJson(root);
     await S.writeStateJson(root, { ...st, phase: 'plan-done' });
     console.log(`\n✓ 計畫對賬通過：${idx.reqIds.length} 條 REQ 全被 task 承接、tasks.md↔manifest 一致。已落 plan-check.json＋phase="plan-done"。`);
@@ -935,6 +955,13 @@ switch (cmd) {
     // C-23：以下品質閘門「收集全部未達項、最後一次列印」，不逐類 fail-fast——自駕下不必每類多跑一輪「修→重跑→發現下一類」。
     // 結構前置（tasks/requirements/req-index 缺）已在上面 fail-fast（後續分析依賴它們）。
     const fails = [];
+    // 乾淨工作樹（Codex F3）：所有新鮮度對賬都比 commit——未 commit 的原始碼改動對它們全體隱形。
+    // 出貨出口一次堵死：真原始碼（sourceChanged 同款過濾，測試/文件/.flow 不算）有未 commit 變動 → 擋。
+    // 非 git（gitChangedFiles 回 null）fail-open 相容。
+    {
+      const dirtySrc = sourceChanged(gitChangedFiles(root) || []);
+      if (dirtySrc.length) fails.push(`工作樹有未 commit 的原始碼變動（新鮮度檢查對未 commit 改動全體不可見）：${dirtySrc.slice(0, 8).join('、')}${dirtySrc.length > 8 ? `…等 ${dirtySrc.length} 檔` : ''}——先 commit 再跑 complete-check。`);
+    }
     if (!cov.audit.ok) fails.push('REQ-E2E 未全部驗綠：每條 journey 經 /flow-verify 真跑綠後 flow-state verify-e2e <id> --status pass --evidence …；無法自動化標 --status n/a 附原因。');
     const hp = S.reqHashProblem(idx, reqMd);
     if (hp) fails.push(hp);
@@ -1027,7 +1054,12 @@ switch (cmd) {
           else {
             const headNow = gitHead(root);
             if (uf.head && headNow && uf.head !== headNow) fails.push('ui-fidelity 記錄不是當前 HEAD（驗的是舊 code）——重跑 flow-state ui-fidelity（秒級）。');
+            // 原型指紋對賬（Codex F7）：記錄明明存了 mockupAggHash 卻只驗 HEAD——重定版後舊 token audit 可沿用。
+            if ((uf.mockupAggHash || '') !== S.mockupAggHash(ccHashes)) fails.push('ui-fidelity 驗的是舊版原型（mockup 已重定版/被改）——重跑 flow-state ui-fidelity（秒級）。');
           }
+          // 計畫綁原型版本（Codex F6）：重定版後舊 plan-check（新頁無 task 承接對賬）不得沿用。
+          if (pc && !planWaived && (pc.mockupAggHash || '') !== S.mockupAggHash(ccHashes))
+            fails.push('plan-check 是舊版原型的計畫（或舊格式無原型指紋）——mockup 重定版後 SHALL 重跑 flow-state plan-check（新頁承接對賬）。');
           // 視覺比對逐頁對賬（uiCompareProblems）：ui-fidelity 只驗 token 沿用，這裡補「版面像不像」的機讀底線。
           // 實作端新鮮度只在 ship 出口驗（wave 首件檢驗不驗——開發中 HEAD 逐 task 前進，逐 commit 重判會鎖死）。
           if (existsSync(path.join(root, '.flow', 'decisions', 'ui-compare-waiver.json'))) {
@@ -1233,9 +1265,20 @@ switch (cmd) {
       // 收斂判準只看「最後一次凍結之後」的輪（週期斷代，防再凍結時舊週期輪數蒙混）；終局對賬吃全量（findings 不可蒸發）。
       const allLedgers = await S.listSpecReviewLedgers(root);
       const journal0 = await S.readJournal(root);
-      const cycleLedgers = S.currentCycleLedgers(allLedgers, journal0);
+      let cycleLedgers = S.currentCycleLedgers(allLedgers, journal0);
       const reqText = readFileSync(rp, 'utf8');
       const curHash = S.sha256Text(reqText);
+      // mockup-only 重定版短路（Codex F9）：requirements 與上次凍結逐字相同（req-index reqHash 相符）時，
+      // 沿用「審過同一份文字」的既有 lens 證明（docHash 綁定＝同文即同審），不逼整套重跑兩輪——
+      // 文件宣稱的「短路」自此名副其實；文字有變仍照舊全量重審（週期斷代防蒙混不動）。
+      const prevReqIdx = await S.readReqIndex(root);
+      if (prevReqIdx && prevReqIdx.reqHash === curHash && S.lensConvergenceAudit(cycleLedgers, curHash).length) {
+        const sameDoc = allLedgers.filter(r => r.docHash === curHash);
+        if (!S.lensConvergenceAudit(sameDoc, curHash).length) {
+          cycleLedgers = sameDoc;
+          console.log('ⓘ requirements 未變（與凍結分母 hash 相符）——lens 沿用既有同文審查證明（mockup-only 重定版短路）。');
+        }
+      }
       const decisionExists = (did) => existsSync(path.join(root, '.flow', 'decisions', did + '.json'));
       const srProblems = [
         ...S.lensConvergenceAudit(cycleLedgers, curHash),
@@ -1261,17 +1304,24 @@ switch (cmd) {
       }
       // UI 定版記錄（走了原型路才要求）：使用者彈窗定版後 SHALL 留檔——機器證明不了「使用者真點過」，
       // 但「沒有定版記錄就凍結」從此擋得住（decision 檔可由模型自寫屬蓄意欺騙級，靠彈窗雙寫＋git 審計線兜底）。
+      let frozenMockupHashes = null;
       if (existsSync(path.join(root, mockDirRel))) {
         if (!decisionExists('ui-signoff')) {
           console.error('✗ 互動原型存在但查無 UI 定版記錄——使用者照走查台點完、彈窗定版後 SHALL 留檔：');
           console.error('  flow-state decision ui-signoff --choice "<方向 OK/改了哪幾頁後 OK>" --why "<使用者原話>"');
           process.exit(2);
         }
-        // 重定版新鮮度：ui-signoff SHALL 嚴格晚於上次凍結——堵「舊拍板重複過關」＋「修正改到正典目錄外、
-        // 使用者沒重新走查就重凍結」（重走查一定看 specs/ui-mockups/ 的走查台，改錯地方當場人眼抓包）。
-        const soStale = S.uiSignoffFreshProblem((await S.readDecision(root, 'ui-signoff')).at, S.lastFrozenAt(journal0));
-        if (soStale) {
-          console.error('✗ ' + soStale);
+        // 簽名總驗（uiSignoffProblem；Codex F4/F5/F11）：時戳缺失/格式/未來 → 重定版新鮮度（錨點取
+        // journal 與舊 mockup-index 較晚者——journal 被清仍判得出重凍結）→ 內容綁定（簽的指紋＝要凍的這份）。
+        frozenMockupHashes = await S.mockupFileHashes(root);
+        const prevMockIdx = await S.readMockupIndex(root);
+        const soProb = S.uiSignoffProblem(await S.readDecision(root, 'ui-signoff'), {
+          lastFrozen: [S.lastFrozenAt(journal0), (prevMockIdx && prevMockIdx.at) || ''].sort()[1],
+          now: new Date().toISOString(),
+          aggHashNow: S.mockupAggHash(frozenMockupHashes),
+        });
+        if (soProb) {
+          console.error('✗ ' + soProb);
           process.exit(2);
         }
       }
@@ -1285,7 +1335,7 @@ switch (cmd) {
       // mockup 定版凍結（與 req-index 同構）：原型存在即把文字資產逐檔 hash 落 mockup-index.json——
       // 下游 plan-check / wave --compute / ui-fidelity 對賬，凍結後偷改原型在下一道消費閘門就被抓。
       if (existsSync(path.join(root, mockDirRel))) {
-        const mHashes = await S.mockupFileHashes(root);
+        const mHashes = frozenMockupHashes || await S.mockupFileHashes(root);
         await S.writeMockupIndex(root, mHashes, head);
         await S.appendJournal(root, { ev: 'mockup.frozen', aggHash: S.mockupAggHash(mHashes), files: Object.keys(mHashes).length, head });
         console.log(`✓ 互動原型已凍結：${Object.keys(mHashes).length} 個文字資產 hash 落 .flow/trace/mockup-index.json（下游閘門對賬，偷改必抓）。`);
@@ -1440,6 +1490,10 @@ switch (cmd) {
         if (!hasMockup || !hasImpl) { console.error(`✗ 「${pageRel}」viewport ${vp} 未截齊雙邊（缺 ${[!hasMockup && 'mockup', !hasImpl && 'impl'].filter(Boolean).join('/')}）——重跑 ui-compare-capture.mjs。`); process.exit(2); }
       }
       if (manifest.mockupAggHash !== cmpAggNow) { console.error('✗ capture.json 截的是舊版原型（mockup 已重定版）——重跑 ui-compare-capture.mjs 後再判。'); process.exit(2); }
+      // 截圖工程版本對賬（Codex F2）：pass 前驗「截圖時的 HEAD＝現在的 HEAD」——堵「不重截、只重跑 pass」
+      // 讓舊截圖領到新 HEAD 合格證（rec.head 蓋的是落檔當下，complete-check 會誤判新鮮）。
+      const chp = S.captureHeadProblem(manifest.head, gitHead(root));
+      if (chp) { console.error('✗ ' + chp); process.exit(2); }
       shots = entryShots;
     }
 

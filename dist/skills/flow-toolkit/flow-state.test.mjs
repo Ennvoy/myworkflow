@@ -451,17 +451,37 @@ test('spec-ready --freeze 重凍結：沿用舊 ui-signoff → exit 2（新鮮�
     await passLenses(root);
     run(['decision', 'ui-signoff', '--choice', '方向 OK', '--why', 'x'], root);
     assert.equal(run(['spec-ready', '--freeze'], root).code, 0, '首次凍結');
-    // 原地修 mockup（模擬需求修正）→ 本週期 lens 重新收斂 → 沿用首次的舊 signoff 重凍結 → 擋
+    // 原地修 mockup（模擬需求修正）→ 沿用首次的舊 signoff 重凍結 → 擋
     await writeFile(path.join(root, 'specs', 'ui-mockups', 'login.html'), PAGE_OK.replace('../app.js', 'app.js') + '<!-- 修正 -->', 'utf8');
-    await passLenses(root);
     const r = run(['spec-ready', '--freeze'], root);
     assert.equal(r.code, 2, '舊拍板不得重複過關');
     assert.match(r.err, /早於（或等於）上次凍結/);
-    // 使用者重新走查後重記 signoff → 重凍結放行、mockup-index 更新為新內容
+    // 使用者重新走查後重記 signoff → 重凍結放行（F9：requirements 未變、lens 沿用同文證明，不必重跑 passLenses）
     run(['decision', 'ui-signoff', '--choice', '修正後 OK', '--why', '重新走查'], root);
     const r2 = run(['spec-ready', '--freeze'], root);
-    assert.equal(r2.code, 0, r2.err);
+    assert.equal(r2.code, 0, 'mockup-only 重定版短路應直接過：' + r2.err);
+    assert.match(r2.out, /同文審查證明/, 'F9 短路訊息');
     assert.equal(S.mockupHashProblem(await S.readMockupIndex(root), await S.mockupFileHashes(root)), null, '重凍結後快照對新內容');
+    // F4：簽名後又改 mockup → 內容綁定擋（時戳是新的、指紋是舊的）
+    run(['decision', 'ui-signoff', '--choice', '再修後 OK', '--why', 'x'], root);
+    await writeFile(path.join(root, 'specs', 'ui-mockups', 'login.html'), PAGE_OK.replace('../app.js', 'app.js') + '<!-- 簽後偷改 -->', 'utf8');
+    const r3 = run(['spec-ready', '--freeze'], root);
+    assert.equal(r3.code, 2, '簽名後偷改原型不得凍結');
+    assert.match(r3.err, /簽的不是現行這份 mockup/);
+  });
+});
+
+test('mockup-check：走查台連結逃出 specs/ui-mockups/ → exit 2（F1 目錄圈地，堵外部野生頁）', async () => {
+  await withRoot(async (root) => {
+    await S.init(root, { project: 'p', tasks: [] });
+    await writeReq(root, READY_REQ);
+    run(['project-type', 'web-app'], root);
+    await mkdir(path.join(root, 'specs', 'ui-mockups-v2'), { recursive: true });
+    await writeFile(path.join(root, 'specs', 'ui-mockups-v2', 'login.html'), PAGE_OK.replace('../app.js', 'app.js'), 'utf8');
+    await writeMockups(root, '<h2>REQ-E2E-001</h2><a href="../ui-mockups-v2/login.html">走</a>');
+    const r = run(['mockup-check'], root);
+    assert.equal(r.code, 2, '外部頁能過走查＝mockup 放錯地方的漏網之路');
+    assert.match(r.err, /逃出 specs\/ui-mockups/);
   });
 });
 
@@ -1631,6 +1651,10 @@ test('decision：自駕下不可自建 waiver/signoff → exit 2 指向 pending�
     const r = run(['decision', 'journey-waiver', '--choice', '跳過', '--why', 'x'], root);
     assert.equal(r.code, 2, '自駕下不可自建豁免');
     assert.match(r.err, /pending|待決/);
+    // F8 死鎖解：ui-signoff 不在 C-8 之限——UI 定版本來就是互動正路，擋掉它＝自駕＋web 在凍結永久卡死
+    const rs = run(['decision', 'ui-signoff', '--choice', '方向 OK', '--why', '使用者走查拍板'], root);
+    assert.equal(rs.code, 0, '自駕下 ui-signoff 可記（附警告）');
+    assert.match(rs.out, /SHALL 來自使用者走查後的彈窗拍板/);
     await S.writeManifest(root, { ...(await S.readManifest(root)), mode: 'manual' });
     assert.equal(run(['decision', 'journey-waiver', '--choice', '跳過', '--why', 'x'], root).code, 0, 'manual 照常可記');
   });
